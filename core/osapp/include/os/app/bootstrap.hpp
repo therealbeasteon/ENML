@@ -12,6 +12,9 @@
 namespace os::app {
 
 inline constexpr int application_bootstrap_fd = 3;
+// Linux-private bootstrap descriptor. Public app APIs must wrap this rather
+// than exposing a magic fd as stable ENML ABI.
+inline constexpr int application_private_data_fd = 5;
 inline constexpr os::core::ServiceId application_bootstrap_service_id{0x0000F010U};
 inline constexpr std::uint32_t application_bootstrap_operation_initialize = 1U;
 inline constexpr std::uint16_t application_bootstrap_version_v1 = 1U;

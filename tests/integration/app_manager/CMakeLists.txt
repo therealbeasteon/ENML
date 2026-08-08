@@ -28,3 +28,11 @@ add_test(
         $<TARGET_FILE:m1_test_app_v1>
         $<TARGET_FILE:m1_test_app_v2>
 )
+
+add_executable(application_sandbox_landlock_test application_sandbox_landlock_test.cpp)
+target_link_libraries(application_sandbox_landlock_test PRIVATE emnl::ossandbox emnl_warnings)
+target_compile_options(application_sandbox_landlock_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME application_sandbox_landlock_test COMMAND application_sandbox_landlock_test)
+set_tests_properties(application_sandbox_landlock_test PROPERTIES SKIP_RETURN_CODE 77)

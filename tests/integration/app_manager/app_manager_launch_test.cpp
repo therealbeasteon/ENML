@@ -9,11 +9,11 @@
 
 #include <fcntl.h>
 #include <signal.h>
-#include <sys/stat.h>
 #include <time.h>
 #include <unistd.h>
 
 #include <os/app/manager.hpp>
+#include <os/app/principal_store.hpp>
 #include <os/core/error.hpp>
 #include <os/core/native_handle.hpp>
 #include <os/package/analyzer.hpp>
@@ -99,6 +99,22 @@ bool wait_until_gone(
     return false;
 }
 
+void remove_registry_files(const char* path) {
+    const int fd = ::open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    assert(fd >= 0);
+    static_cast<void>(::unlinkat(fd, "registry-v1.bin", 0));
+    static_cast<void>(::unlinkat(fd, ".registry-v1.tmp", 0));
+    assert(::close(fd) == 0);
+}
+
+void remove_principal_files(const char* path) {
+    const int fd = ::open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    assert(fd >= 0);
+    static_cast<void>(::unlinkat(fd, "principals-v1.bin", 0));
+    static_cast<void>(::unlinkat(fd, ".principals-v1.tmp", 0));
+    assert(::close(fd) == 0);
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -122,38 +138,38 @@ int main(int argc, char** argv) {
     os::supervisor::Supervisor supervisor({echo_descriptor, echo_path});
     assert(supervisor.start());
 
-    char state_template[] = "/tmp/emnl-app-manager-XXXXXX";
-    char* state_path = ::mkdtemp(state_template);
-    assert(state_path != nullptr);
+    char package_template[] = "/tmp/emnl-app-packages-XXXXXX";
+    char principal_template[] = "/tmp/emnl-app-principals-XXXXXX";
+    char data42_template[] = "/tmp/emnl-app-data42-XXXXXX";
+    char data43_template[] = "/tmp/emnl-app-data43-XXXXXX";
+    char* package_path = ::mkdtemp(package_template);
+    char* principal_path = ::mkdtemp(principal_template);
+    char* data42_path = ::mkdtemp(data42_template);
+    char* data43_path = ::mkdtemp(data43_template);
+    assert(package_path != nullptr && principal_path != nullptr);
+    assert(data42_path != nullptr && data43_path != nullptr);
 
-    auto opened = pkg::PersistentPackageRegistry::open(open_directory(state_path));
-    assert(opened);
-    auto packages = std::move(opened).value();
+    auto package_opened = pkg::PersistentPackageRegistry::open(open_directory(package_path));
+    auto principal_opened = os::app::ApplicationPrincipalStore::open(open_directory(principal_path));
+    assert(package_opened && principal_opened);
+    auto packages = std::move(package_opened).value();
+    auto principals = std::move(principal_opened).value();
 
     const auto application = make_application();
     const auto generation1 = make_generation(application, 1U, 0x21U);
     const auto generation2 = make_generation(application, 2U, 0x22U);
-    const auto generation3 = make_generation(application, 3U, 0x23U);
     assert(packages.stage_generation(generation1));
     assert(packages.activate(application, generation1.generation));
     assert(packages.stage_generation(generation2));
-    assert(packages.stage_generation(generation3));
 
-    constexpr os::core::PrincipalId app_principal{
-        0x4150502E454D4E4CULL,
-        0x0000000000000042ULL,
-    };
+    os::app::ApplicationManager manager(packages, principals, supervisor);
 
-    os::app::ApplicationManager manager(packages, supervisor);
-
-    // Final-component symlinks are not accepted as package executables.
-    assert(::symlink(argv[2], (std::string(state_path) + "/bad-app").c_str()) == 0);
+    // Final-component symlinks are never accepted as package executables.
+    assert(::symlink(argv[2], (std::string(package_path) + "/bad-app").c_str()) == 0);
     auto symlink_target = manager.register_launch_target(os::app::LaunchTargetRegistration{
         .package = generation1,
-        .principal = app_principal,
-        .generation_directory = open_directory(state_path),
+        .generation_directory = open_directory(package_path),
         .entry_point = parse_manifest_path("bad-app"),
-        .sandbox = {},
         .readiness_timeout_ms = 1000U,
     });
     assert(!symlink_target);
@@ -161,68 +177,83 @@ int main(int argc, char** argv) {
 
     assert(manager.register_launch_target(os::app::LaunchTargetRegistration{
         .package = generation1,
-        .principal = app_principal,
         .generation_directory = open_directory(executable_v1.directory),
         .entry_point = parse_manifest_path(executable_v1.name),
-        .sandbox = {},
         .readiness_timeout_ms = 1000U,
     }));
     assert(manager.register_launch_target(os::app::LaunchTargetRegistration{
         .package = generation2,
-        .principal = app_principal,
         .generation_directory = open_directory(executable_v2.directory),
         .entry_point = parse_manifest_path(executable_v2.name),
-        .sandbox = {},
         .readiness_timeout_ms = 1000U,
     }));
 
-    // One signer-bound application keeps one principal across generations.
-    auto mismatched_principal = manager.register_launch_target(os::app::LaunchTargetRegistration{
-        .package = generation3,
-        .principal = os::core::PrincipalId{0xBAD0ULL, 0xBEEF0ULL},
-        .generation_directory = open_directory(executable_v2.directory),
-        .entry_point = parse_manifest_path(executable_v2.name),
+    const os::core::UserId user42{42U};
+    const os::core::UserId user43{43U};
+    const os::core::UserId missing_user{44U};
+    assert(manager.register_application_profile(os::app::ApplicationProfileRegistration{
+        .application = application,
+        .user = user42,
+        .private_data_directory = open_directory(data42_path),
         .sandbox = {},
-        .readiness_timeout_ms = 1000U,
-    });
-    assert(!mismatched_principal);
-    assert(mismatched_principal.error().code == os::app::manager_errors::principal_mismatch);
+    }));
+    assert(manager.register_application_profile(os::app::ApplicationProfileRegistration{
+        .application = application,
+        .user = user43,
+        .private_data_directory = open_directory(data43_path),
+        .sandbox = {},
+    }));
 
-    const os::core::UserId user{42U};
+    // No profile means no launch and no accidental principal allocation.
+    const auto before_missing = principals.record_count();
+    auto missing_profile = manager.launch(application.package_id, missing_user);
+    assert(!missing_profile);
+    assert(missing_profile.error().code == os::app::manager_errors::profile_not_found);
+    assert(principals.record_count() == before_missing);
 
-    // Generation 2 is staged but not active, so both launches must execute the
-    // generation-1 fixture. That binary refuses READY for any other generation.
-    auto first = manager.launch(application.package_id, user);
-    assert(first);
-    auto second = manager.launch(application.package_id, user);
-    assert(second);
+    // Generation 2 is staged but not active. Same application+user receives a
+    // stable principal while each process and application instance is fresh.
+    auto first = manager.launch(application.package_id, user42);
+    auto second = manager.launch(application.package_id, user42);
+    assert(first && second);
     assert(first.value().generation == generation1.generation);
     assert(second.value().generation == generation1.generation);
-    assert(first.value().identity.principal == app_principal);
-    assert(second.value().identity.principal == app_principal);
-    assert(first.value().identity.user == user);
+    assert(first.value().identity.principal == second.value().identity.principal);
+    assert(first.value().identity.principal.high == os::app::application_principal_high_v1);
+    assert(first.value().identity.user == user42);
     assert(first.value().identity.process != second.value().identity.process);
     assert(first.value().instance != second.value().instance);
 
+    auto other_user = manager.launch(application.package_id, user43);
+    assert(other_user);
+    assert(other_user.value().generation == generation1.generation);
+    assert(other_user.value().identity.user == user43);
+    assert(other_user.value().identity.principal != first.value().identity.principal);
+
     assert(packages.activate(application, generation2.generation));
 
-    // Activation is prospective. Existing processes remain permanently bound
-    // to their launch generation while a new launch resolves generation 2.
+    // Activation is prospective. Existing generation-1 processes stay bound
+    // while future launches resolve generation 2 and retain the user's stable
+    // application principal.
     auto still_first = manager.instance(first.value().instance);
     assert(still_first);
     assert(still_first.value().generation == generation1.generation);
     assert(::kill(still_first.value().native_pid, 0) == 0);
 
-    auto third = manager.launch(application.package_id, user);
+    auto third = manager.launch(application.package_id, user42);
     assert(third);
     assert(third.value().generation == generation2.generation);
     assert(third.value().content == generation2.content);
-    assert(third.value().identity.principal == app_principal);
+    assert(third.value().identity.principal == first.value().identity.principal);
     assert(third.value().identity.process != first.value().identity.process);
+
+    auto persisted_principal = principals.lookup(application, user42);
+    assert(persisted_principal);
+    assert(persisted_principal.value().principal == first.value().identity.principal);
 
     auto unknown_id = pkg::PackageId::parse("com.emnl.notinstalled");
     assert(unknown_id);
-    auto unknown_launch = manager.launch(unknown_id.value(), user);
+    auto unknown_launch = manager.launch(unknown_id.value(), user42);
     assert(!unknown_launch);
     assert(unknown_launch.error().domain == os::core::ErrorDomain::package);
     assert(unknown_launch.error().code == pkg::errors::unknown_package);
@@ -233,17 +264,19 @@ int main(int argc, char** argv) {
     assert(!revoked);
     assert(revoked.error().domain == os::core::ErrorDomain::security);
 
-    assert(::unlink((std::string(state_path) + "/bad-app").c_str()) == 0);
     assert(manager.terminate(second.value().instance, SIGTERM));
+    assert(manager.terminate(other_user.value().instance, SIGTERM));
     assert(manager.terminate(third.value().instance, SIGTERM));
     assert(wait_until_gone(manager, second.value().instance));
+    assert(wait_until_gone(manager, other_user.value().instance));
     assert(wait_until_gone(manager, third.value().instance));
 
-    const int state_fd = ::open(state_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    assert(state_fd >= 0);
-    static_cast<void>(::unlinkat(state_fd, "registry-v1.bin", 0));
-    static_cast<void>(::unlinkat(state_fd, ".registry-v1.tmp", 0));
-    assert(::close(state_fd) == 0);
-    assert(::rmdir(state_path) == 0);
+    assert(::unlink((std::string(package_path) + "/bad-app").c_str()) == 0);
+    remove_registry_files(package_path);
+    remove_principal_files(principal_path);
+    assert(::rmdir(package_path) == 0);
+    assert(::rmdir(principal_path) == 0);
+    assert(::rmdir(data42_path) == 0);
+    assert(::rmdir(data43_path) == 0);
     return 0;
 }

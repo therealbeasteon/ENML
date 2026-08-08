@@ -15,12 +15,13 @@ jobs:
         run: >-
           cmake --build --preset host-debug
           --target package_identity_test package_registry_test package_analyzer_test package_persistence_test
+          application_principal_store_test application_sandbox_landlock_test
           app_manager_launch_test m1_test_app_v1 m1_test_app_v2 system_echo
           --parallel 2
       - name: Run M1 tests
         run: >-
           ctest --preset host-debug --output-on-failure
-          -R '^(package_|supervisor_app_manager_launch_test$)'
+          -R '^(package_|application_|supervisor_app_manager_launch_test$)'
 
   package-clang:
     runs-on: ubuntu-24.04
@@ -35,12 +36,13 @@ jobs:
         run: >-
           cmake --build build/m1-package-clang
           --target package_identity_test package_registry_test package_analyzer_test package_persistence_test
+          application_principal_store_test application_sandbox_landlock_test
           app_manager_launch_test m1_test_app_v1 m1_test_app_v2 system_echo
           --parallel 2
       - name: Run M1 tests
         run: >-
           ctest --test-dir build/m1-package-clang --output-on-failure
-          -R '^(package_|supervisor_app_manager_launch_test$)'
+          -R '^(package_|application_|supervisor_app_manager_launch_test$)'
 
   package-arm64-native:
     runs-on: ubuntu-24.04-arm
@@ -54,9 +56,10 @@ jobs:
         run: >-
           cmake --build --preset host-debug
           --target package_identity_test package_registry_test package_analyzer_test package_persistence_test
+          application_principal_store_test application_sandbox_landlock_test
           app_manager_launch_test m1_test_app_v1 m1_test_app_v2 system_echo
           --parallel 2
       - name: Run M1 tests natively
         run: >-
           ctest --preset host-debug --output-on-failure
-          -R '^(package_|supervisor_app_manager_launch_test$)'
+          -R '^(package_|application_|supervisor_app_manager_launch_test$)'
