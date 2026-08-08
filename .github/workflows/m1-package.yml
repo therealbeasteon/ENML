@@ -9,35 +9,29 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Build package identity tests
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p build/m1-package
-          COMMON='-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Werror -fno-exceptions -fno-rtti -Icore/oscore/include -Icore/ospkg/include'
-          g++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_identity_test.cpp -o build/m1-package/package_identity_test
-          g++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_registry_test.cpp -o build/m1-package/package_registry_test
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build package library and tests
+        run: cmake --build --preset host-debug --target package_identity_test package_registry_test package_analyzer_test --parallel 2
       - name: Run package tests
-        run: |
-          ./build/m1-package/package_identity_test
-          ./build/m1-package/package_registry_test
+        run: ctest --preset host-debug --output-on-failure -R '^package_'
 
   package-clang:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Build package identity tests
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p build/m1-package-clang
-          COMMON='-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Werror -fno-exceptions -fno-rtti -Icore/oscore/include -Icore/ospkg/include'
-          clang++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_identity_test.cpp -o build/m1-package-clang/package_identity_test
-          clang++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_registry_test.cpp -o build/m1-package-clang/package_registry_test
+      - name: Configure
+        run: >-
+          cmake -S . -B build/m1-package-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Build package library and tests
+        run: >-
+          cmake --build build/m1-package-clang
+          --target package_identity_test package_registry_test package_analyzer_test
+          --parallel 2
       - name: Run package tests
-        run: |
-          ./build/m1-package-clang/package_identity_test
-          ./build/m1-package-clang/package_registry_test
+        run: ctest --test-dir build/m1-package-clang --output-on-failure -R '^package_'
 
   package-arm64-native:
     runs-on: ubuntu-24.04-arm
@@ -45,15 +39,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Confirm AArch64
         run: test "$(uname -m)" = "aarch64"
-      - name: Build package identity tests natively
-        shell: bash
-        run: |
-          set -euxo pipefail
-          mkdir -p build/m1-package-arm64
-          COMMON='-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Werror -fno-exceptions -fno-rtti -Icore/oscore/include -Icore/ospkg/include'
-          g++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_identity_test.cpp -o build/m1-package-arm64/package_identity_test
-          g++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_registry_test.cpp -o build/m1-package-arm64/package_registry_test
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build package library and tests natively
+        run: cmake --build --preset host-debug --target package_identity_test package_registry_test package_analyzer_test --parallel 2
       - name: Run package tests natively
-        run: |
-          ./build/m1-package-arm64/package_identity_test
-          ./build/m1-package-arm64/package_registry_test
+        run: ctest --preset host-debug --output-on-failure -R '^package_'
