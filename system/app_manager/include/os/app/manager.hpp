@@ -36,6 +36,8 @@ inline constexpr std::uint32_t instance_id_exhausted = 108U;
 inline constexpr std::uint32_t invalid_profile = 109U;
 inline constexpr std::uint32_t profile_capacity = 110U;
 inline constexpr std::uint32_t profile_not_found = 111U;
+inline constexpr std::uint32_t generation_in_use = 112U;
+inline constexpr std::uint32_t generation_active = 113U;
 } // namespace manager_errors
 
 // Trusted Package Service registration. Applications never supply executable
@@ -73,9 +75,10 @@ struct ApplicationInstanceInfo final {
     }
 };
 
-// M1.4 App Manager. Launch requests contain only PackageId plus trusted user
+// M1.5 App Manager. Launch requests contain only PackageId plus trusted user
 // context. Active generation, executable object, per-user principal, private
 // data root, native credentials and sandbox policy all come from trusted state.
+// Running instances pin the exact launch target until they are reaped.
 class ApplicationManager final {
 public:
     ApplicationManager(
@@ -96,6 +99,26 @@ public:
     [[nodiscard]] os::core::Result<ApplicationInstanceInfo>
     launch(const os::package::PackageId& package_id, os::core::UserId user) noexcept;
 
+    // Persistently removes future launch resolution first, then immediately
+    // revokes supervisor identity for running instances and requests process
+    // termination. Principal mappings and private-data profiles are retained.
+    [[nodiscard]] os::core::Result<void>
+    uninstall_application(const os::package::ApplicationIdentity& application) noexcept;
+
+    // Releases App Manager's retained executable object only when the
+    // generation is no longer active and no running instance pins it. A Package
+    // Service may delete the immutable generation directory only after this
+    // succeeds; package metadata remains as historical/tombstone state.
+    [[nodiscard]] os::core::Result<void>
+    retire_launch_target(
+        const os::package::ApplicationIdentity& application,
+        os::package::PackageGenerationId generation) noexcept;
+
+    [[nodiscard]] os::core::Result<std::uint32_t>
+    generation_pin_count(
+        const os::package::ApplicationIdentity& application,
+        os::package::PackageGenerationId generation) const noexcept;
+
     [[nodiscard]] os::core::Result<void> maintain() noexcept;
 
     [[nodiscard]] os::core::Result<ApplicationInstanceInfo>
@@ -110,6 +133,7 @@ private:
         os::package::PackageGenerationRecord package {};
         os::core::NativeHandle executable {};
         std::uint32_t readiness_timeout_ms {1000U};
+        std::uint32_t pin_count {0U};
     };
 
     struct ApplicationProfile final {
@@ -137,6 +161,14 @@ private:
     find_target(const os::package::PackageGenerationRecord& package) noexcept;
     [[nodiscard]] const LaunchTarget*
     find_target(const os::package::PackageGenerationRecord& package) const noexcept;
+    [[nodiscard]] LaunchTarget*
+    find_target(
+        const os::package::ApplicationIdentity& application,
+        os::package::PackageGenerationId generation) noexcept;
+    [[nodiscard]] const LaunchTarget*
+    find_target(
+        const os::package::ApplicationIdentity& application,
+        os::package::PackageGenerationId generation) const noexcept;
     [[nodiscard]] ApplicationProfile*
     find_profile(const os::package::ApplicationIdentity& application, os::core::UserId user) noexcept;
     [[nodiscard]] const ApplicationProfile*
