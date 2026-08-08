@@ -19,14 +19,24 @@ public:
     PackageRegistry() noexcept = default;
 
     // Staging never changes the active generation. A textual PackageId is
-    // reserved to one signer lineage.
+    // permanently reserved to the recorded signer lineage in this registry,
+    // including after uninstall.
     [[nodiscard]] os::core::Result<void>
     stage_generation(const PackageGenerationRecord& record) noexcept;
 
+    // Activation affects future launch resolution only. Existing processes are
+    // generation-bound by App Manager and are not rewritten by this mutation.
     [[nodiscard]] os::core::Result<void>
     activate(
         const ApplicationIdentity& application,
         PackageGenerationId generation) noexcept;
+
+    // M1.5 uninstall is a durable launch revocation, not identity/data erasure.
+    // It clears the active generation while retaining signer ownership and
+    // generation metadata so a different signer cannot claim the PackageId and
+    // monotonic update history is not silently reset.
+    [[nodiscard]] os::core::Result<void>
+    uninstall(const ApplicationIdentity& application) noexcept;
 
     [[nodiscard]] os::core::Result<PackageGenerationRecord>
     active(const ApplicationIdentity& application) const noexcept;
