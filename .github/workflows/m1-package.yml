@@ -1,0 +1,59 @@
+name: M1 Package Foundation
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  package-gcc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build package identity tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build/m1-package
+          COMMON='-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Werror -fno-exceptions -fno-rtti -Icore/oscore/include -Icore/ospkg/include'
+          g++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_identity_test.cpp -o build/m1-package/package_identity_test
+          g++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_registry_test.cpp -o build/m1-package/package_registry_test
+      - name: Run package tests
+        run: |
+          ./build/m1-package/package_identity_test
+          ./build/m1-package/package_registry_test
+
+  package-clang:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build package identity tests
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build/m1-package-clang
+          COMMON='-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Werror -fno-exceptions -fno-rtti -Icore/oscore/include -Icore/ospkg/include'
+          clang++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_identity_test.cpp -o build/m1-package-clang/package_identity_test
+          clang++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_registry_test.cpp -o build/m1-package-clang/package_registry_test
+      - name: Run package tests
+        run: |
+          ./build/m1-package-clang/package_identity_test
+          ./build/m1-package-clang/package_registry_test
+
+  package-arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm AArch64
+        run: test "$(uname -m)" = "aarch64"
+      - name: Build package identity tests natively
+        shell: bash
+        run: |
+          set -euxo pipefail
+          mkdir -p build/m1-package-arm64
+          COMMON='-std=c++20 -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow -Wformat=2 -Werror -fno-exceptions -fno-rtti -Icore/oscore/include -Icore/ospkg/include'
+          g++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_identity_test.cpp -o build/m1-package-arm64/package_identity_test
+          g++ $COMMON core/ospkg/src/package.cpp core/ospkg/src/registry.cpp tests/unit/package/package_registry_test.cpp -o build/m1-package-arm64/package_registry_test
+      - name: Run package tests natively
+        run: |
+          ./build/m1-package-arm64/package_identity_test
+          ./build/m1-package-arm64/package_registry_test
