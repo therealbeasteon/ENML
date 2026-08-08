@@ -12,6 +12,8 @@ namespace os::package {
 inline constexpr std::size_t m1_registry_application_capacity = 32U;
 inline constexpr std::size_t m1_registry_generations_per_application = 4U;
 
+class PersistentPackageRegistry;
+
 class PackageRegistry final {
 public:
     PackageRegistry() noexcept = default;
@@ -40,6 +42,8 @@ public:
     [[nodiscard]] std::size_t application_count() const noexcept;
 
 private:
+    friend class PersistentPackageRegistry;
+
     struct Slot final {
         bool occupied {false};
         ApplicationIdentity application {};
