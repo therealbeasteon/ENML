@@ -14,7 +14,7 @@ Current checkpoint:
 - M0.7 trusted runtime identity (`PeerIdentity`, supervisor registry, pidfd-backed stale-PID defense)
 - M0.8 initial Linux service sandbox (`no_new_privs`, empty capabilities, seccomp, bounded rlimits, fixed environment, adversarial probe)
 - M0.9 adversarial/fault/resource certification gate (IPC handle flood, revocation/restart race, active rlimit probes, expanded seccomp escape matrix, RPC baseline, RPC error fuzzing)
-- M0.10 ARM64 native + cross-build/QEMU validation infrastructure
+- M0.10 ARM64 native + cross-build/QEMU validation — COMPLETE
 
 M0.3 includes bounded packet receive, `SCM_RIGHTS` descriptor transfer, kernel-supplied per-message credentials via `SCM_CREDENTIALS`, connection credentials via `SO_PEERCRED`, strict ancillary validation, and peer-death behavior.
 
@@ -59,8 +59,8 @@ Generate Echo manually after a build:
   --out-dir /tmp/emnl-echo-generated
 ```
 
-M0.8 now adds a pre-exec Linux sandbox for supervised services: fixed environment, deny-by-default inherited descriptors, `PR_SET_NO_NEW_PRIVS`, empty effective/permitted/inheritable capability sets, bounded resource limits, parent-death kill behavior, and a seccomp filter for privilege/namespace/kernel-control syscalls. An `evil_echo_service` integration fixture verifies the sandbox before announcing readiness.
+M0.8 adds a pre-exec Linux sandbox for supervised services: fixed environment, deny-by-default inherited descriptors, `PR_SET_NO_NEW_PRIVS`, empty effective/permitted/inheritable capability sets, bounded resource limits, parent-death kill behavior, and a seccomp filter for privilege/namespace/kernel-control syscalls. An `evil_echo_service` integration fixture verifies the sandbox before announcing readiness.
 
-An opt-in Landlock filesystem policy is implemented, but the current execution container returns `ENOSYS` for Landlock syscalls. `sandbox_landlock_test` therefore reports a CTest skip here rather than silently pretending filesystem caging was verified. See `docs/M0_8_SANDBOX.md`.
+An opt-in Landlock filesystem policy is implemented. The local development container returns `ENOSYS` for Landlock and therefore records a skip there, but the final native AArch64 GitHub run executed `sandbox_landlock_test` as a real pass.
 
-M0.10 is the final M0 gate. Native AArch64 CI and the independent x86-64 → AArch64 cross-build must both pass before M0 is declared complete. See `docs/M0_10_ARM64.md`.
+M0 is complete. The final M0.10 gate passed on native AArch64 (32/32 tests, including Landlock) and on the independent x86-64 → AArch64 cross-build/QEMU-safe CI path. See `docs/M0_10_ARM64.md`. The next track is M1: package identity, immutable package generations, Package Service, App Manager lifecycle, application principals, and per-app sandboxing.

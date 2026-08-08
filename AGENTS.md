@@ -36,7 +36,7 @@ Completed:
 - M0.7 trusted `PeerIdentity` resolution with pidfd stale-PID defense
 - M0.8 initial Linux service sandbox baseline
 - M0.9 adversarial/fault/resource certification gate
-- M0.10 ARM64 native/cross-build validation infrastructure (final gate; completion requires green ARM64 CI)
+- M0.10 ARM64 native/cross-build validation — complete
 
 M0.8 currently enforces, before service `execve`:
 
@@ -50,13 +50,15 @@ M0.8 currently enforces, before service `execve`:
 - restrictive umask
 - optional Landlock read-only runtime policy when the execution environment supports Landlock syscalls
 
-Important: the current container returns `ENOSYS` for Landlock despite a recent kernel, so `sandbox_landlock_test` is a CTest skip here. Do not claim filesystem caging is fully verified until that test passes on a supporting host. Do not weaken the sandbox merely to avoid the skip.
+The local development container returns `ENOSYS` for Landlock; the final native AArch64 GitHub gate ran the Landlock test successfully. Do not weaken sandbox policy to make a particular host pass.
 
-## Current gate: M0.10
+## Current track: M1
 
-The ARM64 build/runtime machinery is now checked in. Do not declare M0 complete merely because it cross-compiles. Completion requires both GitHub CI jobs to be green: the full native `ubuntu-24.04-arm` run and the independent x86-64 → AArch64 cross-build/QEMU-safe run. Preserve explicit capability skips. After both gates are green, update the status docs to mark M0 complete before beginning M1.
+M0 is complete. The final M0.10 CI gate passed both the full native `ubuntu-24.04-arm` run (32/32 tests, including Landlock) and the independent x86-64 → AArch64 cross-build/QEMU-safe run. `docs/M0_9_CERTIFICATION.md` and `docs/M0_10_ARM64.md` are the evidence records.
 
-M0.9 evidence is in `docs/M0_9_CERTIFICATION.md`. The Landlock filesystem sub-gate remains explicitly unverified in the current container because the runtime returns `ENOSYS`.
+M1 must build on M0 rather than replacing it. Priorities are package identity and immutable generations, a narrow Package Service, App Manager launch/lifecycle, application PrincipalId allocation, per-app sandbox profiles, and a protected persistent package registry. Do not expose Linux paths/UIDs as the public package or application identity model. Do not add arbitrary install scripts or let applications choose executable paths, Linux credentials, or sandbox policy. Preserve signer continuity and generation binding as first-class concepts.
+
+Keep M1 vertical and testable: install one tiny signed test package, activate one immutable generation, launch it through App Manager/Supervisor with a derived application principal, prove data/identity separation, then update to a second generation without mutating the running generation.
 
 ## Build and test
 
