@@ -1,5 +1,6 @@
 add_library(osapp STATIC
     src/bootstrap.cpp
+    src/principal_store_linux.cpp
 )
 
 add_library(emnl::osapp ALIAS osapp)
@@ -12,6 +13,7 @@ target_include_directories(osapp
 target_link_libraries(osapp
     PUBLIC
         emnl::osipc
+        emnl::ospkg
         emnl_warnings
 )
 
