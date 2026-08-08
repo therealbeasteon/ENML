@@ -12,6 +12,7 @@
 - M0.7 supervisor-owned runtime identity registry, pidfd-backed stale-process defense, PrincipalId/UserId resolution, and forged-identity rejection
 - M0.8 initial Linux service sandbox with fixed exec environment, `no_new_privs`, cleared Linux capabilities, seccomp, bounded rlimits, parent-death handling, and adversarial probe service
 - M0.9 adversarial/fault/resource certification with IPC handle/payload stress, descriptor-leak checks, restart/revocation race coverage, active RLIMIT enforcement probes, expanded seccomp escape attempts, RPC baseline measurement, and RPC error fuzzing
+- M0.10 ARM64 native/cross-build validation with full native AArch64 runtime coverage and an independent x86-64 → AArch64 cross-build/QEMU-safe gate
 
 ## M0.2 invariants
 
@@ -109,7 +110,6 @@
 - Explicit process unregistration revokes future service authorization even while the native process remains alive.
 - `pidfd_open` is an M0.7 Linux requirement for the reference runtime identity implementation.
 
-
 ## M0.8 invariants
 
 - Every supervised service passes through `os::sandbox::apply_before_exec()` after descriptor placement/closure and before `execve()`.
@@ -148,6 +148,26 @@
 - RPC timing observation: 2,000 typed Ping round trips in 53,740 microseconds total on this container's GCC Debug build (26.87 microseconds/call).
 - Existing lifecycle, crash-loop, readiness, forged-identity, stale-pidfd, malformed IPC/RPC, zero-allocation, and sandbox probes remain green.
 
+## M0.10 invariants
+
+- Build-time OSIDL generation is host/target aware; a cross build never attempts to execute the target-architecture `osidlc`.
+- `host-tools` produces the native generator and `arm64-debug` consumes it through the explicit `EMNL_OSIDLC_EXECUTABLE` cache path.
+- The AArch64 toolchain file targets GNU/Linux AArch64 and wires QEMU user mode to `/usr/aarch64-linux-gnu` when available.
+- Native GitHub AArch64 CI builds the complete M0 tree and runs the complete CTest suite on `ubuntu-24.04-arm`.
+- The native AArch64 run passed 32/32 tests, including `sandbox_landlock_test`, `arm64_runtime_probe_test`, supervisor lifecycle/restart, trusted identity, pidfd freshness, seccomp, resource limits, SCM_RIGHTS and SCM_CREDENTIALS.
+- An independent x86-64 runner cross-compiles the complete tree with `g++-aarch64-linux-gnu`; its QEMU-user-safe test step passed.
+- `arm64_runtime_probe_test` requires `__aarch64__`, freezes the same 40 `WireHeaderV1` golden bytes, and exercises `SOCK_SEQPACKET`, `SCM_RIGHTS`, `SCM_CREDENTIALS`, descriptor CLOEXEC, and descriptor usability from an AArch64 executable.
+- QEMU-user exclusions remain explicit; user-mode emulation is not counted as evidence for target-kernel seccomp/supervisor execution.
+- Older cross-toolchain Landlock UAPI headers are supported without weakening runtime policy: optional Landlock rights are requested only when the build headers define them.
+
+## M0 completion evidence
+
+- Native AArch64 GitHub runner: 32/32 CTest tests passed, 0 skipped, including the Landlock filesystem restriction test.
+- Independent x86-64 → AArch64 cross-build: complete M0 userspace build passed.
+- QEMU-user-safe AArch64 test step: passed.
+- Host GCC Debug, GCC ASan/UBSan, Clang Debug, and fuzz-smoke CI jobs: passed on the same M0.10 gate run.
+- Local M0.9 certification remains 30 passing tests + 1 environment-specific Landlock skip on the development container; the native AArch64 CI run closed that Landlock sub-gate with a real pass.
+
 ## Next
 
-M0.10: ARM64 cross-build and QEMU validation. Preserve identical wire bytes and service semantics, exercise Linux transport/security mechanisms on AArch64 where available, record unsupported emulator/kernel sub-gates explicitly, and do not begin M1 until this gate is complete.
+M0 is complete. The next implementation track is M1: package identity/immutable generations, Package Service, App Manager launch/lifecycle, real application principals, and per-app sandbox construction. Preserve all M0 wire, identity, supervision, and sandbox invariants while adding M1.

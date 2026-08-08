@@ -93,7 +93,19 @@ jobs:
       - name: Configure AArch64 cross build
         run: cmake --preset arm64-debug
       - name: Cross-build complete M0 userspace
-        run: cmake --build --preset arm64-debug --parallel 2
+        shell: bash
+        run: |
+          set +e
+          cmake --build --preset arm64-debug --parallel 2 > cross-build.log 2>&1
+          status=$?
+          if [ "$status" -ne 0 ]; then
+            echo '--- compact cross-build diagnostics ---'
+            grep -nE '(^| )(error:|fatal error:|warning:)' cross-build.log | tail -120 || true
+            echo '--- final build lines ---'
+            tail -40 cross-build.log
+            exit "$status"
+          fi
+          cat cross-build.log
       - name: Run QEMU-user-safe AArch64 tests
         run: >-
           ctest --preset arm64-debug --output-on-failure

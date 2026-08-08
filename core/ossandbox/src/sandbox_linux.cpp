@@ -94,6 +94,18 @@ namespace {
     // Handle all common file mutation rights, and file/directory reads. Rules
     // added below grant only the runtime material needed for a dynamically
     // linked service. Everything else is denied by omission.
+    // Landlock access bits were added across kernel UAPI revisions. Cross
+    // toolchains can legitimately ship older linux/landlock.h headers than
+    // the runtime kernel, so only request optional rights that the build
+    // headers actually define. The baseline rights remain mandatory.
+    constexpr std::uint64_t optional_handled =
+#ifdef LANDLOCK_ACCESS_FS_REFER
+        LANDLOCK_ACCESS_FS_REFER |
+#endif
+#ifdef LANDLOCK_ACCESS_FS_TRUNCATE
+        LANDLOCK_ACCESS_FS_TRUNCATE |
+#endif
+        0ULL;
     constexpr std::uint64_t handled =
         LANDLOCK_ACCESS_FS_EXECUTE |
         LANDLOCK_ACCESS_FS_WRITE_FILE |
@@ -108,8 +120,7 @@ namespace {
         LANDLOCK_ACCESS_FS_MAKE_FIFO |
         LANDLOCK_ACCESS_FS_MAKE_BLOCK |
         LANDLOCK_ACCESS_FS_MAKE_SYM |
-        LANDLOCK_ACCESS_FS_REFER |
-        LANDLOCK_ACCESS_FS_TRUNCATE;
+        optional_handled;
 
     landlock_ruleset_attr ruleset_attr{};
     ruleset_attr.handled_access_fs = handled;
