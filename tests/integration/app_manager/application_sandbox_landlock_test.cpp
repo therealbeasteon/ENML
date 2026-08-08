@@ -1,6 +1,7 @@
 #include <cassert>
 #include <cerrno>
 #include <cstdlib>
+#include <string>
 
 #include <fcntl.h>
 #include <sys/wait.h>
