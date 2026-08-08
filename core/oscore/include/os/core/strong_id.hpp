@@ -26,11 +26,13 @@ struct ProcessIdTag;
 struct ServiceIdTag;
 struct RequestIdTag;
 struct UserIdTag;
+struct ApplicationInstanceIdTag;
 
 using ProcessId = StrongId<ProcessIdTag, std::uint64_t>;
 using ServiceId = StrongId<ServiceIdTag, std::uint32_t>;
 using RequestId = StrongId<RequestIdTag, std::uint64_t>;
 using UserId = StrongId<UserIdTag, std::uint64_t>;
+using ApplicationInstanceId = StrongId<ApplicationInstanceIdTag, std::uint64_t>;
 
 struct PrincipalId final {
     std::uint64_t high {0};
