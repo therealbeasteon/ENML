@@ -86,6 +86,23 @@ PackageRegistry::activate(
     return package_error(errors::unknown_generation);
 }
 
+os::core::Result<void>
+PackageRegistry::uninstall(const ApplicationIdentity& application) noexcept {
+    if (!application.valid()) return package_error(errors::unknown_package);
+
+    Slot* slot = find_by_package_id(application.package_id);
+    if (slot == nullptr) return package_error(errors::unknown_package);
+    if (slot->application.signer_lineage != application.signer_lineage) {
+        return package_error(errors::package_id_collision);
+    }
+
+    // Idempotent for the same signer-bound application. The PackageId owner
+    // and historical generation records deliberately remain occupied.
+    slot->has_active = false;
+    slot->active_generation = PackageGenerationId{};
+    return {};
+}
+
 os::core::Result<PackageGenerationRecord>
 PackageRegistry::active(const ApplicationIdentity& application) const noexcept {
     if (!application.valid()) return package_error(errors::unknown_package);
