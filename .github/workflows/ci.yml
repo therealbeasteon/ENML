@@ -58,6 +58,8 @@ jobs:
         run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/osidlc_compiler_fuzz -runs=1000
       - name: RPC error envelope smoke
         run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/rpc_error_fuzz -runs=1000
+      - name: Package manifest analyzer smoke
+        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/package_manifest_fuzz -runs=5000
 
   arm64-native:
     runs-on: ubuntu-24.04-arm
