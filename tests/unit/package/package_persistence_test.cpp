@@ -132,12 +132,40 @@ int main() {
         assert(active);
         assert(active.value().generation.value() == 2U);
 
-        auto collision = store.stage_generation(make_generation(wrong_signer, 3U, 0x44U));
-        assert(!collision);
-        assert(collision.error().code == pkg::errors::package_id_collision);
+        // Durable uninstall clears active launch resolution but keeps the
+        // signer-bound owner and historical generations in EPR1.
+        assert(store.uninstall(app));
+        auto no_active = store.active(app);
+        assert(!no_active);
+        assert(no_active.error().code == pkg::errors::no_active_generation);
+        assert(store.owner(app.package_id).value() == app);
+        assert(store.generation(app, pkg::PackageGenerationId(1U)));
+        assert(store.generation(app, pkg::PackageGenerationId(2U)));
     }
 
     {
+        auto store = reopen_registry(directory);
+        auto uninstalled = store.active(app);
+        assert(!uninstalled);
+        assert(uninstalled.error().code == pkg::errors::no_active_generation);
+        assert(store.owner(app.package_id).value() == app);
+
+        auto collision = store.stage_generation(make_generation(wrong_signer, 3U, 0x44U));
+        assert(!collision);
+        assert(collision.error().code == pkg::errors::package_id_collision);
+
+        // Same-signer reinstall/update continues the monotonic sequence.
+        auto staged3 = store.stage_generation(generation3);
+        assert(staged3);
+        assert(store.activate(app, pkg::PackageGenerationId(3U)));
+    }
+
+    {
+        auto store = reopen_registry(directory);
+        auto active = store.active(app);
+        assert(active);
+        assert(active.value() == generation3);
+
         const int directory_fd = open_directory(directory);
         assert(directory_fd >= 0);
         struct stat metadata {};
@@ -148,12 +176,8 @@ int main() {
         write_junk_file(directory_fd, ".registry-v1.tmp");
         assert(::close(directory_fd) == 0);
 
-        auto store = reopen_registry(directory);
-        auto active = store.active(app);
-        assert(active);
-        assert(active.value().generation.value() == 2U);
-        auto staged3 = store.stage_generation(generation3);
-        assert(staged3);
+        // A stale temp file is cleaned before the next committed mutation.
+        assert(store.uninstall(app));
 
         const int check_fd = open_directory(directory);
         assert(check_fd >= 0);
@@ -166,8 +190,8 @@ int main() {
     {
         auto store = reopen_registry(directory);
         auto active = store.active(app);
-        assert(active);
-        assert(active.value().generation.value() == 2U);
+        assert(!active);
+        assert(active.error().code == pkg::errors::no_active_generation);
         assert(store.generation(app, pkg::PackageGenerationId(3U)));
     }
 
