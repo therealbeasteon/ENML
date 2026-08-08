@@ -16,7 +16,7 @@ jobs:
           cmake --build --preset host-debug
           --target package_identity_test package_registry_test package_analyzer_test package_persistence_test
           application_principal_store_test application_sandbox_landlock_test
-          app_manager_launch_test m1_test_app_v1 m1_test_app_v2 system_echo
+          app_manager_launch_test m1_test_app_v1 m1_test_app_v2 m1_test_app_v3 system_echo
           --parallel 2
       - name: Run M1 tests
         run: >-
@@ -37,7 +37,7 @@ jobs:
           cmake --build build/m1-package-clang
           --target package_identity_test package_registry_test package_analyzer_test package_persistence_test
           application_principal_store_test application_sandbox_landlock_test
-          app_manager_launch_test m1_test_app_v1 m1_test_app_v2 system_echo
+          app_manager_launch_test m1_test_app_v1 m1_test_app_v2 m1_test_app_v3 system_echo
           --parallel 2
       - name: Run M1 tests
         run: >-
@@ -57,7 +57,7 @@ jobs:
           cmake --build --preset host-debug
           --target package_identity_test package_registry_test package_analyzer_test package_persistence_test
           application_principal_store_test application_sandbox_landlock_test
-          app_manager_launch_test m1_test_app_v1 m1_test_app_v2 system_echo
+          app_manager_launch_test m1_test_app_v1 m1_test_app_v2 m1_test_app_v3 system_echo
           --parallel 2
       - name: Run M1 tests natively
         run: >-
