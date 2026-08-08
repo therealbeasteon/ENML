@@ -2,6 +2,7 @@ add_library(ospkg STATIC
     src/package.cpp
     src/registry.cpp
     src/analyzer.cpp
+    src/persistence_linux.cpp
 )
 
 add_library(emnl::ospkg ALIAS ospkg)
