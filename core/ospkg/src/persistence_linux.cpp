@@ -385,7 +385,9 @@ PersistentPackageRegistry::persist_candidate(const PackageRegistry& candidate) n
             return persistence_error(persistence_errors::snapshot_inconsistent);
         }
 
-        const auto flags = slot.has_active ? registry_application_flag_active : 0U;
+        const std::uint16_t flags = slot.has_active
+            ? registry_application_flag_active
+            : static_cast<std::uint16_t>(0U);
         if (!writer.write_u16(static_cast<std::uint16_t>(package_text.size())) ||
             !writer.write_u16(static_cast<std::uint16_t>(slot.generation_count)) ||
             !writer.write_u16(flags) || !writer.write_u16(0U) ||
