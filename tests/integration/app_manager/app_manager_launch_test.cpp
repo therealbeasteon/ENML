@@ -234,9 +234,8 @@ int main(int argc, char** argv) {
     assert(revoked.error().domain == os::core::ErrorDomain::security);
 
     assert(::unlink((std::string(state_path) + "/bad-app").c_str()) == 0);
-    // Package persistence files are removed after manager destruction below.
-    manager.terminate(second.value().instance, SIGTERM);
-    manager.terminate(third.value().instance, SIGTERM);
+    assert(manager.terminate(second.value().instance, SIGTERM));
+    assert(manager.terminate(third.value().instance, SIGTERM));
     assert(wait_until_gone(manager, second.value().instance));
     assert(wait_until_gone(manager, third.value().instance));
 
