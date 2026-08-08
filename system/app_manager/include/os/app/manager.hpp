@@ -78,7 +78,7 @@ struct ApplicationInstanceInfo final {
 // M1.5 App Manager. Launch requests contain only PackageId plus trusted user
 // context. Active generation, executable object, per-user principal, private
 // data root, native credentials and sandbox policy all come from trusted state.
-// Running instances pin the exact launch target until they are reaped.
+// A live InstanceSlot is the authoritative generation pin.
 class ApplicationManager final {
 public:
     ApplicationManager(
@@ -133,7 +133,6 @@ private:
         os::package::PackageGenerationRecord package {};
         os::core::NativeHandle executable {};
         std::uint32_t readiness_timeout_ms {1000U};
-        std::uint32_t pin_count {0U};
     };
 
     struct ApplicationProfile final {
