@@ -5,6 +5,8 @@ include(CTest)
 
 option(EMNL_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 option(EMNL_BUILD_FUZZING "Build libFuzzer targets" OFF)
+option(EMNL_ARM64_QEMU_USER "Run AArch64 target tests with QEMU user mode" OFF)
+set(EMNL_OSIDLC_EXECUTABLE "" CACHE FILEPATH "Host osidlc executable used while cross-compiling")
 
 add_library(emnl_warnings INTERFACE)
 target_compile_features(emnl_warnings INTERFACE cxx_std_20)

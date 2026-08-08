@@ -5,6 +5,7 @@ add_subdirectory(unit/service)
 add_subdirectory(integration/ipc)
 add_subdirectory(integration/rpc)
 add_subdirectory(integration/supervisor)
+add_subdirectory(integration/arm64)
 
 add_subdirectory(unit/osidlc)
 add_subdirectory(generated/echo)

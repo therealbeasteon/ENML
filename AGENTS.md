@@ -36,6 +36,7 @@ Completed:
 - M0.7 trusted `PeerIdentity` resolution with pidfd stale-PID defense
 - M0.8 initial Linux service sandbox baseline
 - M0.9 adversarial/fault/resource certification gate
+- M0.10 ARM64 native/cross-build validation infrastructure (final gate; completion requires green ARM64 CI)
 
 M0.8 currently enforces, before service `execve`:
 
@@ -51,20 +52,9 @@ M0.8 currently enforces, before service `execve`:
 
 Important: the current container returns `ENOSYS` for Landlock despite a recent kernel, so `sandbox_landlock_test` is a CTest skip here. Do not claim filesystem caging is fully verified until that test passes on a supporting host. Do not weaken the sandbox merely to avoid the skip.
 
-## Next milestone: M0.10
+## Current gate: M0.10
 
-Prove the complete M0 userspace substrate on ARM64 without changing the public EMNL abstractions. Priorities:
-
-1. Add an AArch64 cross-build preset/toolchain without weakening host builds.
-2. Cross-compile all M0 runtime libraries, `osidlc` outputs, `system.echo`, and `os-supervisor`.
-3. Run the ARM64 userspace tests that are meaningful under QEMU user/system emulation.
-4. Verify `WireHeaderV1` golden bytes are identical between x86-64 and AArch64.
-5. Verify `sizeof`/native layout never enters the wire ABI.
-6. Exercise `SOCK_SEQPACKET`, `SCM_RIGHTS`, and sender-credential behavior on the selected ARM64 Linux environment.
-7. Re-run trusted identity, service restart, seccomp/resource, and malformed-input gates where the emulator/kernel supports them.
-8. Keep unsupported host/kernel mechanisms explicit; do not silently convert skips into passes.
-9. Record toolchain/QEMU/kernel versions and the exact commands used.
-10. Do not start M1 until the M0.10 ARM64 gate is complete.
+The ARM64 build/runtime machinery is now checked in. Do not declare M0 complete merely because it cross-compiles. Completion requires both GitHub CI jobs to be green: the full native `ubuntu-24.04-arm` run and the independent x86-64 → AArch64 cross-build/QEMU-safe run. Preserve explicit capability skips. After both gates are green, update the status docs to mark M0 complete before beginning M1.
 
 M0.9 evidence is in `docs/M0_9_CERTIFICATION.md`. The Landlock filesystem sub-gate remains explicitly unverified in the current container because the runtime returns `ENOSYS`.
 

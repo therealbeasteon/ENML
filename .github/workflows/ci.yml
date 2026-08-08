@@ -58,3 +58,43 @@ jobs:
         run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/osidlc_compiler_fuzz -runs=1000
       - name: RPC error envelope smoke
         run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/rpc_error_fuzz -runs=1000
+
+  arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record machine
+        run: |
+          uname -a
+          uname -m | tee arm64-machine.txt
+          test "$(uname -m)" = "aarch64"
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build complete M0 userspace natively on AArch64
+        run: cmake --build --preset host-debug --parallel 2
+      - name: Test complete M0 userspace natively on AArch64
+        run: ctest --preset host-debug --output-on-failure
+
+  arm64-cross:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install AArch64 cross compiler and QEMU user emulator
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y g++-aarch64-linux-gnu qemu-user
+          aarch64-linux-gnu-g++ --version | head -1
+          qemu-aarch64 --version | head -1
+      - name: Build host OSIDL compiler
+        run: |
+          cmake --preset host-tools
+          cmake --build --preset host-tools --target osidlc --parallel 2
+          ./build/host-tools/tools/osidlc/osidlc --version
+      - name: Configure AArch64 cross build
+        run: cmake --preset arm64-debug
+      - name: Cross-build complete M0 userspace
+        run: cmake --build --preset arm64-debug --parallel 2
+      - name: Run QEMU-user-safe AArch64 tests
+        run: >-
+          ctest --preset arm64-debug --output-on-failure
+          -E 'supervisor_|sandbox_landlock_test'

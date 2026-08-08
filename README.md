@@ -14,6 +14,7 @@ Current checkpoint:
 - M0.7 trusted runtime identity (`PeerIdentity`, supervisor registry, pidfd-backed stale-PID defense)
 - M0.8 initial Linux service sandbox (`no_new_privs`, empty capabilities, seccomp, bounded rlimits, fixed environment, adversarial probe)
 - M0.9 adversarial/fault/resource certification gate (IPC handle flood, revocation/restart race, active rlimit probes, expanded seccomp escape matrix, RPC baseline, RPC error fuzzing)
+- M0.10 ARM64 native + cross-build/QEMU validation infrastructure
 
 M0.3 includes bounded packet receive, `SCM_RIGHTS` descriptor transfer, kernel-supplied per-message credentials via `SCM_CREDENTIALS`, connection credentials via `SO_PEERCRED`, strict ancillary validation, and peer-death behavior.
 
@@ -62,4 +63,4 @@ M0.8 now adds a pre-exec Linux sandbox for supervised services: fixed environmen
 
 An opt-in Landlock filesystem policy is implemented, but the current execution container returns `ENOSYS` for Landlock syscalls. `sandbox_landlock_test` therefore reports a CTest skip here rather than silently pretending filesystem caging was verified. See `docs/M0_8_SANDBOX.md`.
 
-The next milestone is M0.10: ARM64 cross-build and QEMU validation of the complete M0 userspace substrate.
+M0.10 is the final M0 gate. Native AArch64 CI and the independent x86-64 → AArch64 cross-build must both pass before M0 is declared complete. See `docs/M0_10_ARM64.md`.

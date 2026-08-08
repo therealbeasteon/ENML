@@ -10,12 +10,27 @@ set(ECHO_GENERATED_FILES
     ${ECHO_GENERATED_DIR}/echo_abi.generated.json
 )
 
+if(CMAKE_CROSSCOMPILING)
+    if(NOT EMNL_OSIDLC_EXECUTABLE)
+        message(FATAL_ERROR
+            "Cross builds require -DEMNL_OSIDLC_EXECUTABLE=/absolute/path/to/host/osidlc")
+    endif()
+    if(NOT IS_ABSOLUTE "${EMNL_OSIDLC_EXECUTABLE}")
+        message(FATAL_ERROR "EMNL_OSIDLC_EXECUTABLE must be an absolute host path")
+    endif()
+    set(ECHO_OSIDLC_COMMAND "${EMNL_OSIDLC_EXECUTABLE}")
+    set(ECHO_OSIDLC_DEPENDS ${ECHO_OSIDL})
+else()
+    set(ECHO_OSIDLC_COMMAND $<TARGET_FILE:osidlc>)
+    set(ECHO_OSIDLC_DEPENDS osidlc ${ECHO_OSIDL})
+endif()
+
 add_custom_command(
     OUTPUT ${ECHO_GENERATED_FILES}
-    COMMAND $<TARGET_FILE:osidlc>
+    COMMAND ${ECHO_OSIDLC_COMMAND}
         --input ${ECHO_OSIDL}
         --out-dir ${ECHO_GENERATED_DIR}
-    DEPENDS osidlc ${ECHO_OSIDL}
+    DEPENDS ${ECHO_OSIDLC_DEPENDS}
     VERBATIM
     COMMENT "Generating Echo OSIDL bindings"
 )
