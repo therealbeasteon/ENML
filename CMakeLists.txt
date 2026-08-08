@@ -1,0 +1,45 @@
+cmake_minimum_required(VERSION 3.25)
+project(emnl_os VERSION 0.0.1 LANGUAGES CXX)
+
+include(CTest)
+
+option(EMNL_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
+option(EMNL_BUILD_FUZZING "Build libFuzzer targets" OFF)
+
+add_library(emnl_warnings INTERFACE)
+target_compile_features(emnl_warnings INTERFACE cxx_std_20)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(emnl_warnings INTERFACE
+        -Wall
+        -Wextra
+        -Wpedantic
+        -Wconversion
+        -Wsign-conversion
+        -Wshadow
+        -Wformat=2
+    )
+    if(EMNL_WARNINGS_AS_ERRORS)
+        target_compile_options(emnl_warnings INTERFACE -Werror)
+    endif()
+elseif(MSVC)
+    target_compile_options(emnl_warnings INTERFACE /W4 /permissive-)
+    if(EMNL_WARNINGS_AS_ERRORS)
+        target_compile_options(emnl_warnings INTERFACE /WX)
+    endif()
+endif()
+
+add_subdirectory(core/oscore)
+add_subdirectory(core/osipc)
+add_subdirectory(core/osservice)
+add_subdirectory(core/ossandbox)
+add_subdirectory(tools/osidlc)
+add_subdirectory(interfaces/echo)
+add_subdirectory(system/services/echo)
+add_subdirectory(system/supervisor)
+
+if(BUILD_TESTING)
+    add_subdirectory(tests)
+endif()
+
+add_subdirectory(fuzz)

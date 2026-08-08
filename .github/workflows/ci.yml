@@ -1,0 +1,60 @@
+name: M0 CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  debug:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build
+        run: cmake --build --preset host-debug --parallel 2
+      - name: Test
+        run: ctest --preset host-debug --output-on-failure
+
+  sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-asan
+      - name: Build
+        run: cmake --build --preset host-asan --parallel 2
+      - name: Test
+        run: ctest --preset host-asan --output-on-failure
+
+  clang-debug:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >-
+          cmake -S . -B build/host-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build/host-clang --parallel 2
+      - name: Test
+        run: ctest --test-dir build/host-clang --output-on-failure
+
+  fuzz-smoke:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >-
+          cmake -S . -B build/fuzz -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF
+          -DEMNL_BUILD_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++
+      - name: Build
+        run: cmake --build build/fuzz --parallel 2
+      - name: IPC decoder smoke
+        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/ipc_decoder_fuzz -runs=1000
+      - name: OSIDL compiler smoke
+        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/osidlc_compiler_fuzz -runs=1000
+      - name: RPC error envelope smoke
+        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/rpc_error_fuzz -runs=1000

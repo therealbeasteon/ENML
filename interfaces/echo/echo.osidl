@@ -1,0 +1,46 @@
+package os.test.echo;
+
+struct Empty {
+}
+
+struct PingRequest {
+    string<256> text = 1;
+}
+
+struct PingResponse {
+    string<256> text = 1;
+}
+
+struct IdentityResponse {
+    u64 process_id = 1;
+    u64 principal_high = 2;
+    u64 principal_low = 3;
+    u64 user_id = 4;
+}
+
+struct IdentityClaimRequest {
+    u64 claimed_process_id = 1;
+    u64 claimed_principal_high = 2;
+    u64 claimed_principal_low = 3;
+    u64 claimed_user_id = 4;
+}
+
+service Echo {
+    id 0x0000F001;
+    version 1;
+
+    operation Ping = 1 {
+        request PingRequest;
+        response PingResponse;
+    }
+
+    operation Identify = 2 {
+        request Empty;
+        response IdentityResponse;
+    }
+
+    operation IdentifyClaim = 3 {
+        request IdentityClaimRequest;
+        response IdentityResponse;
+    }
+}

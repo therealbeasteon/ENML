@@ -1,0 +1,115 @@
+add_executable(supervisor_lifecycle_test supervisor_lifecycle_test.cpp)
+target_link_libraries(supervisor_lifecycle_test PRIVATE
+    emnl::supervisor
+    emnl::echo_generated
+    emnl_warnings
+)
+target_compile_options(supervisor_lifecycle_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME supervisor_lifecycle_test
+    COMMAND supervisor_lifecycle_test $<TARGET_FILE:system_echo>
+)
+
+add_executable(supervisor_crash_loop_test supervisor_crash_loop_test.cpp)
+target_link_libraries(supervisor_crash_loop_test PRIVATE
+    emnl::supervisor
+    emnl::echo_generated
+    emnl_warnings
+)
+target_compile_options(supervisor_crash_loop_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME supervisor_crash_loop_test
+    COMMAND supervisor_crash_loop_test $<TARGET_FILE:system_echo>
+)
+
+add_executable(never_ready_service never_ready_service.cpp)
+target_link_libraries(never_ready_service PRIVATE emnl_warnings)
+target_compile_options(never_ready_service PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+
+add_executable(supervisor_readiness_test supervisor_readiness_test.cpp)
+target_link_libraries(supervisor_readiness_test PRIVATE
+    emnl::supervisor
+    emnl::echo_generated
+    emnl_warnings
+)
+target_compile_options(supervisor_readiness_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME supervisor_readiness_test
+    COMMAND supervisor_readiness_test $<TARGET_FILE:never_ready_service>
+)
+
+add_executable(supervisor_identity_test supervisor_identity_test.cpp)
+target_link_libraries(supervisor_identity_test PRIVATE
+    emnl::supervisor
+    emnl::echo_generated
+    emnl_warnings
+)
+target_compile_options(supervisor_identity_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME supervisor_identity_test
+    COMMAND supervisor_identity_test $<TARGET_FILE:system_echo>
+)
+
+add_executable(evil_echo_service evil_echo_service.cpp)
+target_link_libraries(evil_echo_service PRIVATE emnl::osservice emnl_warnings)
+target_compile_options(evil_echo_service PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+
+add_executable(supervisor_sandbox_test supervisor_sandbox_test.cpp)
+target_link_libraries(supervisor_sandbox_test PRIVATE emnl::supervisor emnl_warnings)
+target_compile_options(supervisor_sandbox_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME supervisor_sandbox_test
+    COMMAND supervisor_sandbox_test $<TARGET_FILE:evil_echo_service>
+)
+
+add_executable(sandbox_landlock_test sandbox_landlock_test.cpp)
+target_link_libraries(sandbox_landlock_test PRIVATE emnl::ossandbox emnl_warnings)
+target_compile_options(sandbox_landlock_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME sandbox_landlock_test COMMAND sandbox_landlock_test)
+set_tests_properties(sandbox_landlock_test PROPERTIES SKIP_RETURN_CODE 77)
+
+add_executable(resource_probe_service resource_probe_service.cpp)
+target_link_libraries(resource_probe_service PRIVATE emnl::osservice emnl_warnings)
+target_compile_options(resource_probe_service PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+
+add_executable(supervisor_resource_limits_test supervisor_resource_limits_test.cpp)
+target_link_libraries(supervisor_resource_limits_test PRIVATE emnl::supervisor emnl_warnings)
+target_compile_options(supervisor_resource_limits_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME supervisor_resource_limits_test
+    COMMAND supervisor_resource_limits_test $<TARGET_FILE:resource_probe_service>
+)
+
+add_executable(supervisor_restart_revocation_test supervisor_restart_revocation_test.cpp)
+target_link_libraries(supervisor_restart_revocation_test PRIVATE
+    emnl::supervisor
+    emnl::echo_generated
+    emnl_warnings
+)
+target_compile_options(supervisor_restart_revocation_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME supervisor_restart_revocation_test
+    COMMAND supervisor_restart_revocation_test $<TARGET_FILE:system_echo>
+)
