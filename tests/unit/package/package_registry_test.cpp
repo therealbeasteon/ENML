@@ -87,9 +87,31 @@ int main() {
     assert(owner);
     assert(owner.value() == notes);
 
-    assert(registry.stage_generation(generation(notes, 3U, std::byte{0x26})));
-    assert(registry.stage_generation(generation(notes, 4U, std::byte{0x27})));
-    auto fifth = registry.stage_generation(generation(notes, 5U, std::byte{0x28}));
+    // Uninstall revokes future activation-based launch resolution but keeps
+    // signer ownership and historical generations as a tombstone.
+    assert(registry.uninstall(notes));
+    auto uninstalled = registry.active(notes);
+    assert(!uninstalled);
+    assert(uninstalled.error().code == pkg::errors::no_active_generation);
+    assert(registry.owner(notes.package_id).value() == notes);
+    assert(registry.generation(notes, pkg::PackageGenerationId{1U}));
+    assert(registry.generation(notes, pkg::PackageGenerationId{2U}));
+    assert(registry.uninstall(notes)); // idempotent
+
+    auto impostor_after_uninstall = registry.stage_generation(
+        generation(impostor, 3U, std::byte{0x26}));
+    assert(!impostor_after_uninstall);
+    assert(impostor_after_uninstall.error().code == pkg::errors::package_id_collision);
+
+    // Reinstall/update under the same signer continues monotonically rather
+    // than resetting generation history.
+    const auto generation3 = generation(notes, 3U, std::byte{0x27});
+    assert(registry.stage_generation(generation3));
+    assert(registry.activate(notes, pkg::PackageGenerationId{3U}));
+    assert(registry.active(notes).value() == generation3);
+
+    assert(registry.stage_generation(generation(notes, 4U, std::byte{0x28})));
+    auto fifth = registry.stage_generation(generation(notes, 5U, std::byte{0x29}));
     assert(!fifth);
     assert(fifth.error().code == pkg::errors::generation_capacity);
 
