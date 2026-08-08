@@ -11,8 +11,8 @@
 #include <linux/filter.h>
 #include <linux/landlock.h>
 #include <linux/seccomp.h>
-#include <sys/prctl.h>
 #include <signal.h>
+#include <sys/prctl.h>
 #include <sys/resource.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -38,9 +38,7 @@ namespace {
     header.version = _LINUX_CAPABILITY_VERSION_3;
     header.pid = 0;
     std::array<__user_cap_data_struct, 2> data{};
-    if (::syscall(SYS_capset, &header, data.data()) != 0) {
-        return false;
-    }
+    if (::syscall(SYS_capset, &header, data.data()) != 0) return false;
 #else
     return false;
 #endif
@@ -53,19 +51,58 @@ namespace {
     return true;
 }
 
-[[nodiscard]] bool add_landlock_path_rule(
+[[nodiscard]] constexpr std::uint64_t optional_landlock_rights() noexcept {
+    return
+#ifdef LANDLOCK_ACCESS_FS_REFER
+        LANDLOCK_ACCESS_FS_REFER |
+#endif
+#ifdef LANDLOCK_ACCESS_FS_TRUNCATE
+        LANDLOCK_ACCESS_FS_TRUNCATE |
+#endif
+        0ULL;
+}
+
+[[nodiscard]] constexpr std::uint64_t handled_landlock_rights() noexcept {
+    return LANDLOCK_ACCESS_FS_EXECUTE |
+        LANDLOCK_ACCESS_FS_WRITE_FILE |
+        LANDLOCK_ACCESS_FS_READ_FILE |
+        LANDLOCK_ACCESS_FS_READ_DIR |
+        LANDLOCK_ACCESS_FS_REMOVE_DIR |
+        LANDLOCK_ACCESS_FS_REMOVE_FILE |
+        LANDLOCK_ACCESS_FS_MAKE_CHAR |
+        LANDLOCK_ACCESS_FS_MAKE_DIR |
+        LANDLOCK_ACCESS_FS_MAKE_REG |
+        LANDLOCK_ACCESS_FS_MAKE_SOCK |
+        LANDLOCK_ACCESS_FS_MAKE_FIFO |
+        LANDLOCK_ACCESS_FS_MAKE_BLOCK |
+        LANDLOCK_ACCESS_FS_MAKE_SYM |
+        optional_landlock_rights();
+}
+
+[[nodiscard]] int create_landlock_ruleset() noexcept {
+#if defined(SYS_landlock_create_ruleset)
+    landlock_ruleset_attr ruleset_attr{};
+    ruleset_attr.handled_access_fs = handled_landlock_rights();
+    int ruleset_fd = -1;
+    do {
+        ruleset_fd = static_cast<int>(::syscall(
+            SYS_landlock_create_ruleset,
+            &ruleset_attr,
+            sizeof(ruleset_attr),
+            0U));
+    } while (ruleset_fd < 0 && errno == EINTR);
+    return ruleset_fd;
+#else
+    return -1;
+#endif
+}
+
+[[nodiscard]] bool add_landlock_fd_rule(
     int ruleset_fd,
-    const char* path,
+    int path_fd,
     std::uint64_t allowed_access) noexcept {
 #if defined(SYS_landlock_add_rule)
-    int path_fd = -1;
-    do {
-        path_fd = ::open(path, O_PATH | O_CLOEXEC);
-    } while (path_fd < 0 && errno == EINTR);
-    if (path_fd < 0) {
-        return errno == ENOENT;
-    }
-
+    if (ruleset_fd < 0 || path_fd < 0) return false;
     const landlock_path_beneath_attr rule{
         .allowed_access = allowed_access,
         .parent_fd = path_fd,
@@ -79,8 +116,28 @@ namespace {
             &rule,
             0U));
     } while (result < 0 && errno == EINTR);
-    (void)::close(path_fd);
     return result == 0;
+#else
+    (void)ruleset_fd;
+    (void)path_fd;
+    (void)allowed_access;
+    return false;
+#endif
+}
+
+[[nodiscard]] bool add_landlock_path_rule(
+    int ruleset_fd,
+    const char* path,
+    std::uint64_t allowed_access) noexcept {
+#if defined(SYS_landlock_add_rule)
+    int path_fd = -1;
+    do {
+        path_fd = ::open(path, O_PATH | O_CLOEXEC);
+    } while (path_fd < 0 && errno == EINTR);
+    if (path_fd < 0) return errno == ENOENT;
+    const bool result = add_landlock_fd_rule(ruleset_fd, path_fd, allowed_access);
+    (void)::close(path_fd);
+    return result;
 #else
     (void)ruleset_fd;
     (void)path;
@@ -89,25 +146,72 @@ namespace {
 #endif
 }
 
-[[nodiscard]] bool install_landlock(const char* executable_path) noexcept {
-#if defined(SYS_landlock_create_ruleset) && defined(SYS_landlock_restrict_self)
-    // Handle all common file mutation rights, and file/directory reads. Rules
-    // added below grant only the runtime material needed for a dynamically
-    // linked service. Everything else is denied by omission.
-    // Landlock access bits were added across kernel UAPI revisions. Cross
-    // toolchains can legitimately ship older linux/landlock.h headers than
-    // the runtime kernel, so only request optional rights that the build
-    // headers actually define. The baseline rights remain mandatory.
-    constexpr std::uint64_t optional_handled =
-#ifdef LANDLOCK_ACCESS_FS_REFER
-        LANDLOCK_ACCESS_FS_REFER |
-#endif
-#ifdef LANDLOCK_ACCESS_FS_TRUNCATE
-        LANDLOCK_ACCESS_FS_TRUNCATE |
-#endif
-        0ULL;
-    constexpr std::uint64_t handled =
+[[nodiscard]] bool add_landlock_runtime_rules(int ruleset_fd) noexcept {
+    constexpr std::uint64_t runtime_read =
         LANDLOCK_ACCESS_FS_EXECUTE |
+        LANDLOCK_ACCESS_FS_READ_FILE |
+        LANDLOCK_ACCESS_FS_READ_DIR;
+    constexpr std::uint64_t file_read = LANDLOCK_ACCESS_FS_READ_FILE;
+    bool ok = add_landlock_path_rule(ruleset_fd, "/lib", runtime_read);
+    ok = ok && add_landlock_path_rule(ruleset_fd, "/lib64", runtime_read);
+    ok = ok && add_landlock_path_rule(ruleset_fd, "/usr/lib", runtime_read);
+    ok = ok && add_landlock_path_rule(ruleset_fd, "/usr/lib64", runtime_read);
+    ok = ok && add_landlock_path_rule(ruleset_fd, "/etc/ld.so.cache", file_read);
+    ok = ok && add_landlock_path_rule(
+        ruleset_fd,
+        "/proc/self",
+        LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR);
+    return ok;
+}
+
+[[nodiscard]] bool restrict_with_landlock(int ruleset_fd) noexcept {
+#if defined(SYS_landlock_restrict_self)
+    int result = -1;
+    do {
+        result = static_cast<int>(::syscall(SYS_landlock_restrict_self, ruleset_fd, 0U));
+    } while (result < 0 && errno == EINTR);
+    return result == 0;
+#else
+    (void)ruleset_fd;
+    return false;
+#endif
+}
+
+[[nodiscard]] bool install_service_landlock(const char* executable_path) noexcept {
+#if defined(SYS_landlock_create_ruleset) && defined(SYS_landlock_restrict_self)
+    const int ruleset_fd = create_landlock_ruleset();
+    if (ruleset_fd < 0) return false;
+    constexpr std::uint64_t executable_read =
+        LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_READ_FILE;
+    bool ok = add_landlock_path_rule(ruleset_fd, executable_path, executable_read);
+    ok = ok && add_landlock_runtime_rules(ruleset_fd);
+    const bool restricted = ok && restrict_with_landlock(ruleset_fd);
+    (void)::close(ruleset_fd);
+    return restricted;
+#else
+    (void)executable_path;
+    return false;
+#endif
+}
+
+[[nodiscard]] bool install_application_landlock(
+    const ApplicationSandboxHandlesV1& handles) noexcept {
+#if defined(SYS_landlock_create_ruleset) && defined(SYS_landlock_restrict_self)
+    struct stat executable_info {};
+    struct stat data_info {};
+    if (handles.executable_fd < 0 || handles.private_data_directory_fd < 0 ||
+        ::fstat(handles.executable_fd, &executable_info) != 0 ||
+        ::fstat(handles.private_data_directory_fd, &data_info) != 0 ||
+        !S_ISREG(executable_info.st_mode) || !S_ISDIR(data_info.st_mode)) {
+        return false;
+    }
+
+    const int ruleset_fd = create_landlock_ruleset();
+    if (ruleset_fd < 0) return false;
+
+    constexpr std::uint64_t executable_read =
+        LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_READ_FILE;
+    const std::uint64_t private_data_access =
         LANDLOCK_ACCESS_FS_WRITE_FILE |
         LANDLOCK_ACCESS_FS_READ_FILE |
         LANDLOCK_ACCESS_FS_READ_DIR |
@@ -120,54 +224,19 @@ namespace {
         LANDLOCK_ACCESS_FS_MAKE_FIFO |
         LANDLOCK_ACCESS_FS_MAKE_BLOCK |
         LANDLOCK_ACCESS_FS_MAKE_SYM |
-        optional_handled;
+        optional_landlock_rights();
 
-    landlock_ruleset_attr ruleset_attr{};
-    ruleset_attr.handled_access_fs = handled;
-    int ruleset_fd = -1;
-    do {
-        ruleset_fd = static_cast<int>(::syscall(
-            SYS_landlock_create_ruleset,
-            &ruleset_attr,
-            sizeof(ruleset_attr),
-            0U));
-    } while (ruleset_fd < 0 && errno == EINTR);
-    if (ruleset_fd < 0) {
-        return false;
-    }
-
-    constexpr std::uint64_t runtime_read =
-        LANDLOCK_ACCESS_FS_EXECUTE |
-        LANDLOCK_ACCESS_FS_READ_FILE |
-        LANDLOCK_ACCESS_FS_READ_DIR;
-    constexpr std::uint64_t file_read = LANDLOCK_ACCESS_FS_READ_FILE;
-    constexpr std::uint64_t executable_read =
-        LANDLOCK_ACCESS_FS_EXECUTE | LANDLOCK_ACCESS_FS_READ_FILE;
-
-    bool ok = add_landlock_path_rule(ruleset_fd, executable_path, executable_read);
-    // Common dynamic runtime locations. Missing paths are deliberately
-    // tolerated so the same profile works across Linux distributions.
-    ok = ok && add_landlock_path_rule(ruleset_fd, "/lib", runtime_read);
-    ok = ok && add_landlock_path_rule(ruleset_fd, "/lib64", runtime_read);
-    ok = ok && add_landlock_path_rule(ruleset_fd, "/usr/lib", runtime_read);
-    ok = ok && add_landlock_path_rule(ruleset_fd, "/usr/lib64", runtime_read);
-    ok = ok && add_landlock_path_rule(ruleset_fd, "/etc/ld.so.cache", file_read);
-    // Sanitizers and a few libc diagnostics read process metadata after exec.
-    // This grants read-only access to the process's own proc subtree, not a
-    // writable filesystem capability.
-    ok = ok && add_landlock_path_rule(ruleset_fd, "/proc/self", LANDLOCK_ACCESS_FS_READ_FILE | LANDLOCK_ACCESS_FS_READ_DIR);
-
-    int restrict_result = -1;
-    if (ok) {
-        do {
-            restrict_result = static_cast<int>(::syscall(
-                SYS_landlock_restrict_self, ruleset_fd, 0U));
-        } while (restrict_result < 0 && errno == EINTR);
-    }
+    bool ok = add_landlock_fd_rule(ruleset_fd, handles.executable_fd, executable_read);
+    ok = ok && add_landlock_fd_rule(
+        ruleset_fd,
+        handles.private_data_directory_fd,
+        private_data_access);
+    ok = ok && add_landlock_runtime_rules(ruleset_fd);
+    const bool restricted = ok && restrict_with_landlock(ruleset_fd);
     (void)::close(ruleset_fd);
-    return ok && restrict_result == 0;
+    return restricted;
 #else
-    (void)executable_path;
+    (void)handles;
     return false;
 #endif
 }
@@ -265,18 +334,13 @@ inline constexpr std::uint32_t expected_audit_arch = 0U;
 #endif
 }
 
-} // namespace
-
-os::core::Result<void>
-apply_before_exec(const char* executable_path, const SandboxPolicyV1& policy) noexcept {
-    if (!policy.enabled) {
-        return {};
-    }
-    if (executable_path == nullptr || executable_path[0] == '\0' ||
-        policy.max_open_files < 5U || policy.max_processes == 0U) {
+[[nodiscard]] os::core::Result<void>
+apply_common_before_exec(const SandboxPolicyV1& policy, std::uint32_t minimum_open_files) noexcept {
+    if (!policy.enabled) return {};
+    if (policy.max_open_files < minimum_open_files || policy.max_processes == 0U ||
+        (policy.require_landlock && !policy.require_no_new_privs)) {
         return sandbox_error(os::core::errors::security::sandbox_apply_failed);
     }
-
     if (::prctl(PR_SET_PDEATHSIG, SIGKILL, 0L, 0L, 0L) != 0) {
         return sandbox_error(os::core::errors::security::sandbox_apply_failed);
     }
@@ -286,26 +350,55 @@ apply_before_exec(const char* executable_path, const SandboxPolicyV1& policy) no
         ::prctl(PR_SET_NO_NEW_PRIVS, 1L, 0L, 0L, 0L) != 0) {
         return sandbox_error(os::core::errors::security::sandbox_apply_failed);
     }
-
     if (!set_limit(RLIMIT_CORE, 0U) ||
         !set_limit(RLIMIT_NOFILE, static_cast<rlim_t>(policy.max_open_files)) ||
         !set_limit(RLIMIT_NPROC, static_cast<rlim_t>(policy.max_processes)) ||
         !set_limit(RLIMIT_FSIZE, static_cast<rlim_t>(policy.max_file_size_bytes))) {
         return sandbox_error(os::core::errors::security::sandbox_apply_failed);
     }
-
     if (policy.clear_capabilities && !clear_all_capabilities()) {
         return sandbox_error(os::core::errors::security::sandbox_apply_failed);
     }
+    return {};
+}
 
-    if (policy.require_landlock && !install_landlock(executable_path)) {
+} // namespace
+
+os::core::Result<void>
+apply_before_exec(const char* executable_path, const SandboxPolicyV1& policy) noexcept {
+    if (!policy.enabled) return {};
+    if (executable_path == nullptr || executable_path[0] == '\0') {
+        return sandbox_error(os::core::errors::security::sandbox_apply_failed);
+    }
+    auto common = apply_common_before_exec(policy, 5U);
+    if (!common) return common.error();
+
+    if (policy.require_landlock && !install_service_landlock(executable_path)) {
         return sandbox_error(os::core::errors::security::sandbox_not_supported);
     }
-
     if (policy.require_seccomp && !install_seccomp()) {
         return sandbox_error(os::core::errors::security::sandbox_not_supported);
     }
+    return {};
+}
 
+os::core::Result<void>
+apply_application_before_exec(
+    const ApplicationSandboxHandlesV1& handles,
+    const SandboxPolicyV1& policy) noexcept {
+    if (!policy.enabled) return {};
+    if (handles.executable_fd < 0 || handles.private_data_directory_fd < 0) {
+        return sandbox_error(os::core::errors::security::sandbox_apply_failed);
+    }
+    auto common = apply_common_before_exec(policy, 6U);
+    if (!common) return common.error();
+
+    if (policy.require_landlock && !install_application_landlock(handles)) {
+        return sandbox_error(os::core::errors::security::sandbox_not_supported);
+    }
+    if (policy.require_seccomp && !install_seccomp()) {
+        return sandbox_error(os::core::errors::security::sandbox_not_supported);
+    }
     return {};
 }
 
