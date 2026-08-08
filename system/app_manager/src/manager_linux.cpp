@@ -40,11 +40,11 @@ inline constexpr int application_executable_fd = 4;
 
 void close_extra_descriptors() noexcept {
 #if defined(SYS_close_range)
-    if (::syscall(SYS_close_range, 5U, ~0U, 0U) == 0) return;
+    if (::syscall(SYS_close_range, 6U, ~0U, 0U) == 0) return;
 #endif
     long limit = ::sysconf(_SC_OPEN_MAX);
     if (limit < 0 || limit > 4096) limit = 4096;
-    for (int fd = 5; fd < static_cast<int>(limit); ++fd) {
+    for (int fd = 6; fd < static_cast<int>(limit); ++fd) {
         (void)::close(fd);
     }
 }
@@ -56,9 +56,12 @@ open_executable_beneath(int root_fd, std::string_view path) noexcept {
         return manager_error(manager_errors::executable_rejected);
     }
 
-    const int root_copy = duplicate_cloexec(root_fd);
-    if (root_copy < 0) return manager_error(manager_errors::executable_rejected);
-    os::core::NativeHandle current{root_copy};
+    int root_path_fd = -1;
+    do {
+        root_path_fd = ::openat(root_fd, ".", O_PATH | O_DIRECTORY | O_CLOEXEC);
+    } while (root_path_fd < 0 && errno == EINTR);
+    if (root_path_fd < 0) return manager_error(manager_errors::executable_rejected);
+    os::core::NativeHandle current{root_path_fd};
 
     std::size_t start = 0U;
     while (start < path.size()) {
@@ -74,8 +77,8 @@ open_executable_beneath(int root_fd, std::string_view path) noexcept {
         std::copy_n(path.data() + static_cast<std::ptrdiff_t>(start), length, segment.data());
 
         const int flags = final_segment
-            ? (O_RDONLY | O_CLOEXEC | O_NOFOLLOW)
-            : (O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
+            ? (O_PATH | O_CLOEXEC | O_NOFOLLOW)
+            : (O_PATH | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW);
         int next = -1;
         do {
             next = ::openat(current.native(), segment.data(), flags);
@@ -100,6 +103,20 @@ open_executable_beneath(int root_fd, std::string_view path) noexcept {
     return manager_error(manager_errors::executable_rejected);
 }
 
+[[nodiscard]] os::core::Result<os::core::NativeHandle>
+open_private_data_root(int directory_fd) noexcept {
+    struct stat metadata {};
+    if (directory_fd < 0 || ::fstat(directory_fd, &metadata) != 0 || !S_ISDIR(metadata.st_mode)) {
+        return manager_error(manager_errors::invalid_profile);
+    }
+    int root = -1;
+    do {
+        root = ::openat(directory_fd, ".", O_PATH | O_DIRECTORY | O_CLOEXEC);
+    } while (root < 0 && errno == EINTR);
+    if (root < 0) return manager_error(manager_errors::invalid_profile);
+    return os::core::NativeHandle{root};
+}
+
 [[nodiscard]] bool set_cloexec(int fd) noexcept {
     int flags = -1;
     do {
@@ -115,25 +132,31 @@ open_executable_beneath(int root_fd, std::string_view path) noexcept {
 
 [[noreturn]] void exec_application_child(
     int executable_fd,
+    int private_data_directory_fd,
     int bootstrap_fd,
     const os::sandbox::SandboxPolicyV1& sandbox) noexcept {
     const int bootstrap_temp = duplicate_cloexec(bootstrap_fd);
     const int executable_temp = duplicate_cloexec(executable_fd);
-    if (bootstrap_temp < 0 || executable_temp < 0) std::_Exit(120);
+    const int data_temp = duplicate_cloexec(private_data_directory_fd);
+    if (bootstrap_temp < 0 || executable_temp < 0 || data_temp < 0) std::_Exit(120);
 
     if (::dup2(bootstrap_temp, application_bootstrap_fd) < 0 ||
         ::dup2(executable_temp, application_executable_fd) < 0 ||
+        ::dup2(data_temp, application_private_data_fd) < 0 ||
         !set_cloexec(application_executable_fd)) {
         std::_Exit(121);
     }
 
     (void)::close(bootstrap_temp);
     (void)::close(executable_temp);
+    (void)::close(data_temp);
     close_extra_descriptors();
 
-    // M1.3 launches from an already-opened trusted executable descriptor.
-    // Landlock admission for per-app package/data roots is intentionally M1.4.
-    auto sandbox_result = os::sandbox::apply_before_exec("/proc/self/fd/4", sandbox);
+    const os::sandbox::ApplicationSandboxHandlesV1 sandbox_handles{
+        .executable_fd = application_executable_fd,
+        .private_data_directory_fd = application_private_data_fd,
+    };
+    auto sandbox_result = os::sandbox::apply_application_before_exec(sandbox_handles, sandbox);
     if (!sandbox_result) std::_Exit(122);
 
     char arg0[] = "emnl-app";
@@ -172,8 +195,9 @@ void kill_and_reap(pid_t pid) noexcept {
 
 ApplicationManager::ApplicationManager(
     os::package::PersistentPackageRegistry& packages,
+    ApplicationPrincipalStore& principals,
     os::supervisor::Supervisor& supervisor) noexcept
-    : packages_(packages), supervisor_(supervisor) {}
+    : packages_(packages), principals_(principals), supervisor_(supervisor) {}
 
 ApplicationManager::~ApplicationManager() {
     for (auto& slot : instances_) {
@@ -200,6 +224,26 @@ ApplicationManager::find_target(const os::package::PackageGenerationRecord& pack
     return nullptr;
 }
 
+ApplicationManager::ApplicationProfile*
+ApplicationManager::find_profile(
+    const os::package::ApplicationIdentity& application,
+    os::core::UserId user) noexcept {
+    for (auto& profile : profiles_) {
+        if (profile.occupied && profile.application == application && profile.user == user) return &profile;
+    }
+    return nullptr;
+}
+
+const ApplicationManager::ApplicationProfile*
+ApplicationManager::find_profile(
+    const os::package::ApplicationIdentity& application,
+    os::core::UserId user) const noexcept {
+    for (const auto& profile : profiles_) {
+        if (profile.occupied && profile.application == application && profile.user == user) return &profile;
+    }
+    return nullptr;
+}
+
 ApplicationManager::InstanceSlot*
 ApplicationManager::find_instance(os::core::ApplicationInstanceId instance_id) noexcept {
     for (auto& slot : instances_) {
@@ -218,16 +262,9 @@ ApplicationManager::find_instance(os::core::ApplicationInstanceId instance_id) c
 
 os::core::Result<void>
 ApplicationManager::register_launch_target(LaunchTargetRegistration registration) noexcept {
-    if (!registration.package.valid() || !os::core::valid_principal(registration.principal) ||
-        !registration.generation_directory.valid() || !registration.entry_point.valid() ||
-        registration.readiness_timeout_ms == 0U || registration.sandbox.max_open_files < 5U ||
-        registration.sandbox.max_processes == 0U) {
+    if (!registration.package.valid() || !registration.generation_directory.valid() ||
+        !registration.entry_point.valid() || registration.readiness_timeout_ms == 0U) {
         return manager_error(manager_errors::invalid_target);
-    }
-    if (registration.sandbox.require_landlock) {
-        return os::core::make_error(
-            os::core::ErrorDomain::security,
-            os::core::errors::security::sandbox_not_supported);
     }
 
     auto known = packages_.generation(
@@ -238,13 +275,6 @@ ApplicationManager::register_launch_target(LaunchTargetRegistration registration
     }
     if (find_target(registration.package) != nullptr) {
         return manager_error(manager_errors::target_conflict);
-    }
-
-    for (const auto& target : targets_) {
-        if (!target.occupied || target.package.application != registration.package.application) continue;
-        if (target.principal != registration.principal) {
-            return manager_error(manager_errors::principal_mismatch);
-        }
     }
 
     LaunchTarget* free_target = nullptr;
@@ -263,10 +293,42 @@ ApplicationManager::register_launch_target(LaunchTargetRegistration registration
 
     free_target->occupied = true;
     free_target->package = registration.package;
-    free_target->principal = registration.principal;
     free_target->executable = std::move(executable).value();
-    free_target->sandbox = registration.sandbox;
     free_target->readiness_timeout_ms = registration.readiness_timeout_ms;
+    return {};
+}
+
+os::core::Result<void>
+ApplicationManager::register_application_profile(ApplicationProfileRegistration registration) noexcept {
+    if (!registration.application.valid() || !registration.private_data_directory.valid() ||
+        registration.sandbox.max_open_files < 6U || registration.sandbox.max_processes == 0U) {
+        return manager_error(manager_errors::invalid_profile);
+    }
+    auto owner = packages_.owner(registration.application.package_id);
+    if (!owner || owner.value() != registration.application) {
+        return manager_error(manager_errors::invalid_profile);
+    }
+    if (find_profile(registration.application, registration.user) != nullptr) {
+        return manager_error(manager_errors::profile_conflict);
+    }
+
+    ApplicationProfile* free_profile = nullptr;
+    for (auto& profile : profiles_) {
+        if (!profile.occupied) {
+            free_profile = &profile;
+            break;
+        }
+    }
+    if (free_profile == nullptr) return manager_error(manager_errors::profile_capacity);
+
+    auto data_root = open_private_data_root(registration.private_data_directory.native());
+    if (!data_root) return data_root.error();
+
+    free_profile->occupied = true;
+    free_profile->application = registration.application;
+    free_profile->user = registration.user;
+    free_profile->private_data_directory = std::move(data_root).value();
+    free_profile->sandbox = registration.sandbox;
     return {};
 }
 
@@ -281,6 +343,12 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
     if (target == nullptr || !target->executable.valid()) {
         return manager_error(manager_errors::target_not_found);
     }
+    ApplicationProfile* profile = find_profile(owner.value(), user);
+    if (profile == nullptr || !profile->private_data_directory.valid()) {
+        return manager_error(manager_errors::profile_not_found);
+    }
+    auto principal = principals_.resolve_or_allocate(owner.value(), user);
+    if (!principal) return principal.error();
 
     InstanceSlot* free_instance = nullptr;
     for (auto& slot : instances_) {
@@ -309,13 +377,14 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
         bootstrap_pair[0].close();
         exec_application_child(
             target->executable.native(),
+            profile->private_data_directory.native(),
             bootstrap_pair[1].native_fd(),
-            target->sandbox);
+            profile->sandbox);
     }
 
     bootstrap_pair[1].close();
 
-    auto identity = supervisor_.register_process(child, target->principal, user);
+    auto identity = supervisor_.register_process(child, principal.value().principal, user);
     if (!identity) {
         kill_and_reap(child);
         return identity.error();
