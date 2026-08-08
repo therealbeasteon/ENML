@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <os/core/identity.hpp>
 #include <os/core/native_handle.hpp>
 #include <os/core/result.hpp>
 #include <os/core/strong_id.hpp>
@@ -28,6 +29,7 @@ inline constexpr std::uint32_t snapshot_inconsistent = 205U;
 inline constexpr std::uint32_t store_full = 206U;
 inline constexpr std::uint32_t id_exhausted = 207U;
 inline constexpr std::uint32_t invalid_application = 208U;
+inline constexpr std::uint32_t unknown_application_user = 209U;
 } // namespace principal_errors
 
 struct ApplicationPrincipalRecord final {
