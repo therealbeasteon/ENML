@@ -12,7 +12,7 @@ jobs:
       - name: Configure
         run: cmake --preset host-debug
       - name: Build package library and tests
-        run: cmake --build --preset host-debug --target package_identity_test package_registry_test package_analyzer_test --parallel 2
+        run: cmake --build --preset host-debug --target package_identity_test package_registry_test package_analyzer_test package_persistence_test --parallel 2
       - name: Run package tests
         run: ctest --preset host-debug --output-on-failure -R '^package_'
 
@@ -28,7 +28,7 @@ jobs:
       - name: Build package library and tests
         run: >-
           cmake --build build/m1-package-clang
-          --target package_identity_test package_registry_test package_analyzer_test
+          --target package_identity_test package_registry_test package_analyzer_test package_persistence_test
           --parallel 2
       - name: Run package tests
         run: ctest --test-dir build/m1-package-clang --output-on-failure -R '^package_'
@@ -42,6 +42,6 @@ jobs:
       - name: Configure
         run: cmake --preset host-debug
       - name: Build package library and tests natively
-        run: cmake --build --preset host-debug --target package_identity_test package_registry_test package_analyzer_test --parallel 2
+        run: cmake --build --preset host-debug --target package_identity_test package_registry_test package_analyzer_test package_persistence_test --parallel 2
       - name: Run package tests natively
         run: ctest --preset host-debug --output-on-failure -R '^package_'
