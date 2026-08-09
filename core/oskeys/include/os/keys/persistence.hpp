@@ -17,9 +17,6 @@ inline constexpr std::uint16_t key_registry_snapshot_header_size_v1 = 32U;
 inline constexpr std::size_t max_key_registry_snapshot_bytes = 288U * 1024U;
 inline constexpr std::size_t key_registry_binding_bytes_v1 = 60U;
 
-// Durable logical-key registry. The caller provides an already-authorized
-// state-directory handle and a provider that can persist opaque wrapped/sealed
-// provider objects. Raw long-lived key bytes never enter the registry snapshot.
 class PersistentKeyRegistry final : public KeyStore {
 public:
     PersistentKeyRegistry(const PersistentKeyRegistry&) = delete;
@@ -38,6 +35,19 @@ public:
         KeyPurpose purpose,
         RightsMask rights) noexcept override;
 
+    // Trusted internal variant for provider material already generated beneath
+    // the correct M2.7 application root. The persistent registry takes
+    // ownership of `provider_key` on entry: if publication fails before rename
+    // it destroys the generated provider object; if replacement occurred it
+    // preserves the provider object referenced by the visible snapshot.
+    [[nodiscard]] os::core::Result<KeyDescriptor>
+    adopt_generated(
+        KeyOwner owner,
+        KeyId id,
+        KeyPurpose purpose,
+        RightsMask rights,
+        ProviderKeyReference provider_key) noexcept;
+
     [[nodiscard]] os::core::Result<KeyDescriptor>
     describe(KeyOwner caller, KeyId id) const noexcept override {
         return registry_.describe(caller, id);
@@ -45,6 +55,15 @@ public:
 
     [[nodiscard]] os::core::Result<KeyDescriptor>
     rotate(KeyOwner caller, KeyId id) noexcept override;
+
+    // Trusted rotation variant for provider material generated beneath the
+    // existing application root. Ownership/replacement semantics mirror
+    // adopt_generated().
+    [[nodiscard]] os::core::Result<KeyDescriptor>
+    rotate_adopt_generated(
+        KeyOwner caller,
+        KeyId id,
+        ProviderKeyReference provider_key) noexcept;
 
     [[nodiscard]] os::core::Result<std::size_t>
     seal(

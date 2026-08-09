@@ -129,22 +129,37 @@ KeyService::dispatch_once(os::core::MutableByteSpan receive_buffer, int timeout_
     if (!scratch_result) return scratch_result.error();
     if (timeout_ms < -1) return os::core::core_error(os::core::errors::core::invalid_argument);
 
+    // Poll only descriptors that are actually live. Passing the full fixed
+    // object-capacity array to poll(2) makes nfds depend on policy capacity
+    // rather than open resources and can exceed the service RLIMIT_NOFILE even
+    // when almost every entry is -1. Compact polling keeps the runtime cost and
+    // kernel-visible resource count proportional to active capabilities.
     std::array<pollfd, max_key_objects + 1U> descriptors{};
-    for (auto& descriptor : descriptors) {
-        descriptor.fd = -1;
-        descriptor.events = POLLIN;
-        descriptor.revents = 0;
-    }
-    descriptors[0].fd = endpoint_->native_fd();
+    std::array<std::size_t, max_key_objects> object_indices{};
+    std::size_t descriptor_count = 1U;
+    descriptors[0] = pollfd{
+        .fd = endpoint_->native_fd(),
+        .events = POLLIN,
+        .revents = 0,
+    };
+
     for (std::size_t index = 0U; index < objects_.size(); ++index) {
-        if (objects_[index].occupied) {
-            descriptors[index + 1U].fd = objects_[index].endpoint.native_fd();
-        }
+        if (!objects_[index].occupied) continue;
+        descriptors[descriptor_count] = pollfd{
+            .fd = objects_[index].endpoint.native_fd(),
+            .events = POLLIN,
+            .revents = 0,
+        };
+        object_indices[descriptor_count - 1U] = index;
+        ++descriptor_count;
     }
 
     int result = -1;
     do {
-        result = ::poll(descriptors.data(), static_cast<nfds_t>(descriptors.size()), timeout_ms);
+        result = ::poll(
+            descriptors.data(),
+            static_cast<nfds_t>(descriptor_count),
+            timeout_ms);
     } while (result < 0 && errno == EINTR);
     if (result < 0) return key_error(errors::provider_failure);
     if (result == 0) return {};
@@ -154,11 +169,14 @@ KeyService::dispatch_once(os::core::MutableByteSpan receive_buffer, int timeout_
         return ipc_error(os::ipc::errors::peer_died);
     }
 
-    for (std::size_t index = 0U; index < objects_.size(); ++index) {
-        const auto revents = descriptors[index + 1U].revents;
-        if ((revents & POLLIN) != 0) return dispatch_object(index, receive_buffer);
+    for (std::size_t descriptor_index = 1U;
+         descriptor_index < descriptor_count;
+         ++descriptor_index) {
+        const std::size_t object_index = object_indices[descriptor_index - 1U];
+        const auto revents = descriptors[descriptor_index].revents;
+        if ((revents & POLLIN) != 0) return dispatch_object(object_index, receive_buffer);
         if ((revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
-            clear_slot(index);
+            clear_slot(object_index);
             return {};
         }
     }

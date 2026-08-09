@@ -8,6 +8,16 @@ target_compile_options(key_service_identity_test PRIVATE
 )
 add_test(NAME key_service_identity_test COMMAND key_service_identity_test)
 
+add_executable(key_control_policy_test key_control_policy_test.cpp)
+target_link_libraries(key_control_policy_test PRIVATE
+    emnl::key_service
+    emnl_warnings
+)
+target_compile_options(key_control_policy_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME key_control_policy_test COMMAND key_control_policy_test)
+
 if(EMNL_BUILD_OPENSSL_TEST_PROVIDER)
     add_executable(key_service_aead_test key_service_aead_test.cpp)
     target_link_libraries(key_service_aead_test PRIVATE
@@ -60,4 +70,48 @@ if(EMNL_BUILD_OPENSSL_TEST_PROVIDER)
         $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
     )
     add_test(NAME key_service_rpc_aead_test COMMAND key_service_rpc_aead_test)
+
+    add_executable(key_service_supervisor_integration_test
+        key_service_supervisor_integration_test.cpp)
+    target_link_libraries(key_service_supervisor_integration_test PRIVATE
+        emnl::key_service
+        emnl::supervisor
+        emnl_warnings
+    )
+    target_compile_definitions(key_service_supervisor_integration_test PRIVATE
+        EMNL_SYSTEM_KEYS_PATH="$<TARGET_FILE:system_keys_host_ci>"
+    )
+    target_compile_options(key_service_supervisor_integration_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+    )
+    add_dependencies(key_service_supervisor_integration_test system_keys_host_ci)
+    add_test(
+        NAME key_service_supervisor_integration_test
+        COMMAND key_service_supervisor_integration_test
+    )
+
+    add_executable(app_manager_key_policy_integration_test
+        app_manager_key_policy_integration_test.cpp)
+    target_link_libraries(app_manager_key_policy_integration_test PRIVATE
+        emnl::app_manager
+        emnl::key_service
+        emnl_warnings
+    )
+    target_compile_options(app_manager_key_policy_integration_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+    )
+    add_dependencies(app_manager_key_policy_integration_test
+        system.storage
+        system_keys_host_ci
+        m1_test_app_v1
+        m1_test_app_v2
+    )
+    add_test(
+        NAME key_app_manager_policy_integration_test
+        COMMAND app_manager_key_policy_integration_test
+            $<TARGET_FILE:system.storage>
+            $<TARGET_FILE:system_keys_host_ci>
+            $<TARGET_FILE:m1_test_app_v1>
+            $<TARGET_FILE:m1_test_app_v2>
+    )
 endif()

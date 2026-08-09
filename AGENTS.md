@@ -11,6 +11,7 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - ARM64 is the primary target; x86-64 Linux remains a host implementation tier.
 - Linux PID/UID/GID are implementation evidence, never public ENML identity.
 - `PrincipalId`, `UserId`, and logical `ProcessId` come from trusted system state; request payloads never establish caller identity.
+- One native process must have one boot-scoped logical `ProcessId`. Do not independently allocate different ENML process identities merely because the process connects to multiple services.
 - Public IPC uses explicit little-endian serialization. Never serialize native C++ object layout.
 - `WireHeaderV1` is a 40-byte logical format. Inline payload remains bounded to 64 KiB and transferred handles to 16 unless a later reviewed ABI revision changes it.
 - Handles/native descriptors are move-only RAII. Descriptor inheritance is deny-by-default.
@@ -18,6 +19,7 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - No universal "system UID" authority model.
 - No exceptions across IPC boundaries. Core/system runtime stays no-exceptions/no-RTTI where currently configured.
 - Keep normal service hot paths bounded; no hidden thread pools, unbounded queues, or accidental polling loops.
+- Fixed policy/table capacity is not permission to pass empty capacity slots to kernel waits. Poll/epoll work should track live resources, not maximum table size.
 - Generated OSIDL code is ABI/convenience machinery, not the authorization boundary.
 - Application launch is package-based, never arbitrary-path-based. Apps do not choose executable paths, native credentials, `PrincipalId`, active generation, content digest, storage root, key identity, or sandbox policy.
 - Staging a package generation does not activate it. Running processes stay pinned to the immutable generation that created them.
@@ -32,11 +34,14 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - RPC error responses never transfer handles. Successful handle-bearing messages must keep flags/count/SCM_RIGHTS consistent.
 - Long-lived cryptographic keys must never become public raw-byte application APIs.
 - `KeyId` is a locator, not authority. Every Key Service operation remains bound to trusted `PrincipalId + UserId` and server-held rights.
+- Public applications never choose `KeyOwner`, `KeyProtectionScope`, provider references, root references or private Key Service control operations.
 - Provider references and root references are private process-local implementation handles and must never be serialized as durable logical identity.
 - Durable key state stores only provider-owned opaque sealed/wrapped objects. The core must never interpret those blobs as raw keys.
 - Key rotation keeps a stable logical KeyId and versioned ciphertext metadata. New encryption uses the current version; retained historical versions exist only for authorized decrypt until an explicit retirement policy is implemented.
 - Root hierarchy is downward only: system -> profile -> application. Cross-user or upward edges are security failures.
 - A `RootKeyReference` must remain bound to its trusted `KeyProtectionBinding` inside the provider. Do not trust a caller merely because it repeats a binding value.
+- Key lifecycle admission is desired system policy. A service restart clears generation-local publication but does not change desired App Manager policy or durable key state.
+- Key-policy revocation closes live KeyObject endpoints and blocks acquisition; it is not synonymous with durable key destruction.
 - Destroy/revocation, package uninstall, file deletion, key rotation, root-policy revocation, and provider-object cleanup are distinct lifecycle operations.
 
 ## Completed implementation
@@ -51,8 +56,9 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - M2.5: stable logical-key rotation, explicit rotate right, up to eight retained versions, historical decrypt, current-version encryption and key-wide destruction/revocation.
 - M2.6: provider-wrapped persistence and durable `KRG1` registry with canonical owner/key/version binding, transactional publication, durable tombstones, provider restart recovery and end-to-end Key Service restart tests.
 - M2.7: trusted system/profile/application protection scopes, strict downward hierarchy policy, opaque provider root references, `HierarchicalKeyProvider`, bounded `KeyHierarchy`, and `MonotonicSecurityState` interface. M2.7 is a provider/security contract; it does not claim a production TPM/TEE/HSM implementation or host-filesystem anti-rollback.
+- M2.8: supervised host/CI `system.keys`, trusted private state/control capabilities, application lifecycle key policy, hierarchy-backed persistent key generation/rotation, generation-aware App Manager policy replay, uninstall revocation without implicit key destruction, stale-capability restart semantics, compact live-endpoint polling, and GCC/Clang/ASan/native-AArch64 product gates.
 
-Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_PRIVATE_STORAGE.md`, `docs/M2_1_STORAGE_SERVICE.md`, `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`, `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`, `docs/M2_6_KEY_PERSISTENCE.md`, and `docs/M2_7_KEY_HIERARCHY.md` before changing those substrates.
+Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_PRIVATE_STORAGE.md`, `docs/M2_1_STORAGE_SERVICE.md`, `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`, `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`, `docs/M2_6_KEY_PERSISTENCE.md`, `docs/M2_7_KEY_HIERARCHY.md`, and `docs/M2_8_KEY_SERVICE_PRODUCT_INTEGRATION.md` before changing those substrates.
 
 ## Storage invariants
 
@@ -71,7 +77,7 @@ Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_P
 
 ## Key-service invariants
 
-- Public applications never provide `KeyOwner`, `PrincipalId`, `UserId`, `KeyProtectionScope`, root references, raw provider handles, or raw long-lived key bytes.
+- Public applications never provide `KeyOwner`, `PrincipalId`, `UserId`, `KeyProtectionScope`, root references, raw provider handles, private control operations or raw long-lived key bytes.
 - A `KeyObjectHandle` is an object capability but its operations are still checked against trusted per-message peer identity.
 - AES-256-GCM-v1 is the current reviewed service profile; do not invent custom crypto or silently switch profiles.
 - The `EKEY` envelope authenticates canonical metadata plus caller AAD.
@@ -81,36 +87,39 @@ Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_P
 - Durable KeyId tombstones prevent a destroyed logical identifier from silently becoming a different key after restart.
 - `KeyHierarchy` owns the association between trusted protection bindings and provider root references. Higher layers must not recombine a root reference with an arbitrary binding.
 - Profile -> application hierarchy edges require the same durable UserId. A durable application principal cannot be rebound to another user in the same hierarchy policy.
+- App Manager keeps `key_enabled` desired state distinct from `key_published` state in the current `system.keys` generation.
+- A Key Service restart does not reconnect old KeyObject endpoints. Desired policy is republished to the fresh generation and callers reacquire capabilities.
+- Uninstall/revocation disables Key authority before process teardown but retains durable keys unless an explicit destruction policy is added.
 - `MonotonicSecurityState` is only an interface boundary. Do not claim anti-rollback until KRG publication is integrated with a real hardware/verified-boot monotonic source using a reviewed crash-consistent protocol.
 
 ## CI boundary
 
 M0 is a frozen foundation gate. M0 CTests carry the explicit `m0` label; the M0 workflow selects that label rather than accidentally running M1/M2 tests. The cross/QEMU gate additionally excludes supervisor/Landlock tests that require native kernel process semantics. Native AArch64 remains the authoritative full-kernel behavior gate.
 
-Do not "fix" an M0 QEMU failure by weakening a later M1/M2 test. First verify whether the test is actually qemu-user-safe. M1 and M2 have their own GCC, Clang and native-AArch64 gates.
+Do not "fix" an M0 QEMU failure by weakening a later M1/M2 test. First verify whether the test is actually qemu-user-safe. M1 and M2 have their own GCC, Clang and native-AArch64 gates. Key product integration additionally runs ASan/UBSan.
 
 ## References
 
-Read `docs/REFERENCE_NOTES_2026_08_08.md` before architecture-sensitive changes. References are design evidence, not instructions to copy old vendor APIs, obsolete crypto suites, historical Symbian ABI details, educational kernel architectures, or legacy cellular security mechanisms.
+Read `docs/REFERENCE_NOTES_2026_08_08.md` and the milestone-specific design notes before architecture-sensitive changes. References are design evidence, not instructions to copy old vendor APIs, obsolete crypto suites, historical Symbian ABI details, educational kernel architectures, or legacy cellular security mechanisms.
 
-For kernel/BSP work, preserve an upstream-first Linux strategy and small reviewable patches. For C++ core code, prefer type-rich lightweight abstractions, RAII, deterministic ownership and moves. For encryption design, borrow key-hierarchy/boot-integrity principles from historical full-disk-encryption systems without copying their obsolete algorithm choices.
+For kernel/BSP work, preserve an upstream-first Linux strategy and small reviewable patches. For C++ core code, prefer type-rich lightweight abstractions, RAII, deterministic ownership and moves. For encryption design, borrow key-hierarchy/boot-integrity principles from historical full-disk-encryption systems without copying their obsolete algorithm choices. For service architecture, preserve centralized trusted policy and explicit process/service boundaries rather than exposing cryptographic implementation choices to apps.
 
-## Current next milestone: M2.8 supervised Key Service product integration
+## Current next milestone: M2.9 identity-preserving multi-service broker
 
-M2.4-M2.7 established the Key Service protocol, AEAD, rotation, persistence and root-provider contract. The next slice should turn those pieces into a real supervised product service without weakening trusted identity.
+M2.8 intentionally stopped short of giving launched applications a Key Service connection because the existing Supervisor is a single-service prototype with a per-instance ProcessId allocator. Registering one native application process separately with Storage and Key supervisors would produce conflicting logical ProcessIds and violate ENML's trusted identity model.
 
 Required direction:
 
-1. Add a real `system.keys` executable supervised through the existing lifecycle machinery; do not create a general daemon framework or second init system.
-2. Construct the service with a durable `PersistentKeyRegistry` and a provider selected by trusted platform configuration. The host OpenSSL provider remains test-only.
-3. Establish the M2.7 `KeyHierarchy` from trusted system policy. Public application requests never select system/profile/application scope or root references.
-4. Add a private system-control path for publishing/revoking profile/application key policy, analogous in spirit to Storage control but with key-specific semantics and no raw key transfer.
-5. Bind application policy to the existing durable App Manager `PrincipalId + UserId`; package payloads and app request bytes do not establish key ownership.
-6. On Key Service restart, republish enabled application/profile policy and reacquire provider roots through binding-aware provider operations. Old public object endpoints stay stale and callers reacquire them.
-7. Uninstall/revocation must disable future key acquisition and stale live capabilities without silently deleting retained user data or long-lived keys unless an explicit destruction policy says so.
-8. Preserve M2.4-M2.6 public Key Service wire behavior unless an additive operation is required.
-9. Keep hardware attestation, verified-boot integration, actual TEE/HSM implementation and KRG anti-rollback coupling out of this slice except for the narrow interfaces required to avoid later ABI breakage.
-10. Add GCC, Clang and native AArch64 integration tests covering service restart, policy republish, wrong-principal acquisition, uninstall/revocation, and stale-capability behavior.
+1. Introduce one boot-scoped process identity authority shared by service publication/brokering. A native process receives exactly one logical `ProcessId`, one durable `PrincipalId`, and one `UserId` for authorization context.
+2. Add a narrow service-directory/connection-broker mechanism that distributes authorized service channels without accepting caller-selected native fds, service implementation paths, principals or identity payload claims.
+3. Preserve per-message kernel credential validation at service boundaries. Brokered channel possession alone must not silently override trusted sender identity.
+4. Make `system.storage` and `system.keys` consume process mappings published from the same authoritative process record.
+5. Extend application bootstrap with a reviewed typed way to receive additional platform-service endpoints. Do not overload arbitrary fixed fds indefinitely without a versioned bootstrap contract.
+6. Keep old service-generation channels stale after restart. Reconnection/reacquisition is explicit and never mutates an existing object endpoint into a connection to a new generation.
+7. Keep lifecycle policy separate from connection brokering: App Manager remains the source of desired Storage/Key application policy, while the broker handles process/service connectivity and identity continuity.
+8. Preserve bounded tables, bounded handle transfer, fixed-capacity queues and low idle work. Avoid a general DBus/systemd-style daemon ecosystem.
+9. Add adversarial tests for forged service selection, stolen/inherited broker channels, stale service generations, wrong process identity, duplicate registration, and attempted cross-principal connection acquisition.
+10. Run GCC, Clang, sanitizers and native AArch64 for the broker/product integration while preserving all M0-M2.8 gates.
 
 ## Build and test
 

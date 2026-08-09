@@ -3,6 +3,7 @@ add_library(oskeys STATIC
     src/random_id_linux.cpp
     src/ciphertext.cpp
     src/persistence_linux.cpp
+    src/persistence_adopt.cpp
     src/hierarchy.cpp
 )
 
@@ -29,6 +30,7 @@ if(EMNL_BUILD_OPENSSL_TEST_PROVIDER)
     add_library(oskeys_openssl_test_provider STATIC
         testing/src/openssl_provider.cpp
         testing/src/openssl_provider_persistence.cpp
+        testing/src/openssl_provider_hierarchy.cpp
     )
     add_library(emnl::oskeys_openssl_test_provider ALIAS oskeys_openssl_test_provider)
 

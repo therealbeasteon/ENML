@@ -18,3 +18,10 @@ target_compile_options(key_hierarchy_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
 add_test(NAME key_hierarchy_test COMMAND key_hierarchy_test)
+
+add_executable(key_policy_test key_policy_test.cpp)
+target_link_libraries(key_policy_test PRIVATE emnl::key_service emnl_warnings)
+target_compile_options(key_policy_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME key_policy_test COMMAND key_policy_test)

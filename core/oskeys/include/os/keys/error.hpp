@@ -37,6 +37,8 @@ inline constexpr std::uint32_t hierarchy_not_initialized = 27U;
 inline constexpr std::uint32_t hierarchy_conflict = 28U;
 inline constexpr std::uint32_t hierarchy_capacity = 29U;
 inline constexpr std::uint32_t hierarchy_root_not_found = 30U;
+inline constexpr std::uint32_t policy_not_registered = 31U;
+inline constexpr std::uint32_t policy_capacity = 32U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error key_error(std::uint32_t code) noexcept {

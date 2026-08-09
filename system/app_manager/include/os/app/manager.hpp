@@ -12,6 +12,7 @@
 #include <os/core/native_handle.hpp>
 #include <os/core/result.hpp>
 #include <os/core/strong_id.hpp>
+#include <os/keys/control.hpp>
 #include <os/package/analyzer.hpp>
 #include <os/package/package.hpp>
 #include <os/package/persistence.hpp>
@@ -55,8 +56,8 @@ struct LaunchTargetRegistration final {
 
 // Trusted per-user application policy. The private data directory is an
 // already-authorized handle. PrincipalId is deliberately absent: App Manager
-// resolves/allocates it from ApplicationPrincipalStore and publishes the root
-// to Storage Service over its system-only control channel.
+// resolves/allocates it from ApplicationPrincipalStore and publishes Storage
+// and Key Service policy from the resulting durable PrincipalId + UserId.
 struct ApplicationProfileRegistration final {
     os::package::ApplicationIdentity application {};
     os::core::UserId user {};
@@ -78,17 +79,26 @@ struct ApplicationInstanceInfo final {
     }
 };
 
-// M2.2 App Manager. Launch requests contain only PackageId plus trusted user
+// M2 App Manager. Launch requests contain only PackageId plus trusted user
 // context. Active generation, executable object, per-user principal, native
-// credentials, sandbox policy and Storage root policy all come from trusted
-// state. Applications receive a Storage Service connection rather than their
-// private-data Linux directory descriptor.
+// credentials, sandbox policy and service policy all come from trusted state.
+// The three-argument constructor preserves the Storage-only M1/M2.2 substrate;
+// the four-argument M2.8 constructor additionally publishes lifecycle policy to
+// a supervised Key Service. The Key Service private control channel is never
+// inherited by applications.
 class ApplicationManager final {
 public:
     ApplicationManager(
         os::package::PersistentPackageRegistry& packages,
         ApplicationPrincipalStore& principals,
         os::supervisor::Supervisor& supervisor) noexcept;
+
+    ApplicationManager(
+        os::package::PersistentPackageRegistry& packages,
+        ApplicationPrincipalStore& principals,
+        os::supervisor::Supervisor& storage_supervisor,
+        os::supervisor::Supervisor& key_supervisor) noexcept;
+
     ~ApplicationManager();
 
     ApplicationManager(const ApplicationManager&) = delete;
@@ -136,6 +146,8 @@ private:
         bool occupied {false};
         bool storage_enabled {false};
         bool storage_published {false};
+        bool key_enabled {false};
+        bool key_published {false};
         os::package::ApplicationIdentity application {};
         os::core::UserId user {};
         os::core::PrincipalId principal {};
@@ -150,7 +162,14 @@ private:
 
     os::package::PersistentPackageRegistry& packages_;
     ApplicationPrincipalStore& principals_;
+    // The original single-service member remains the Storage supervisor so the
+    // frozen M1/M2.2 launch path and ProcessId semantics are unchanged.
     os::supervisor::Supervisor& supervisor_;
+    // M2.8 adds only Key Service lifecycle-policy publication here. Application
+    // Key Service endpoint distribution/runtime identity fan-out is a separate
+    // multi-service broker concern and is not faked by allocating a second
+    // logical ProcessId from another single-service Supervisor instance.
+    os::supervisor::Supervisor* key_supervisor_ {nullptr};
     std::array<LaunchTarget, m1_launch_target_capacity> targets_ {};
     std::array<ApplicationProfile, m1_application_profile_capacity> profiles_ {};
     std::array<InstanceSlot, m1_application_instance_capacity> instances_ {};
@@ -160,10 +179,19 @@ private:
     std::optional<os::storage::StorageControlClient> storage_control_client_ {};
     std::uint64_t storage_service_generation_ {0U};
 
+    os::ipc::Channel key_control_ {};
+    std::optional<os::keys::KeyControlClient> key_control_client_ {};
+    std::uint64_t key_service_generation_ {0U};
+
     [[nodiscard]] os::core::Result<void> ensure_storage_control() noexcept;
     [[nodiscard]] os::core::Result<void> publish_profile(ApplicationProfile& profile) noexcept;
     [[nodiscard]] os::core::Result<void> revoke_profile(ApplicationProfile& profile) noexcept;
     [[nodiscard]] os::core::Result<void> republish_profiles_if_needed() noexcept;
+
+    [[nodiscard]] os::core::Result<void> ensure_key_control() noexcept;
+    [[nodiscard]] os::core::Result<void> publish_key_profile(ApplicationProfile& profile) noexcept;
+    [[nodiscard]] os::core::Result<void> revoke_key_profile(ApplicationProfile& profile) noexcept;
+    [[nodiscard]] os::core::Result<void> republish_key_profiles_if_needed() noexcept;
 
     [[nodiscard]] LaunchTarget*
     find_target(const os::package::PackageGenerationRecord& package) noexcept;
