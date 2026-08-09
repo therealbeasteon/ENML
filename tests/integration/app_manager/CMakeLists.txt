@@ -37,6 +37,33 @@ add_test(
         $<TARGET_FILE:m1_test_app_v3>
 )
 
+add_executable(m2_storage_test_app storage_test_app.cpp)
+target_link_libraries(m2_storage_test_app PRIVATE
+    emnl::osapp
+    emnl::storage_service
+    emnl_warnings
+)
+target_compile_options(m2_storage_test_app PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+
+add_executable(app_manager_storage_test app_manager_storage_test.cpp)
+target_link_libraries(app_manager_storage_test PRIVATE
+    emnl::app_manager
+    emnl::storage_service
+    emnl::supervisor
+    emnl_warnings
+)
+target_compile_options(app_manager_storage_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME supervisor_storage_app_manager_brokered_test
+    COMMAND app_manager_storage_test
+        $<TARGET_FILE:system_storage>
+        $<TARGET_FILE:m2_storage_test_app>
+)
+
 add_executable(application_sandbox_landlock_test application_sandbox_landlock_test.cpp)
 target_link_libraries(application_sandbox_landlock_test PRIVATE emnl::ossandbox emnl_warnings)
 target_compile_options(application_sandbox_landlock_test PRIVATE
