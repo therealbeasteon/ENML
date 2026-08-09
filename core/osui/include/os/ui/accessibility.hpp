@@ -4,9 +4,13 @@
 
 #include <os/core/identity.hpp>
 #include <os/core/result.hpp>
+#include <os/core/strong_id.hpp>
 #include <os/ui/tree.hpp>
 
 namespace os::ui {
+
+struct AccessibilitySessionIdTag;
+using AccessibilitySessionId = os::core::StrongId<AccessibilitySessionIdTag, std::uint64_t>;
 
 // Platform accessibility consumes the semantic projection together with the
 // exact tree revision that produced it. The revision is intentionally outside
@@ -23,6 +27,19 @@ struct AccessibilityActionRequest final {
     UiAction action {UiAction::activate};
 };
 
+// Transport-facing wrappers bind one tree snapshot/action to the runtime
+// session that owns the tree. A privileged service must not be able to replay a
+// perfectly valid revision/node pair against a different application's tree.
+struct AccessibilitySessionSnapshot final {
+    AccessibilitySessionId session {};
+    AccessibilityServiceSnapshot snapshot {};
+};
+
+struct AccessibilitySessionActionRequest final {
+    AccessibilitySessionId session {};
+    AccessibilityActionRequest request {};
+};
+
 // Captures a coherent, bounded semantic accessibility state. No framebuffer
 // inspection/OCR or renderer pixel access is required.
 [[nodiscard]] os::core::Result<AccessibilityServiceSnapshot>
@@ -37,34 +54,41 @@ accessibility_service_snapshot(const SemanticTree& tree) noexcept;
     AccessibilityActionRequest request) noexcept;
 
 // In-process authorization seam for the eventual privileged accessibility
-// transport. Wire code should pass the supervisor-resolved peer identity here
-// rather than duplicating access policy in a protocol handler. The application
-// still owns its SemanticTree; only the trusted accessibility principal may
-// request snapshots/actions through this privileged bridge.
+// transport. Wire code should pass the supervisor-resolved peer identity and
+// the runtime-minted session id here rather than duplicating access/session
+// policy in a protocol handler. The application still owns its SemanticTree;
+// only the trusted accessibility principal may access this exact session.
 class AccessibilityBridgeAuthority final {
 public:
     AccessibilityBridgeAuthority(
         SemanticTree& tree,
-        os::core::PrincipalId trusted_accessibility_principal) noexcept
-        : tree_(&tree), trusted_accessibility_principal_(trusted_accessibility_principal) {}
+        os::core::PrincipalId trusted_accessibility_principal,
+        AccessibilitySessionId session) noexcept
+        : tree_(&tree),
+          trusted_accessibility_principal_(trusted_accessibility_principal),
+          session_(session) {}
 
     [[nodiscard]] bool valid() const noexcept {
         return tree_ != nullptr && tree_->valid() &&
-            os::core::valid_principal(trusted_accessibility_principal_);
+            os::core::valid_principal(trusted_accessibility_principal_) &&
+            session_.value() != 0U;
     }
 
-    [[nodiscard]] os::core::Result<AccessibilityServiceSnapshot> snapshot(
+    [[nodiscard]] AccessibilitySessionId session() const noexcept { return session_; }
+
+    [[nodiscard]] os::core::Result<AccessibilitySessionSnapshot> snapshot(
         os::core::PeerIdentity caller) const noexcept;
 
     [[nodiscard]] os::core::Result<UiEvent> dispatch(
         os::core::PeerIdentity caller,
-        AccessibilityActionRequest request) noexcept;
+        AccessibilitySessionActionRequest request) noexcept;
 
 private:
     [[nodiscard]] bool caller_allowed(os::core::PeerIdentity caller) const noexcept;
 
     SemanticTree* tree_ {nullptr};
     os::core::PrincipalId trusted_accessibility_principal_ {};
+    AccessibilitySessionId session_ {};
 };
 
 } // namespace os::ui
