@@ -37,6 +37,15 @@ constexpr os::core::PrincipalId application_principal{
 };
 constexpr os::core::UserId application_user{91U};
 
+void report_error(const char* stage, const os::core::Error& error) noexcept {
+    std::fprintf(
+        stderr,
+        "key_service_supervisor_integration_test stage=%s domain=%u code=%u\n",
+        stage,
+        static_cast<unsigned>(error.domain),
+        static_cast<unsigned>(error.code));
+}
+
 [[nodiscard]] os::core::ByteSpan as_bytes(std::string_view text) noexcept {
     return {
         reinterpret_cast<const std::byte*>(text.data()),
@@ -51,6 +60,7 @@ void wait_for_generation(
         auto maintained = supervisor.maintain();
         if (!maintained && maintained.error().domain == os::core::ErrorDomain::service &&
             maintained.error().code == os::core::errors::service::crash_loop) {
+            report_error("restart-crash-loop", maintained.error());
             assert(false);
         }
         const auto status = supervisor.status();
@@ -74,6 +84,7 @@ void assert_plaintext(
         as_bytes("supervised-policy-aad"),
         plaintext,
         scratch);
+    if (!opened) report_error("decrypt", opened.error());
     assert(opened);
     assert(opened.value() == expected.size());
     assert(std::equal(
@@ -119,23 +130,29 @@ int main() {
     {
         os::supervisor::Supervisor supervisor{config};
         auto started = supervisor.start();
+        if (!started) report_error("start", started.error());
         assert(started);
         assert(supervisor.status().state == os::supervisor::ServiceState::running);
 
         auto registered = supervisor.register_process(
             ::getpid(), application_principal, application_user);
+        if (!registered) report_error("register-process", registered.error());
         assert(registered);
         const auto initial_process = registered.value().peer.process;
 
         auto private_control_result = supervisor.connect_private_control();
+        if (!private_control_result) report_error("connect-private-control", private_control_result.error());
         assert(private_control_result);
         auto private_control = std::move(private_control_result).value();
         os::keys::KeyControlClient policy{private_control};
         std::array<std::byte, os::ipc::max_wire_packet_size> control_scratch{};
-        assert(policy.enable_application(
-            application_principal, application_user, control_scratch, 1000U));
+        auto enabled = policy.enable_application(
+            application_principal, application_user, control_scratch, 1000U);
+        if (!enabled) report_error("enable-application", enabled.error());
+        assert(enabled);
 
         auto public_result = supervisor.connect();
+        if (!public_result) report_error("connect-public", public_result.error());
         assert(public_result);
         auto public_channel = std::move(public_result).value();
         os::ipc::ClientConnection connection{public_channel};
@@ -143,6 +160,7 @@ int main() {
         std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
 
         auto created = keys.create_application_data_key(scratch);
+        if (!created) report_error("create-key", created.error());
         assert(created);
         auto key = std::move(created).value();
         key_id = key.descriptor().id;
@@ -153,10 +171,12 @@ int main() {
             as_bytes("supervised-policy-aad"),
             envelope_v1,
             scratch);
+        if (!encrypted_v1) report_error("encrypt-v1", encrypted_v1.error());
         assert(encrypted_v1);
         envelope_v1_size = encrypted_v1.value();
 
         auto rotated = key.rotate(scratch);
+        if (!rotated) report_error("rotate-v2", rotated.error());
         assert(rotated);
         assert(rotated.value().version == 2U);
 
@@ -165,13 +185,16 @@ int main() {
             as_bytes("supervised-policy-aad"),
             envelope_v2,
             scratch);
+        if (!encrypted_v2) report_error("encrypt-v2", encrypted_v2.error());
         assert(encrypted_v2);
         envelope_v2_size = encrypted_v2.value();
 
         // Lifecycle revocation disables future acquisition and closes already
         // minted object capabilities without deleting the durable key.
-        assert(policy.disable_application(
-            application_principal, application_user, control_scratch, 1000U));
+        auto disabled = policy.disable_application(
+            application_principal, application_user, control_scratch, 1000U);
+        if (!disabled) report_error("disable-application", disabled.error());
+        assert(disabled);
         auto revoked_object = key.decrypt(
             {envelope_v2.data(), envelope_v2_size},
             as_bytes("supervised-policy-aad"),
@@ -186,9 +209,12 @@ int main() {
         assert(denied_open.error() ==
             os::keys::key_error(os::keys::errors::policy_not_registered));
 
-        assert(policy.enable_application(
-            application_principal, application_user, control_scratch, 1000U));
+        enabled = policy.enable_application(
+            application_principal, application_user, control_scratch, 1000U);
+        if (!enabled) report_error("re-enable-application", enabled.error());
+        assert(enabled);
         auto reacquired = keys.open(key_id, scratch);
+        if (!reacquired) report_error("reacquire-key", reacquired.error());
         assert(reacquired);
         auto reacquired_key = std::move(reacquired).value();
         assert_plaintext(
@@ -220,6 +246,7 @@ int main() {
         assert(stale_after_restart.error().code == os::ipc::errors::peer_died);
 
         auto new_public_result = supervisor.connect();
+        if (!new_public_result) report_error("connect-public-after-restart", new_public_result.error());
         assert(new_public_result);
         auto new_public = std::move(new_public_result).value();
         os::ipc::ClientConnection new_connection{new_public};
@@ -230,18 +257,23 @@ int main() {
             os::keys::key_error(os::keys::errors::policy_not_registered));
 
         auto republished_identity = supervisor.lookup_process(::getpid());
+        if (!republished_identity) report_error("lookup-republished-identity", republished_identity.error());
         assert(republished_identity);
         assert(republished_identity.value().peer.process == initial_process);
         assert(republished_identity.value().peer.principal == application_principal);
 
         auto new_control_result = supervisor.connect_private_control();
+        if (!new_control_result) report_error("connect-control-after-restart", new_control_result.error());
         assert(new_control_result);
         auto new_control = std::move(new_control_result).value();
         os::keys::KeyControlClient restarted_policy{new_control};
-        assert(restarted_policy.enable_application(
-            application_principal, application_user, control_scratch, 1000U));
+        auto restarted_enabled = restarted_policy.enable_application(
+            application_principal, application_user, control_scratch, 1000U);
+        if (!restarted_enabled) report_error("enable-after-restart", restarted_enabled.error());
+        assert(restarted_enabled);
 
         auto reopened = new_keys.open(key_id, scratch);
+        if (!reopened) report_error("reopen-after-restart", reopened.error());
         assert(reopened);
         auto reopened_key = std::move(reopened).value();
         assert(reopened_key.descriptor().version == 2U);
@@ -257,6 +289,7 @@ int main() {
             scratch);
 
         auto rotated_v3 = reopened_key.rotate(scratch);
+        if (!rotated_v3) report_error("rotate-v3", rotated_v3.error());
         assert(rotated_v3);
         assert(rotated_v3.value().version == 3U);
     }
