@@ -1,4 +1,3 @@
-#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -13,13 +12,25 @@ constexpr os::keys::KeyOwner system_owner{
     .principal = os::core::PrincipalId{0x5100000000000001ULL, 0x6100000000000001ULL},
     .user = os::core::UserId{0U},
 };
+constexpr os::keys::KeyOwner alternate_system_owner{
+    .principal = os::core::PrincipalId{0x5100000000000011ULL, 0x6100000000000011ULL},
+    .user = os::core::UserId{0U},
+};
 constexpr os::keys::KeyOwner profile_owner{
     .principal = os::core::PrincipalId{0x5200000000000002ULL, 0x6200000000000002ULL},
+    .user = os::core::UserId{42U},
+};
+constexpr os::keys::KeyOwner conflicting_profile_owner{
+    .principal = os::core::PrincipalId{0x5200000000000012ULL, 0x6200000000000012ULL},
     .user = os::core::UserId{42U},
 };
 constexpr os::keys::KeyOwner application_owner{
     .principal = os::core::PrincipalId{0x5300000000000003ULL, 0x6300000000000003ULL},
     .user = os::core::UserId{42U},
+};
+constexpr os::keys::KeyOwner application_owner_wrong_user{
+    .principal = application_owner.principal,
+    .user = os::core::UserId{43U},
 };
 constexpr os::keys::KeyOwner foreign_application_owner{
     .principal = os::core::PrincipalId{0x5400000000000004ULL, 0x6400000000000004ULL},
@@ -30,13 +41,25 @@ constexpr os::keys::KeyProtectionBinding system_binding{
     .scope = os::keys::KeyProtectionScope::system,
     .owner = system_owner,
 };
+constexpr os::keys::KeyProtectionBinding alternate_system_binding{
+    .scope = os::keys::KeyProtectionScope::system,
+    .owner = alternate_system_owner,
+};
 constexpr os::keys::KeyProtectionBinding profile_binding{
     .scope = os::keys::KeyProtectionScope::user_profile,
     .owner = profile_owner,
 };
+constexpr os::keys::KeyProtectionBinding conflicting_profile_binding{
+    .scope = os::keys::KeyProtectionScope::user_profile,
+    .owner = conflicting_profile_owner,
+};
 constexpr os::keys::KeyProtectionBinding application_binding{
     .scope = os::keys::KeyProtectionScope::application,
     .owner = application_owner,
+};
+constexpr os::keys::KeyProtectionBinding application_binding_wrong_user{
+    .scope = os::keys::KeyProtectionScope::application,
+    .owner = application_owner_wrong_user,
 };
 constexpr os::keys::KeyProtectionBinding foreign_application_binding{
     .scope = os::keys::KeyProtectionScope::application,
@@ -102,6 +125,7 @@ public:
 
     os::core::Result<os::keys::RootKeyReference>
     acquire_system_root(os::keys::KeyProtectionBinding binding) noexcept override {
+        ++system_acquire_calls;
         if (!binding.valid() || binding.scope != os::keys::KeyProtectionScope::system) {
             return os::keys::key_error(os::keys::errors::access_denied);
         }
@@ -109,10 +133,11 @@ public:
     }
 
     os::core::Result<os::keys::RootKeyReference>
-    create_child_root(
+    acquire_child_root(
         os::keys::RootKeyReference parent,
         os::keys::KeyProtectionBinding parent_binding,
         os::keys::KeyProtectionBinding child_binding) noexcept override {
+        ++child_acquire_calls;
         if (!parent.valid() || !os::keys::valid_hierarchy_edge(parent_binding, child_binding)) {
             return os::keys::key_error(os::keys::errors::access_denied);
         }
@@ -124,7 +149,10 @@ public:
         os::keys::RootKeyReference root,
         os::keys::KeyProtectionBinding binding,
         os::keys::KeyPurpose purpose) noexcept override {
-        if (!root.valid() || !binding.valid() || !os::keys::valid_purpose(purpose)) {
+        ++generate_under_root_calls;
+        if (!root.valid() || !binding.valid() ||
+            binding.scope != os::keys::KeyProtectionScope::application ||
+            !os::keys::valid_purpose(purpose)) {
             return os::keys::key_error(os::keys::errors::access_denied);
         }
         return os::keys::ProviderKeyReference{next_provider_reference_++};
@@ -139,6 +167,10 @@ public:
         }
         return {};
     }
+
+    std::size_t system_acquire_calls {0U};
+    std::size_t child_acquire_calls {0U};
+    std::size_t generate_under_root_calls {0U};
 
 private:
     std::uint64_t next_root_reference_ {1U};
@@ -196,35 +228,73 @@ int main() {
     static_assert(!maximum_epoch.can_advance());
 
     TestHierarchicalProvider provider;
-    auto system_root = provider.acquire_system_root(system_binding);
-    assert(system_root);
-    assert(system_root.value().valid());
+    os::keys::KeyHierarchy hierarchy{provider};
 
-    auto rejected_application_root = provider.acquire_system_root(application_binding);
-    assert(!rejected_application_root);
+    auto application_before_system = hierarchy.ensure_application(application_binding);
+    assert(!application_before_system);
+    assert(application_before_system.error() ==
+        os::keys::key_error(os::keys::errors::hierarchy_not_initialized));
 
-    auto profile_root = provider.create_child_root(
-        system_root.value(), system_binding, profile_binding);
-    assert(profile_root);
+    assert(hierarchy.initialize(system_binding));
+    assert(hierarchy.initialized());
+    assert(provider.system_acquire_calls == 1U);
 
-    auto application_root = provider.create_child_root(
-        profile_root.value(), profile_binding, application_binding);
-    assert(application_root);
+    // Replaying the exact same trusted policy is idempotent and does not mint
+    // another provider root.
+    assert(hierarchy.initialize(system_binding));
+    assert(provider.system_acquire_calls == 1U);
 
-    auto cross_user_root = provider.create_child_root(
-        profile_root.value(), profile_binding, foreign_application_binding);
-    assert(!cross_user_root);
+    auto conflicting_system = hierarchy.initialize(alternate_system_binding);
+    assert(!conflicting_system);
+    assert(conflicting_system.error() ==
+        os::keys::key_error(os::keys::errors::hierarchy_conflict));
 
-    auto upward_root = provider.create_child_root(
-        application_root.value(), application_binding, profile_binding);
-    assert(!upward_root);
+    auto missing_profile = hierarchy.ensure_application(application_binding);
+    assert(!missing_profile);
+    assert(missing_profile.error() ==
+        os::keys::key_error(os::keys::errors::hierarchy_root_not_found));
 
-    auto data_key = provider.generate_under_root(
-        application_root.value(),
+    assert(hierarchy.ensure_profile(profile_binding));
+    assert(hierarchy.profile_count() == 1U);
+    assert(provider.child_acquire_calls == 1U);
+    assert(hierarchy.ensure_profile(profile_binding));
+    assert(provider.child_acquire_calls == 1U);
+
+    auto conflicting_profile = hierarchy.ensure_profile(conflicting_profile_binding);
+    assert(!conflicting_profile);
+    assert(conflicting_profile.error() ==
+        os::keys::key_error(os::keys::errors::hierarchy_conflict));
+
+    assert(hierarchy.ensure_application(application_binding));
+    assert(hierarchy.application_count() == 1U);
+    assert(provider.child_acquire_calls == 2U);
+    assert(hierarchy.ensure_application(application_binding));
+    assert(provider.child_acquire_calls == 2U);
+
+    auto foreign_without_profile = hierarchy.ensure_application(foreign_application_binding);
+    assert(!foreign_without_profile);
+    assert(foreign_without_profile.error() ==
+        os::keys::key_error(os::keys::errors::hierarchy_root_not_found));
+
+    auto principal_rebind = hierarchy.ensure_application(application_binding_wrong_user);
+    assert(!principal_rebind);
+    assert(principal_rebind.error() ==
+        os::keys::key_error(os::keys::errors::hierarchy_conflict));
+
+    auto data_key = hierarchy.generate_application_data_key(
         application_binding,
         os::keys::KeyPurpose::application_data_aead);
     assert(data_key);
     assert(data_key.value().valid());
+    assert(provider.generate_under_root_calls == 1U);
+
+    auto foreign_data_key = hierarchy.generate_application_data_key(
+        foreign_application_binding,
+        os::keys::KeyPurpose::application_data_aead);
+    assert(!foreign_data_key);
+    assert(foreign_data_key.error() ==
+        os::keys::key_error(os::keys::errors::hierarchy_root_not_found));
+    assert(provider.generate_under_root_calls == 1U);
 
     TestMonotonicSecurityState security_state;
     auto epoch = security_state.current();
@@ -240,9 +310,5 @@ int main() {
     auto still_current = security_state.current();
     assert(still_current);
     assert(still_current.value().value == 2U);
-
-    assert(provider.destroy_root(application_root.value(), application_binding));
-    assert(provider.destroy_root(profile_root.value(), profile_binding));
-    assert(provider.destroy_root(system_root.value(), system_binding));
     return 0;
 }
