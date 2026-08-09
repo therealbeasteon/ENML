@@ -32,6 +32,7 @@ inline constexpr std::uint32_t buffer_size_mismatch = 22U;
 inline constexpr std::uint32_t buffer_id_exhausted = 23U;
 inline constexpr std::uint32_t buffer_create_failed = 24U;
 inline constexpr std::uint32_t stale_input_hit = 25U;
+inline constexpr std::uint32_t input_authority_denied = 26U;
 }
 
 [[nodiscard]] constexpr os::core::Error display_error(std::uint32_t code) noexcept {
