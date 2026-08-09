@@ -10,3 +10,6 @@ endfunction()
 
 add_emnl_ui_test(ui_semantic_tree_test semantic_tree_test.cpp)
 add_emnl_ui_test(ui_responsive_layout_test responsive_layout_test.cpp)
+add_emnl_ui_test(ui_render_snapshot_test render_snapshot_test.cpp)
+add_emnl_ui_test(ui_collection_window_test collection_window_test.cpp)
+add_emnl_ui_test(ui_design_reflow_test design_reflow_test.cpp)
