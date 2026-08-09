@@ -1,10 +1,12 @@
 #include <array>
 #include <cerrno>
 #include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 #include <utility>
 
 #include <poll.h>
+#include <unistd.h>
 
 #include <os/core/native_handle.hpp>
 #include <os/ipc/constants.hpp>
@@ -59,13 +61,11 @@ int main() {
 
     os::service::IdentityRegistry identities;
     const os::service::ProcessIdentityRecord self_record{
-        .kernel = bootstrap.request_header.request_id.value() != 0U
-            ? os::ipc::KernelPeerCredentials{
-                .process_id = static_cast<std::int64_t>(::getpid()),
-                .user_id = static_cast<std::uint32_t>(::getuid()),
-                .group_id = static_cast<std::uint32_t>(::getgid()),
-            }
-            : os::ipc::KernelPeerCredentials{},
+        .kernel = os::ipc::KernelPeerCredentials{
+            .process_id = static_cast<std::int64_t>(::getpid()),
+            .user_id = static_cast<std::uint32_t>(::getuid()),
+            .group_id = static_cast<std::uint32_t>(::getgid()),
+        },
         .peer = bootstrap.record.identity,
     };
     auto registered = identities.register_process(self_record, std::move(self_pidfd).value());
