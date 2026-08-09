@@ -69,11 +69,6 @@ private:
     explicit Directory(os::core::NativeHandle handle) noexcept
         : handle_(static_cast<os::core::NativeHandle&&>(handle)) {}
 
-    // Only PrivateRoot exposes deliberate root-capability duplication. General
-    // application Directory objects remain move-only and are narrowed through
-    // open_directory() instead of acquiring an accidental copy operation.
-    [[nodiscard]] os::core::Result<Directory> duplicate_root_authority() const noexcept;
-
     os::core::NativeHandle handle_ {};
 };
 
