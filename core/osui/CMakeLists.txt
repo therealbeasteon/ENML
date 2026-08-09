@@ -10,6 +10,7 @@ add_library(osui STATIC
     src/renderer.cpp
     src/raster.cpp
     src/contour_aa.cpp
+    src/frame_raster.cpp
     src/glyph_raster.cpp
     src/motion.cpp
 )
