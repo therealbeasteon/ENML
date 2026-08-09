@@ -9,6 +9,7 @@
 #include <string_view>
 #include <utility>
 
+#include <dirent.h>
 #include <fcntl.h>
 #include <signal.h>
 #include <sys/stat.h>
@@ -133,6 +134,30 @@ bool wait_until_gone(
 
 void unlink_if_present(int directory_fd, const char* name) {
     if (::unlinkat(directory_fd, name, 0) != 0) assert(errno == ENOENT);
+}
+
+void cleanup_crash_left_atomic_temps(int directory_fd) {
+    // This test deliberately SIGKILLs system.storage while an atomic replace
+    // may be between O_EXCL temp creation and rename. The final target remains
+    // atomic, but a process death can legitimately leave the private temporary
+    // inode behind. Remove only the implementation-reserved test residue so the
+    // mkdtemp fixture itself can be deleted deterministically.
+    const int scan_fd = ::dup(directory_fd);
+    assert(scan_fd >= 0);
+    DIR* directory = ::fdopendir(scan_fd);
+    assert(directory != nullptr);
+
+    constexpr std::string_view prefix = ".emnl-atomic-";
+    errno = 0;
+    while (dirent* entry = ::readdir(directory)) {
+        const std::string_view name{entry->d_name};
+        if (name.starts_with(prefix)) {
+            assert(::unlinkat(directory_fd, entry->d_name, 0) == 0 || errno == ENOENT);
+        }
+        errno = 0;
+    }
+    assert(errno == 0);
+    assert(::closedir(directory) == 0);
 }
 
 } // namespace
@@ -327,6 +352,7 @@ int main(int argc, char** argv) {
     unlink_if_present(cleanup_data, "m2-10-key-reacquired.bin");
     unlink_if_present(cleanup_data, "m2-10-storage-heartbeat.bin");
     unlink_if_present(cleanup_data, "m2-10-storage-reacquired.bin");
+    cleanup_crash_left_atomic_temps(cleanup_data);
     unlink_if_present(cleanup_keys, "key-registry-v1.bin");
     unlink_if_present(cleanup_keys, ".key-registry-v1.tmp");
     unlink_if_present(cleanup_packages, "registry-v1.bin");
