@@ -76,6 +76,9 @@ public:
     [[nodiscard]] os::core::Result<os::service::ProcessIdentityRecord>
     lookup(os::core::ProcessId process) const noexcept;
 
+    [[nodiscard]] ProcessAuthority& process_authority() noexcept { return *authority_; }
+    [[nodiscard]] const ProcessAuthority& process_authority() const noexcept { return *authority_; }
+
     [[nodiscard]] std::size_t service_count() const noexcept;
     [[nodiscard]] std::size_t process_count() const noexcept;
 
