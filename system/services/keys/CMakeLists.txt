@@ -2,6 +2,7 @@ add_library(emnl_key_service STATIC
     src/client.cpp
     src/service.cpp
     src/policy.cpp
+    src/control.cpp
 )
 
 add_library(emnl::key_service ALIAS emnl_key_service)
@@ -15,6 +16,7 @@ target_link_libraries(emnl_key_service
     PUBLIC
         emnl::oskeys
         emnl::osipc
+        emnl::osservice
         emnl_warnings
 )
 
