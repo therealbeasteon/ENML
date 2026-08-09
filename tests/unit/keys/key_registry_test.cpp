@@ -1,3 +1,4 @@
+#include <array>
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
@@ -22,27 +23,49 @@ public:
     }
 
     os::core::Result<std::size_t> seal(
-        os::keys::ProviderKeyReference,
-        os::keys::CryptoProfileId,
+        os::keys::ProviderKeyReference key,
+        os::keys::CryptoProfileId profile,
         os::core::ByteSpan,
         os::core::ByteSpan,
-        os::core::ByteSpan,
-        os::core::MutableByteSpan,
-        os::keys::AeadNonce&,
-        os::keys::AeadTag&) noexcept override {
-        return os::keys::key_error(os::keys::errors::unsupported_crypto_profile);
+        os::core::ByteSpan plaintext,
+        os::core::MutableByteSpan ciphertext,
+        os::keys::AeadNonce& nonce,
+        os::keys::AeadTag& tag) noexcept override {
+        ++seal_calls;
+        if (!key.valid() || profile != os::keys::CryptoProfileId::aes_256_gcm_v1) {
+            return os::keys::key_error(os::keys::errors::provider_failure);
+        }
+        if (ciphertext.size() < plaintext.size()) {
+            return os::keys::key_error(os::keys::errors::output_too_small);
+        }
+        for (std::size_t index = 0U; index < plaintext.size(); ++index) {
+            ciphertext[index] = plaintext[index];
+        }
+        nonce.bytes.fill(std::byte{0x11});
+        tag.bytes.fill(std::byte{0x22});
+        return plaintext.size();
     }
 
     os::core::Result<std::size_t> open(
-        os::keys::ProviderKeyReference,
-        os::keys::CryptoProfileId,
+        os::keys::ProviderKeyReference key,
+        os::keys::CryptoProfileId profile,
         os::core::ByteSpan,
         os::core::ByteSpan,
         const os::keys::AeadNonce&,
         const os::keys::AeadTag&,
-        os::core::ByteSpan,
-        os::core::MutableByteSpan) noexcept override {
-        return os::keys::key_error(os::keys::errors::unsupported_crypto_profile);
+        os::core::ByteSpan ciphertext,
+        os::core::MutableByteSpan plaintext) noexcept override {
+        ++open_calls;
+        if (!key.valid() || profile != os::keys::CryptoProfileId::aes_256_gcm_v1) {
+            return os::keys::key_error(os::keys::errors::provider_failure);
+        }
+        if (plaintext.size() < ciphertext.size()) {
+            return os::keys::key_error(os::keys::errors::output_too_small);
+        }
+        for (std::size_t index = 0U; index < ciphertext.size(); ++index) {
+            plaintext[index] = ciphertext[index];
+        }
+        return ciphertext.size();
     }
 
     os::core::Result<void>
@@ -57,6 +80,8 @@ public:
 
     std::uint64_t next_reference {1U};
     std::size_t generate_calls {0U};
+    std::size_t seal_calls {0U};
+    std::size_t open_calls {0U};
     std::size_t destroy_calls {0U};
     os::keys::ProviderKeyReference last_destroyed {};
     bool fail_generate {false};
@@ -115,6 +140,75 @@ int main() {
     assert(!invalid_right);
     assert(invalid_right.error() == os::keys::key_error(os::keys::errors::invalid_rights));
 
+    std::array<std::byte, 4U> plaintext{
+        std::byte{0x10}, std::byte{0x20}, std::byte{0x30}, std::byte{0x40}};
+    std::array<std::byte, 4U> ciphertext{};
+    std::array<std::byte, 4U> reopened_plaintext{};
+    os::keys::AeadNonce nonce{};
+    os::keys::AeadTag tag{};
+
+    auto wrong_owner_seal = registry.seal(
+        owner_b,
+        key_one,
+        1U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {},
+        {},
+        plaintext,
+        ciphertext,
+        nonce,
+        tag);
+    assert(!wrong_owner_seal);
+    assert(wrong_owner_seal.error() == os::keys::key_error(os::keys::errors::access_denied));
+    assert(provider.seal_calls == 0U);
+
+    auto wrong_version_seal = registry.seal(
+        owner_a,
+        key_one,
+        2U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {},
+        {},
+        plaintext,
+        ciphertext,
+        nonce,
+        tag);
+    assert(!wrong_version_seal);
+    assert(wrong_version_seal.error() ==
+        os::keys::key_error(os::keys::errors::key_version_mismatch));
+    assert(provider.seal_calls == 0U);
+
+    auto valid_seal = registry.seal(
+        owner_a,
+        key_one,
+        1U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {},
+        {},
+        plaintext,
+        ciphertext,
+        nonce,
+        tag);
+    assert(valid_seal);
+    assert(valid_seal.value() == plaintext.size());
+    assert(provider.seal_calls == 1U);
+
+    auto valid_open = registry.open(
+        owner_a,
+        key_one,
+        1U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {},
+        {},
+        nonce,
+        tag,
+        ciphertext,
+        reopened_plaintext);
+    assert(valid_open);
+    assert(valid_open.value() == plaintext.size());
+    assert(reopened_plaintext == plaintext);
+    assert(provider.open_calls == 1U);
+
     auto duplicate = registry.create(
         owner_a,
         key_one,
@@ -130,6 +224,23 @@ int main() {
         os::keys::KeyPurpose::application_data_aead,
         os::keys::key_rights::metadata);
     assert(metadata_only);
+
+    const auto seal_calls_before_denied = provider.seal_calls;
+    auto denied_seal = registry.seal(
+        owner_a,
+        key_two,
+        1U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {},
+        {},
+        plaintext,
+        ciphertext,
+        nonce,
+        tag);
+    assert(!denied_seal);
+    assert(denied_seal.error() == os::keys::key_error(os::keys::errors::access_denied));
+    assert(provider.seal_calls == seal_calls_before_denied);
+
     auto denied_destroy = registry.destroy(owner_a, key_two);
     assert(!denied_destroy);
     assert(denied_destroy.error() == os::keys::key_error(os::keys::errors::access_denied));
@@ -157,6 +268,22 @@ int main() {
     assert(provider.last_destroyed == provider_key.value());
     assert(registry.record_count() == 2U);
     assert(registry.active_count() == 1U);
+
+    const auto open_calls_before_destroyed = provider.open_calls;
+    auto destroyed_open = registry.open(
+        owner_a,
+        key_one,
+        1U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {},
+        {},
+        nonce,
+        tag,
+        ciphertext,
+        reopened_plaintext);
+    assert(!destroyed_open);
+    assert(destroyed_open.error() == os::keys::key_error(os::keys::errors::destroyed));
+    assert(provider.open_calls == open_calls_before_destroyed);
 
     auto after_destroy = registry.describe(owner_a, key_one);
     assert(!after_destroy);
