@@ -14,7 +14,7 @@ jobs:
       - name: Build key foundation
         run: >-
           cmake --build --preset host-debug
-          --target key_registry_test key_service_identity_test
+          --target key_registry_test key_random_id_source_test key_service_identity_test
           --parallel 2
       - name: Test key foundation
         run: ctest --preset host-debug --output-on-failure -R '^key_'
@@ -31,7 +31,7 @@ jobs:
       - name: Build key foundation
         run: >-
           cmake --build build/m2-keys-clang
-          --target key_registry_test key_service_identity_test
+          --target key_registry_test key_random_id_source_test key_service_identity_test
           --parallel 2
       - name: Test key foundation
         run: ctest --test-dir build/m2-keys-clang --output-on-failure -R '^key_'
@@ -47,7 +47,7 @@ jobs:
       - name: Build key foundation natively
         run: >-
           cmake --build --preset host-debug
-          --target key_registry_test key_service_identity_test
+          --target key_registry_test key_random_id_source_test key_service_identity_test
           --parallel 2
       - name: Test key foundation natively
         run: ctest --preset host-debug --output-on-failure -R '^key_'
