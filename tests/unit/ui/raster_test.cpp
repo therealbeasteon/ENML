@@ -124,8 +124,8 @@ int main() {
     assert(pixels[0] == surface);
 
     // The swept panel does not collapse to a generic rectangle: the authored
-    // top-left contour clips its extreme corner while leaving the center filled.
-    assert(pixels[4U * width + 4U] == surface);
+    // top-right contour clips its extreme corner while leaving the center filled.
+    assert(pixels[4U * width + 27U] == surface);
     assert(pixels[10U * width + 16U] == panel_fill);
 
     // Smoothing is a real geometric input. The high-smoothing swept top-right
