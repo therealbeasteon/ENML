@@ -26,6 +26,16 @@ The boundary rejects:
 
 Focus is applied through `SemanticTree::focus()`, preserving unique-focus, enabled and effective-visibility invariants. Activate/toggle/select actions reuse `SemanticTree::dispatch_action()` rather than creating a parallel authorization model.
 
+## Trusted service authority
+
+`AccessibilityBridgeAuthority` is the in-process authorization seam for the eventual cross-process accessibility transport. It binds one live `SemanticTree` to one supervisor-assigned trusted accessibility `PrincipalId`.
+
+A protocol/service implementation should pass its already-resolved `PeerIdentity` through this authority rather than duplicating access checks in wire-code handlers. Ordinary application principals cannot request privileged snapshots or dispatch accessibility actions through the authority merely because they know a node ID.
+
+The authority still delegates snapshot creation and action dispatch to the same revision-bound functions above, so adding service authorization does not create a second semantic state machine.
+
+Principal-level authorization is intentional at this seam: a supervised accessibility service may restart with a fresh `ProcessId` while retaining its trusted principal. The eventual service endpoint must still use the existing kernel-credential/identity-registry machinery to prove that the caller really owns that principal.
+
 ## Editable text is deliberately deferred
 
 `UiAction::set_text` is not accepted by this bridge yet. Accessibility text editing needs a bounded editable-text payload, selection/caret semantics, privacy rules and the eventual IME/text-input contract. Accepting a payload-free `set_text` action now would freeze an incomplete API and encourage a second ad-hoc text channel.
@@ -47,7 +57,7 @@ A future platform accessibility service may subscribe to semantic revision/chang
 
 The semantic tree remains the source of accessibility meaning. Rendering effects, translucency, shader output and application-drawn lookalike pixels cannot manufacture accessibility authority.
 
-The future cross-process accessibility transport must authenticate the privileged accessibility-service principal, scope requests to the owning application/session, preserve revision identity, and avoid exposing labels or text from unrelated users/sessions. Secure-system presentation may require stricter policy than ordinary application surfaces.
+The future cross-process accessibility transport must authenticate the privileged accessibility-service principal through trusted process/kernel state, scope requests to the owning application/session, preserve revision identity, and avoid exposing labels or text from unrelated users/sessions. Secure-system presentation may require stricter policy than ordinary application surfaces.
 
 ## Not yet claimed
 
