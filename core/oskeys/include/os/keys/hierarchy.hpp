@@ -1,6 +1,8 @@
 #pragma once
 
+#include <array>
 #include <compare>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 
@@ -10,6 +12,9 @@
 #include <os/keys/provider.hpp>
 
 namespace os::keys {
+
+inline constexpr std::size_t max_profile_roots = 16U;
+inline constexpr std::size_t max_application_roots = 64U;
 
 // Logical protection scope is trusted system metadata. Public callers never
 // choose another principal's scope or owner through a Key Service payload.
@@ -77,11 +82,10 @@ struct RootKeyReference final {
 // A production implementation may map these operations to a TPM/TEE/HSM. The
 // interface deliberately has no method that exports raw root-key bytes.
 //
-// `acquire_system_root` establishes the hardware/provider-owned root for the
-// trusted system binding. `create_child_root` is called only after core policy
-// has validated a system->profile or profile->application edge. Data-key
-// generation occurs beneath the selected root and returns the existing opaque
-// ProviderKeyReference consumed by KeyRegistry/KeyProvider operations.
+// Root acquisition is binding-aware and must be idempotent for an existing
+// provider-owned root. Provider implementations must bind every RootKeyReference
+// to its KeyProtectionBinding internally and reject a mismatched reference /
+// binding pair; the binding argument is not a substitute for provider state.
 class HierarchicalKeyProvider : public PersistentKeyProvider {
 public:
     ~HierarchicalKeyProvider() override = default;
@@ -90,7 +94,7 @@ public:
     acquire_system_root(KeyProtectionBinding system_binding) noexcept = 0;
 
     [[nodiscard]] virtual os::core::Result<RootKeyReference>
-    create_child_root(
+    acquire_child_root(
         RootKeyReference parent,
         KeyProtectionBinding parent_binding,
         KeyProtectionBinding child_binding) noexcept = 0;
@@ -103,6 +107,51 @@ public:
 
     [[nodiscard]] virtual os::core::Result<void>
     destroy_root(RootKeyReference root, KeyProtectionBinding binding) noexcept = 0;
+};
+
+// Fixed-capacity core policy object. It pairs provider references with trusted
+// bindings so higher layers never select or recombine raw root references.
+// Profile roots are unique per UserId in this M2.7 slice; application roots are
+// unique per PrincipalId + UserId. Persistence of the provider-owned roots is a
+// provider responsibility through binding-aware acquire operations.
+class KeyHierarchy final {
+public:
+    explicit KeyHierarchy(HierarchicalKeyProvider& provider) noexcept : provider_(&provider) {}
+
+    [[nodiscard]] os::core::Result<void>
+    initialize(KeyProtectionBinding system_binding) noexcept;
+
+    [[nodiscard]] os::core::Result<void>
+    ensure_profile(KeyProtectionBinding profile_binding) noexcept;
+
+    [[nodiscard]] os::core::Result<void>
+    ensure_application(KeyProtectionBinding application_binding) noexcept;
+
+    [[nodiscard]] os::core::Result<ProviderKeyReference>
+    generate_application_data_key(
+        KeyProtectionBinding application_binding,
+        KeyPurpose purpose) noexcept;
+
+    [[nodiscard]] bool initialized() const noexcept { return system_.occupied; }
+    [[nodiscard]] std::size_t profile_count() const noexcept;
+    [[nodiscard]] std::size_t application_count() const noexcept;
+
+private:
+    struct RootSlot final {
+        bool occupied {false};
+        KeyProtectionBinding binding {};
+        RootKeyReference reference {};
+    };
+
+    [[nodiscard]] RootSlot* find_profile(os::core::UserId user) noexcept;
+    [[nodiscard]] const RootSlot* find_profile(os::core::UserId user) const noexcept;
+    [[nodiscard]] RootSlot* find_application(KeyProtectionBinding binding) noexcept;
+    [[nodiscard]] const RootSlot* find_application(KeyProtectionBinding binding) const noexcept;
+
+    HierarchicalKeyProvider* provider_ {nullptr};
+    RootSlot system_ {};
+    std::array<RootSlot, max_profile_roots> profiles_ {};
+    std::array<RootSlot, max_application_roots> applications_ {};
 };
 
 struct SecurityEpoch final {
