@@ -16,12 +16,37 @@ struct LogicalPoint final {
     std::int32_t y_q6 {0};
 };
 
+// A trusted compositor/input bridge may hit-test in physical surface pixels.
+// This transform converts only surface-local pixels into the logical viewport
+// used by SemanticTree. It deliberately contains no global screen position or
+// hardware-device identity, so those platform-private details need not cross
+// the application UI boundary.
+struct InputViewportTransform final {
+    std::uint32_t surface_width_px {0U};
+    std::uint32_t surface_height_px {0U};
+    std::uint32_t logical_width_q6 {0U};
+    std::uint32_t logical_height_q6 {0U};
+};
+
+struct SurfacePixelPoint final {
+    std::uint32_t x {0U};
+    std::uint32_t y {0U};
+};
+
 struct PointerRoute final {
     UiNodeId target {};
     UiRole role {UiRole::container};
     UiAction action {UiAction::activate};
     LogicalRect bounds {};
 };
+
+// Maps a compositor-authorized surface-local pixel into the semantic logical
+// coordinate system with bounded integer arithmetic. The mapping is half-open:
+// x==surface_width or y==surface_height is rejected instead of clamped into a
+// control at the edge.
+[[nodiscard]] os::core::Result<LogicalPoint> logical_point_from_surface_pixel(
+    InputViewportTransform transform,
+    SurfacePixelPoint point) noexcept;
 
 // Resolve one pointer-originated semantic action from an immutable tree
 // snapshot. Hit testing follows the same deterministic semantic ordering as
