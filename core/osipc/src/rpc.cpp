@@ -32,11 +32,28 @@ ClientConnection::call(
     std::uint32_t operation_id,
     os::core::ByteSpan request_payload,
     os::core::MutableByteSpan receive_buffer) noexcept {
+    return call(service_id, operation_id, request_payload, {}, receive_buffer);
+}
+
+os::core::Result<InboundMessage>
+ClientConnection::call(
+    os::core::ServiceId service_id,
+    std::uint32_t operation_id,
+    os::core::ByteSpan request_payload,
+    std::span<const os::core::NativeHandle> request_handles,
+    os::core::MutableByteSpan receive_buffer) noexcept {
     if (channel_ == nullptr || !channel_->valid()) {
         return ipc_error(errors::invalid_channel);
     }
-    if (request_payload.size() > max_inline_payload_size) {
+    if (request_payload.size() > max_inline_payload_size ||
+        request_handles.size() > static_cast<std::size_t>(max_handle_count) ||
+        request_handles.size() > static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max())) {
         return ipc_error(errors::oversized_message);
+    }
+    for (const auto& handle : request_handles) {
+        if (!handle.valid()) {
+            return ipc_error(errors::invalid_native_handle);
+        }
     }
     if (next_request_id_ == 0U) {
         return ipc_error(errors::request_id_exhausted);
@@ -49,17 +66,22 @@ ClientConnection::call(
         ++next_request_id_;
     }
 
+    std::uint32_t request_flags = flag_value(WireFlag::request);
+    if (!request_handles.empty()) {
+        request_flags |= flag_value(WireFlag::has_handles);
+    }
+
     const WireHeaderV1 request_header{
-        .flags = flag_value(WireFlag::request),
+        .flags = request_flags,
         .service_id = service_id,
         .operation_id = operation_id,
         .request_id = request_id,
         .payload_size = static_cast<std::uint32_t>(request_payload.size()),
-        .handle_count = 0,
+        .handle_count = static_cast<std::uint16_t>(request_handles.size()),
         .payload_checksum = 0,
     };
 
-    auto send_result = channel_->send(request_header, request_payload);
+    auto send_result = channel_->send(request_header, request_payload, request_handles);
     if (!send_result) {
         return send_result.error();
     }
