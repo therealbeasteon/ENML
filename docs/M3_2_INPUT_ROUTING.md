@@ -9,6 +9,7 @@ Applications should reason about semantic actions such as activate, focus, toggl
 The input path is deliberately split across subsystem boundaries:
 
 `trusted hardware/input adapter`
+→ authenticated compositor RPC
 → global display point inside the compositor
 → compositor-authorized `SurfaceInputHit`
 → surface-local pixel point
@@ -18,11 +19,26 @@ The input path is deliberately split across subsystem boundaries:
 
 This keeps display ownership, coordinate normalization and semantic action authority separate instead of building one privileged catch-all input/UI service.
 
+## Authenticated compositor transport
+
+The supervised compositor now exposes two narrowly scoped privileged operations on its existing authenticated RPC endpoint:
+
+- `compositor_op_input_hit_test` asks the compositor to choose the target for one global display-space point;
+- `compositor_op_input_validate` revalidates the returned owner/surface/frame tuple immediately before downstream delivery.
+
+`InputCompositorClient` is a separate privileged facade rather than an extension of the ordinary application `CompositorClient`. The C++ type is not itself authority. Each request still traverses `validate_rpc_request()`, which resolves kernel-supplied per-message credentials through trusted runtime identity, and then `InputBridgeAuthority` requires the configured input-service principal.
+
+An ordinary application principal can possess a brokered compositor endpoint and still receives `input_authority_denied` for the scene-query operations. Knowledge of the input-service principal value is not sufficient to mint that identity; the runtime identity resolver supplies the caller principal from supervisor-published process state.
+
+The wire representation of `SurfaceInputHit` is fixed and bounded. It carries generation-scoped surface identity, exact owner, role, surface size, frame sequence, local point and compositor-derived trusted-presentation classification. Decoding rejects malformed enum values, invalid local coordinates and role/trust-classification inconsistencies before the hit is re-authorized against live compositor state.
+
+The integration gate uses a real `SOCK_SEQPACKET` channel across `fork()`, so request authorization observes kernel packet credentials rather than a caller-provided PID field. It proves both the trusted-principal success path and ordinary-principal denial path. The transport remains synchronous/event-driven and creates no input worker or polling loop.
+
 ## Compositor-owned surface targeting
 
 `osdisplay::Compositor::hit_test_input()` is the privileged display-side seam. It chooses the topmost visible, framed and input-enabled surface using the compositor's authoritative scene ordering.
 
-The result contains only the data a future trusted delivery bridge needs:
+The result contains only the data a trusted delivery bridge needs:
 
 - exact generation-scoped `SurfaceId`;
 - exact `PeerIdentity` owner;
@@ -34,7 +50,9 @@ The result contains only the data a future trusted delivery bridge needs:
 
 The result intentionally does not need to be forwarded wholesale to applications. A platform input service can use owner/surface/frame identity for authorization and deliver only the permitted surface-local semantic event to the target process.
 
-Tying the hit to `frame_sequence` lets future delivery policy reason about the exact UI frame the compositor considered visible when the event was targeted. Buffer invalidation removes `has_frame`, so a surface whose presented pixels were revoked cannot continue receiving hits for an image the compositor no longer presents.
+Tying the hit to `frame_sequence` lets delivery policy reason about the exact UI frame the compositor considered visible when the event was targeted. Buffer invalidation removes `has_frame`, so a surface whose presented pixels were revoked cannot continue receiving hits for an image the compositor no longer presents.
+
+`validate_input_hit()` closes the hit-test-to-delivery TOCTOU window without holding a permanent compositor lock: a hidden/moved surface, changed frame, revoked buffer, changed owner/role/size or otherwise stale presentation is rejected before delivery.
 
 ## Physical-to-logical normalization
 
@@ -86,16 +104,19 @@ The current path:
 
 - allocates no heap memory in compositor hit localization or semantic routing;
 - creates no worker or timer thread;
-- performs no polling;
+- performs no input polling inside `osdisplay`/`osui`;
 - owns no background gesture recognizer;
 - operates over the existing bounded 64-surface compositor scene and 256-node semantic snapshot;
+- uses fixed-size RPC payloads for privileged target/validation requests;
 - performs input work only when the platform has an input event to route.
 
 ## Security boundary
 
-This is still not the complete hardware input service. The current work establishes both ends of the trusted seam: compositor-authoritative target localization and application-side semantic routing.
+The authenticated compositor transport now protects the global-scene targeting seam, but this is still not the complete hardware input service.
 
-The eventual privileged transport must authenticate its endpoint/peer authority, keep `/dev/input`, seat/device state and calibration private, preserve surface generation/owner/frame identity long enough to reject stale delivery, and ensure an event cannot be redirected to another process by application-supplied target IDs.
+The remaining platform input service must keep `/dev/input`, seat/device state and calibration private, obtain its runtime principal from trusted supervisor lifecycle state, preserve surface generation/owner/frame identity through delivery, and ensure an event cannot be redirected to another process by application-supplied target IDs.
+
+The compositor does not accept a caller-supplied target `SurfaceId` for hit testing. It chooses the target from authoritative scene state and revalidates the exact result before delivery.
 
 ## Visual/UX relationship
 
@@ -107,6 +128,7 @@ The mechanism does not prescribe ENML's visual appearance. Authored curves, mate
 
 This slice does not yet provide:
 
+- raw hardware device discovery/calibration or `/dev/input` ownership;
 - multitouch/gesture recognition;
 - pointer capture;
 - drag/drop;
@@ -114,7 +136,6 @@ This slice does not yet provide:
 - keyboard/navigation focus traversal;
 - IME/text-edit input;
 - hardware key mapping;
-- the authenticated cross-process input transport/service endpoint;
-- raw touch calibration or device discovery.
+- final target-process event transport from the trusted input service into the owning application runtime.
 
 Those must be added as bounded, explicit platform contracts rather than smuggled into the semantic UI layer.
