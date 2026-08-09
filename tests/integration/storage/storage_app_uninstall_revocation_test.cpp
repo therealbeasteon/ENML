@@ -7,6 +7,7 @@
 #include <utility>
 
 #include <fcntl.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <os/app/manager.hpp>
@@ -172,9 +173,10 @@ int main(int argc, char** argv) {
     assert(missing_root.error().code == os::storage::errors::root_not_registered);
 
     // The data itself survives uninstall. Only authority was revoked.
+    auto data_directory = open_directory(data_path);
     struct stat data_info {};
     assert(::fstatat(
-        open_directory(data_path).native(),
+        data_directory.native(),
         "before-uninstall",
         &data_info,
         AT_SYMLINK_NOFOLLOW) == 0);
