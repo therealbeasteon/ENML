@@ -8,7 +8,6 @@
 #include <os/core/result.hpp>
 #include <os/display/buffer.hpp>
 #include <os/display/compositor.hpp>
-#include <os/display/input_bridge.hpp>
 #include <os/ipc/channel.hpp>
 #include <os/ipc/rpc.hpp>
 
@@ -25,11 +24,6 @@ inline constexpr std::uint32_t compositor_op_activate_application = 6U;
 inline constexpr std::uint32_t compositor_op_allocate_buffer = 7U;
 inline constexpr std::uint32_t compositor_op_release_buffer = 8U;
 inline constexpr std::uint32_t compositor_op_submit_frame = 9U;
-// Privileged operations. They share the compositor transport so surface target
-// authority remains inside the compositor, but the server authorizes the
-// supervisor-resolved caller against the dedicated input-service principal.
-inline constexpr std::uint32_t compositor_op_input_hit_test = 10U;
-inline constexpr std::uint32_t compositor_op_input_validate = 11U;
 
 inline constexpr std::size_t max_compositor_clients = 16U;
 
@@ -72,39 +66,13 @@ private:
     os::ipc::ClientConnection* connection_ {nullptr};
 };
 
-// Client facade intended only for the supervised input service. Possessing this
-// C++ type grants no authority: every RPC is authenticated by the normal IPC
-// identity path and the server checks the resolved principal before returning
-// global-scene-derived targeting information.
-class InputCompositorClient final {
-public:
-    explicit InputCompositorClient(os::ipc::ClientConnection& connection) noexcept
-        : connection_(&connection) {}
-
-    [[nodiscard]] os::core::Result<SurfaceInputHit> hit_test(
-        std::int32_t global_x,
-        std::int32_t global_y,
-        os::core::MutableByteSpan scratch) noexcept;
-
-    [[nodiscard]] os::core::Result<void> validate_before_delivery(
-        const SurfaceInputHit& hit,
-        os::core::MutableByteSpan scratch) noexcept;
-
-private:
-    os::ipc::ClientConnection* connection_ {nullptr};
-};
-
 class CompositorService final {
 public:
     CompositorService(
         Compositor& compositor,
         SharedBufferPool& buffers,
-        os::ipc::PeerIdentityResolver& identity_resolver,
-        os::core::PrincipalId trusted_input_principal = {}) noexcept
-        : compositor_(&compositor),
-          buffers_(&buffers),
-          identity_resolver_(&identity_resolver),
-          input_authority_(compositor, trusted_input_principal) {}
+        os::ipc::PeerIdentityResolver& identity_resolver) noexcept
+        : compositor_(&compositor), buffers_(&buffers), identity_resolver_(&identity_resolver) {}
 
     [[nodiscard]] os::core::Result<void> dispatch_once(
         os::ipc::Channel& channel,
@@ -128,7 +96,6 @@ private:
     Compositor* compositor_ {nullptr};
     SharedBufferPool* buffers_ {nullptr};
     os::ipc::PeerIdentityResolver* identity_resolver_ {nullptr};
-    InputBridgeAuthority input_authority_;
     std::array<ClientEntry, max_compositor_clients> clients_ {};
 };
 
