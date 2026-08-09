@@ -21,6 +21,8 @@ constexpr os::core::PeerIdentity accessibility_peer{
     os::core::UserId{0U},
     os::core::ProcessId{601U},
 };
+constexpr os::ui::AccessibilitySessionId session{7001U};
+constexpr os::ui::AccessibilitySessionId other_session{7002U};
 
 [[nodiscard]] os::ui::LogicalRect rect(
     std::uint32_t x,
@@ -87,8 +89,14 @@ int main() {
         });
     assert(toggle);
 
-    os::ui::AccessibilityBridgeAuthority authority{tree, accessibility_principal};
+    os::ui::AccessibilityBridgeAuthority authority{
+        tree,
+        accessibility_principal,
+        session,
+    };
     assert(authority.valid());
+    assert(authority.session() == session);
+
     auto unauthorized_snapshot = authority.snapshot(application_peer);
     assert(!unauthorized_snapshot);
     expect_ui_error(
@@ -97,19 +105,38 @@ int main() {
 
     auto authorized_snapshot = authority.snapshot(accessibility_peer);
     assert(authorized_snapshot);
-    assert(authorized_snapshot.value().revision == tree.revision());
+    assert(authorized_snapshot.value().session == session);
+    assert(authorized_snapshot.value().snapshot.revision == tree.revision());
 
     auto unauthorized_action = authority.dispatch(
         application_peer,
         {
-            .snapshot_revision = authorized_snapshot.value().revision,
-            .target = button.value().id,
-            .action = os::ui::UiAction::activate,
+            .session = session,
+            .request = {
+                .snapshot_revision = authorized_snapshot.value().snapshot.revision,
+                .target = button.value().id,
+                .action = os::ui::UiAction::activate,
+            },
         });
     assert(!unauthorized_action);
     expect_ui_error(
         unauthorized_action.error(),
         os::ui::errors::accessibility_authority_denied);
+
+    auto wrong_session = authority.dispatch(
+        accessibility_peer,
+        {
+            .session = other_session,
+            .request = {
+                .snapshot_revision = authorized_snapshot.value().snapshot.revision,
+                .target = button.value().id,
+                .action = os::ui::UiAction::activate,
+            },
+        });
+    assert(!wrong_session);
+    expect_ui_error(
+        wrong_session.error(),
+        os::ui::errors::accessibility_session_mismatch);
 
     auto snapshot = os::ui::accessibility_service_snapshot(tree);
     assert(snapshot);
@@ -128,9 +155,12 @@ int main() {
     auto focus = authority.dispatch(
         accessibility_peer,
         {
-            .snapshot_revision = snapshot.value().revision,
-            .target = button.value().id,
-            .action = os::ui::UiAction::focus,
+            .session = session,
+            .request = {
+                .snapshot_revision = snapshot.value().revision,
+                .target = button.value().id,
+                .action = os::ui::UiAction::focus,
+            },
         });
     assert(focus);
     assert(focus.value().target == button.value().id);
@@ -142,9 +172,12 @@ int main() {
     auto stale = authority.dispatch(
         accessibility_peer,
         {
-            .snapshot_revision = snapshot.value().revision,
-            .target = toggle.value().id,
-            .action = os::ui::UiAction::toggle,
+            .session = session,
+            .request = {
+                .snapshot_revision = snapshot.value().revision,
+                .target = toggle.value().id,
+                .action = os::ui::UiAction::toggle,
+            },
         });
     assert(!stale);
     expect_ui_error(stale.error(), os::ui::errors::stale_accessibility_snapshot);
@@ -154,9 +187,12 @@ int main() {
     auto toggle_event = authority.dispatch(
         accessibility_peer,
         {
-            .snapshot_revision = fresh.value().revision,
-            .target = toggle.value().id,
-            .action = os::ui::UiAction::toggle,
+            .session = fresh.value().session,
+            .request = {
+                .snapshot_revision = fresh.value().snapshot.revision,
+                .target = toggle.value().id,
+                .action = os::ui::UiAction::toggle,
+            },
         });
     assert(toggle_event);
     assert(toggle_event.value().target == toggle.value().id);
@@ -199,11 +235,21 @@ int main() {
     assert(!removed_target);
     expect_ui_error(removed_target.error(), os::ui::errors::invalid_node);
 
-    os::ui::AccessibilityBridgeAuthority invalid_authority{tree, {}};
-    assert(!invalid_authority.valid());
-    auto invalid_authority_snapshot = invalid_authority.snapshot(accessibility_peer);
-    assert(!invalid_authority_snapshot);
-    expect_ui_error(invalid_authority_snapshot.error(), os::ui::errors::invalid_tree);
+    os::ui::AccessibilityBridgeAuthority invalid_principal_authority{tree, {}, session};
+    assert(!invalid_principal_authority.valid());
+    auto invalid_principal_snapshot = invalid_principal_authority.snapshot(accessibility_peer);
+    assert(!invalid_principal_snapshot);
+    expect_ui_error(invalid_principal_snapshot.error(), os::ui::errors::invalid_tree);
+
+    os::ui::AccessibilityBridgeAuthority invalid_session_authority{
+        tree,
+        accessibility_principal,
+        {},
+    };
+    assert(!invalid_session_authority.valid());
+    auto invalid_session_snapshot = invalid_session_authority.snapshot(accessibility_peer);
+    assert(!invalid_session_snapshot);
+    expect_ui_error(invalid_session_snapshot.error(), os::ui::errors::invalid_tree);
 
     os::ui::SemanticTree invalid{os::ui::LogicalRect{}};
     auto invalid_snapshot = os::ui::accessibility_service_snapshot(invalid);
