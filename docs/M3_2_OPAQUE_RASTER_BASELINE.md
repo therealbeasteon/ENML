@@ -1,6 +1,6 @@
 # M3.2 — Opaque-first ENML raster baseline
 
-This slice is the first concrete pixel-writing stage in M3.2. It is intentionally small, deterministic and CPU-side. It is not the final ENML renderer and it does not define the final palette, typography, blur, lighting or shader implementation.
+This slice is the first concrete pixel-writing stage in M3.2. It is intentionally small, deterministic and CPU-side. It is not the final ENML renderer and it does not define the final palette, typography, blur or shader implementation.
 
 ## Why opaque first
 
@@ -23,7 +23,7 @@ RenderCommandBuffer
     |
     +--> semantic ColorRole
     +--> material/depth/curve/motion intent
-    +--> resolved per-corner contour
+    +--> resolved per-corner contour + smoothing
     +--> focus/state
     |
     v
@@ -31,6 +31,12 @@ RasterTheme (renderer-owned concrete colors)
     |
     v
 rasterize_opaque_materials()
+    |
+    +--> opaque material/tint fill
+    +--> smoothed authored contour coverage
+    +--> bounded directional depth shadow fallback
+    +--> bounded leading-edge specular fallback
+    +--> explicit focus/outline edge
     |
     v
 caller-owned RGBA8 pixel target
@@ -50,24 +56,29 @@ The rasterizer currently provides:
 - opaque semantic background fill;
 - renderer-owned material tint blending;
 - per-corner radius coverage preserving asymmetric swept contours;
-- explicit one-pixel outline/focus treatment;
+- deterministic contour smoothing that interpolates between circular and squircle-like fourth-power coverage without floating point;
+- opaque directional depth fallback that darkens only already-painted support pixels, never inventing a backdrop outside painted content;
+- bounded leading-edge highlight/specular fallback for non-flush material;
+- explicit one-pixel outline/focus treatment painted after optical lighting so focus remains the final state cue;
 - deterministic command order inherited from `RenderCommandBuffer`;
 - validation errors for malformed target, theme or command data;
-- 64-bit pixel-write accounting;
+- 64-bit pixel-write accounting plus shadow/lighting counters;
 - GCC, Clang, ASan/UBSan and native AArch64 CI coverage through `ui_raster_test`.
 
 The rasterizer deliberately ignores live opacity/backdrop blur at this stage. A `crystal` semantic material is therefore painted as an opaque fallback using its background/tint roles and authored contour. This is a feature of this milestone, not a claim that crystal material is ultimately opaque.
+
+The new depth and specular passes are likewise fallback primitives rather than the final physical material model. They give raised/floating/hero surfaces useful hierarchy before alpha compositing, blur kernels and compositor-aware lighting exist. Their important invariant is that optical richness enhances an already readable contour/state system instead of becoming the only source of affordance.
 
 ## What is intentionally not implemented yet
 
 - font glyph rasterization;
 - production font assets or shaping backend;
 - paragraph bidi/line breaking;
-- continuous-curve smoothing beyond the current per-corner coverage baseline;
-- shadows and depth blur;
-- specular/highlight lighting model;
+- vector/path-quality continuous curves and anti-aliased fractional edge coverage;
+- blurred shadows or depth blur;
 - alpha compositing between ENML surfaces;
 - live backdrop blur/filtering;
+- context-aware transparent figure/ground adaptation;
 - gradients or image sampling;
 - GPU path/shader backend;
 - compositor-deadline-aware animation.
@@ -90,13 +101,13 @@ Later material work should therefore layer optical richness on top of these inva
 
 The next renderer slices should add, in order:
 
-1. improved continuous/swept contour coverage and anti-aliasing;
-2. renderer-owned font provider and production shaping integration;
-3. glyph-mask/text rasterization and large-text reflow integration;
-4. depth edge/shadow primitives with bounded kernels;
+1. renderer-owned font provider and production shaping integration;
+2. glyph-mask/text rasterization and large-text reflow integration;
+3. anti-aliased/vector-quality continuous and swept contour paths above the current deterministic smoothing fallback;
+4. bounded blurred depth kernels and richer renderer-owned lighting;
 5. secure-system attribution primitives that application style tokens cannot request;
 6. alpha compositing and context-aware translucent material;
-7. bounded backdrop filtering and lighting/specular response;
+7. bounded backdrop filtering and material response;
 8. compositor-deadline-aware motion.
 
 A screenshot produced before these steps is a preview of direction. Once a scene is emitted through this raster path and written into the compositor buffer, it becomes an actual ENML render rather than a mockup.
