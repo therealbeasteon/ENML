@@ -24,14 +24,14 @@ KeyRegistry::create(
     KeyOwner owner,
     KeyId id,
     KeyPurpose purpose,
-    RightsMask key_rights) noexcept {
+    RightsMask granted_rights) noexcept {
     if (!os::core::valid_principal(owner.principal) || !id.valid()) {
         return key_error(errors::invalid_key);
     }
     if (!valid_purpose(purpose)) {
         return key_error(errors::unsupported_purpose);
     }
-    if (!valid_rights(key_rights)) {
+    if (!valid_rights(granted_rights)) {
         return key_error(errors::invalid_rights);
     }
     if (find(id) != nullptr) {
@@ -59,7 +59,7 @@ KeyRegistry::create(
         .id = id,
         .version = 1U,
         .purpose = purpose,
-        .rights = key_rights,
+        .rights = granted_rights,
     };
     *free_record = KeyRecord{
         .occupied = true,
@@ -103,7 +103,7 @@ KeyRegistry::destroy(KeyOwner caller, KeyId id) noexcept {
     if (record == nullptr) return key_error(errors::not_found);
     if (record->owner != caller) return key_error(errors::access_denied);
     if (record->destroyed) return key_error(errors::destroyed);
-    if ((record->descriptor.rights & rights::destroy) == 0U) {
+    if ((record->descriptor.rights & key_rights::destroy) == 0U) {
         return key_error(errors::access_denied);
     }
 
