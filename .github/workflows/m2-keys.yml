@@ -2,12 +2,21 @@ name: M2 Key Service
 
 on:
   push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
 
 jobs:
   keys-gcc:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
       - name: Configure
         run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
       - name: Build key foundation and AEAD gates
@@ -23,6 +32,10 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
       - name: Configure
         run: >-
           cmake -S . -B build/m2-keys-clang -G Ninja
@@ -44,6 +57,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Confirm AArch64
         run: test "$(uname -m)" = "aarch64"
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
       - name: Configure
         run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
       - name: Build key foundation and AEAD gates natively
