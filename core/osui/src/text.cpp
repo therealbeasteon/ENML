@@ -185,6 +185,27 @@ bool shaped_text_valid(
     return expected_line_glyph == shaped.glyph_count;
 }
 
+os::core::Result<ShapedText> shape_text(
+    const SemanticText& source,
+    const ResolvedTextStyle& style,
+    TextShaperBackend backend) noexcept {
+    if (!semantic_text_valid(source) || !text_style_valid(style)) {
+        return ui_error(errors::invalid_text_shape);
+    }
+    if (backend.shape == nullptr) {
+        return ui_error(errors::text_shaper_unavailable);
+    }
+
+    ShapedText output {};
+    if (!backend.shape(backend.context, source, style, output)) {
+        return ui_error(errors::text_shaper_failed);
+    }
+    if (!shaped_text_valid(source, style, output)) {
+        return ui_error(errors::invalid_text_shape);
+    }
+    return output;
+}
+
 os::core::Result<TextMeasurement> measure_shaped_text(
     const SemanticText& source,
     const ResolvedTextStyle& style,
