@@ -5,6 +5,7 @@ function(add_emnl_core_test name source)
         $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
     )
     add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES LABELS "m0")
 endfunction()
 
 add_emnl_core_test(result_test result_test.cpp)
