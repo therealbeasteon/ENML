@@ -3,9 +3,10 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
-#include <cstring>
 #include <string_view>
+#include <utility>
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -152,9 +153,11 @@ int main() {
         assert(doomed);
         assert(store.destroy(owner, destroyed_key));
 
+        auto state_directory = open_directory(directory_path);
+        assert(state_directory.valid());
         struct stat state_metadata {};
         assert(::fstatat(
-            open_directory(directory_path).native(),
+            state_directory.native(),
             "key-registry-v1.bin",
             &state_metadata,
             AT_SYMLINK_NOFOLLOW) == 0);
