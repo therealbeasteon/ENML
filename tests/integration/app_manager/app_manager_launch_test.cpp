@@ -126,6 +126,19 @@ int main(int argc, char** argv) {
     const auto executable_v2 = split_executable(argv[3]);
     const auto executable_v3 = split_executable(argv[4]);
 
+    constexpr os::sandbox::SandboxPolicyV1 storage_sandbox{
+        .enabled = true,
+        .require_no_new_privs = true,
+        .clear_capabilities = true,
+        .require_seccomp = true,
+        .require_landlock = false,
+        // Storage owns bounded root/object capabilities. Its descriptor budget
+        // must cover the fixed 64-root + 64-object tables and their backing
+        // directory/file descriptors without granting unbounded authority.
+        .max_open_files = 256U,
+        .max_processes = 8U,
+        .max_file_size_bytes = 1024U * 1024U,
+    };
     constexpr os::supervisor::ServiceDescriptorV1 storage_descriptor{
         .service_id = os::storage::storage_service_id,
         .principal_id = os::core::PrincipalId{0x53595354454D0000ULL, 0x000000000000F020ULL},
@@ -136,7 +149,7 @@ int main(int argc, char** argv) {
         .max_restarts_in_window = 3U,
         .restart_window_ms = 2000U,
         .readiness_timeout_ms = 1000U,
-        .sandbox = {},
+        .sandbox = storage_sandbox,
     };
     os::supervisor::Supervisor supervisor({storage_descriptor, storage_path});
     assert(supervisor.start());
