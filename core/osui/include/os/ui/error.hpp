@@ -49,6 +49,8 @@ inline constexpr std::uint32_t invalid_paragraph_layout = 39U;
 inline constexpr std::uint32_t paragraph_layout_limit = 40U;
 inline constexpr std::uint32_t paragraph_backend_unavailable = 41U;
 inline constexpr std::uint32_t paragraph_backend_failed = 42U;
+inline constexpr std::uint32_t invalid_collection_change = 43U;
+inline constexpr std::uint32_t collection_change_source_failed = 44U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
