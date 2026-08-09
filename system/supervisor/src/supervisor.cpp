@@ -4,12 +4,11 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <utility>
 
 #include <fcntl.h>
-#include <poll.h>
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/syscall.h>
@@ -18,7 +17,6 @@
 #include <unistd.h>
 
 #include <os/core/error.hpp>
-#include <os/core/native_handle.hpp>
 #include <os/ipc/constants.hpp>
 #include <os/service/bootstrap.hpp>
 #include <os/service/identity.hpp>
@@ -121,79 +119,28 @@ void close_extra_descriptors(unsigned first_fd) noexcept {
     std::_Exit(127);
 }
 
-[[nodiscard]] os::core::Result<os::core::NativeHandle> open_pidfd(pid_t pid) noexcept {
-#if defined(SYS_pidfd_open)
-    int fd = -1;
-    do {
-        fd = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0U));
-    } while (fd < 0 && errno == EINTR);
-    if (fd < 0) {
-        return service_error(os::core::errors::service::not_supported);
-    }
-
-    int flags = -1;
-    do {
-        flags = ::fcntl(fd, F_GETFD);
-    } while (flags < 0 && errno == EINTR);
-    if (flags < 0) {
-        (void)::close(fd);
-        return service_error(os::core::errors::service::launch_failed);
-    }
-    if (::fcntl(fd, F_SETFD, flags | FD_CLOEXEC) != 0) {
-        (void)::close(fd);
-        return service_error(os::core::errors::service::launch_failed);
-    }
-    return os::core::NativeHandle{fd};
-#else
-    (void)pid;
-    return service_error(os::core::errors::service::not_supported);
-#endif
-}
-
-[[nodiscard]] bool pidfd_alive(int fd) noexcept {
-    if (fd < 0) return false;
-    pollfd descriptor{.fd = fd, .events = POLLIN, .revents = 0};
-    int result = -1;
-    do {
-        result = ::poll(&descriptor, 1, 0);
-    } while (result < 0 && errno == EINTR);
-    return result == 0;
-}
-
-[[nodiscard]] os::core::Result<os::ipc::KernelPeerCredentials>
-credentials_for_pid(pid_t pid) noexcept {
-    if (pid <= 0) {
-        return security_error(os::core::errors::security::invalid_identity);
-    }
-
-    char path[64]{};
-    const int length = std::snprintf(path, sizeof(path), "/proc/%ld", static_cast<long>(pid));
-    if (length <= 0 || static_cast<std::size_t>(length) >= sizeof(path)) {
-        return security_error(os::core::errors::security::invalid_identity);
-    }
-
-    struct stat info {};
-    if (::stat(path, &info) != 0) {
-        return security_error(os::core::errors::security::stale_process);
-    }
-
-    return os::ipc::KernelPeerCredentials{
-        .process_id = static_cast<std::int64_t>(pid),
-        .user_id = static_cast<std::uint32_t>(info.st_uid),
-        .group_id = static_cast<std::uint32_t>(info.st_gid),
-    };
-}
-
 } // namespace
 
 Supervisor::Supervisor(ServiceLaunchConfig config) noexcept
     : config_(config) {}
+
+Supervisor::Supervisor(ServiceLaunchConfig config, ProcessAuthority& authority) noexcept
+    : config_(config), authority_(&authority) {}
 
 Supervisor::~Supervisor() {
     if (child_pid_ > 0) {
         (void)::kill(child_pid_, SIGTERM);
         int status = 0;
         while (::waitpid(child_pid_, &status, 0) < 0 && errno == EINTR) {}
+    }
+
+    // A shared ProcessAuthority outlives an individual service supervisor. Drop
+    // every publication reference owned by this Supervisor so destroying one
+    // service cannot leak or accidentally retain global process authority.
+    for (auto& entry : process_entries_) {
+        if (!entry.occupied) continue;
+        os::core::discard_result(authority_->release(entry.record.peer.process));
+        entry = ProcessEntry{};
     }
     close_runtime_channels();
 }
@@ -219,7 +166,8 @@ os::core::Result<void> Supervisor::start() noexcept {
 
 Supervisor::ProcessEntry* Supervisor::find_process_by_pid(pid_t native_pid) noexcept {
     for (auto& entry : process_entries_) {
-        if (entry.occupied && entry.record.kernel.process_id == static_cast<std::int64_t>(native_pid)) {
+        if (entry.occupied &&
+            entry.record.kernel.process_id == static_cast<std::int64_t>(native_pid)) {
             return &entry;
         }
     }
@@ -228,7 +176,8 @@ Supervisor::ProcessEntry* Supervisor::find_process_by_pid(pid_t native_pid) noex
 
 const Supervisor::ProcessEntry* Supervisor::find_process_by_pid(pid_t native_pid) const noexcept {
     for (const auto& entry : process_entries_) {
-        if (entry.occupied && entry.record.kernel.process_id == static_cast<std::int64_t>(native_pid)) {
+        if (entry.occupied &&
+            entry.record.kernel.process_id == static_cast<std::int64_t>(native_pid)) {
             return &entry;
         }
     }
@@ -237,9 +186,7 @@ const Supervisor::ProcessEntry* Supervisor::find_process_by_pid(pid_t native_pid
 
 Supervisor::ProcessEntry* Supervisor::find_process_by_id(os::core::ProcessId process_id) noexcept {
     for (auto& entry : process_entries_) {
-        if (entry.occupied && entry.record.peer.process == process_id) {
-            return &entry;
-        }
+        if (entry.occupied && entry.record.peer.process == process_id) return &entry;
     }
     return nullptr;
 }
@@ -247,7 +194,7 @@ Supervisor::ProcessEntry* Supervisor::find_process_by_id(os::core::ProcessId pro
 void Supervisor::remove_process_entry(os::core::ProcessId process_id) noexcept {
     for (auto& entry : process_entries_) {
         if (entry.occupied && entry.record.peer.process == process_id) {
-            entry.pidfd.reset();
+            os::core::discard_result(authority_->release(process_id));
             entry = ProcessEntry{};
             return;
         }
@@ -260,7 +207,7 @@ Supervisor::create_process_record(
     os::core::PrincipalId principal,
     os::core::UserId user,
     bool managed_service) noexcept {
-    if (native_pid <= 0 || !os::core::valid_principal(principal) || next_process_id_ == 0U) {
+    if (native_pid <= 0 || !os::core::valid_principal(principal)) {
         return security_error(os::core::errors::security::invalid_identity);
     }
     if (find_process_by_pid(native_pid) != nullptr) {
@@ -278,46 +225,30 @@ Supervisor::create_process_record(
         return security_error(os::core::errors::security::registry_full);
     }
 
-    auto pidfd_result = open_pidfd(native_pid);
-    if (!pidfd_result) return pidfd_result.error();
-    auto pidfd = std::move(pidfd_result).value();
+    auto authoritative = authority_->acquire(native_pid, principal, user);
+    if (!authoritative) return authoritative.error();
 
-    auto credentials_result = credentials_for_pid(native_pid);
-    if (!credentials_result) return credentials_result.error();
-    if (!pidfd_alive(pidfd.native())) {
-        return security_error(os::core::errors::security::stale_process);
-    }
-
-    const auto process_id = os::core::ProcessId{next_process_id_++};
-    if (next_process_id_ == 0U) {
-        // Zero is permanently reserved as invalid. Exhaustion is fatal for new
-        // registrations but does not invalidate already-issued identities.
-        next_process_id_ = 0U;
-    }
-
-    const os::service::ProcessIdentityRecord record{
-        .kernel = credentials_result.value(),
-        .peer = os::core::PeerIdentity{
-            .principal = principal,
-            .user = user,
-            .process = process_id,
-        },
+    *free_entry = ProcessEntry{
+        .occupied = true,
+        .managed_service = managed_service,
+        .record = authoritative.value(),
     };
-
-    free_entry->occupied = true;
-    free_entry->managed_service = managed_service;
-    free_entry->record = record;
-    free_entry->pidfd = std::move(pidfd);
-    return record;
+    return authoritative.value();
 }
 
 os::core::Result<void> Supervisor::publish_process_to_service(ProcessEntry& entry) noexcept {
-    if (!entry.occupied || !entry.pidfd.valid() || !control_.valid()) {
+    if (!entry.occupied || !control_.valid()) {
         return security_error(os::core::errors::security::invalid_identity);
     }
     if (next_identity_request_id_ == 0U) {
-        return os::core::make_error(os::core::ErrorDomain::ipc, os::ipc::errors::request_id_exhausted);
+        return os::core::make_error(
+            os::core::ErrorDomain::ipc,
+            os::ipc::errors::request_id_exhausted);
     }
+
+    auto pidfd = authority_->duplicate_pidfd(entry.record.peer.process);
+    if (!pidfd) return pidfd.error();
+
     const auto request_id = os::core::RequestId{next_identity_request_id_};
     if (next_identity_request_id_ == std::numeric_limits<std::uint64_t>::max()) {
         next_identity_request_id_ = 0U;
@@ -325,7 +256,10 @@ os::core::Result<void> Supervisor::publish_process_to_service(ProcessEntry& entr
         ++next_identity_request_id_;
     }
     return os::service::register_identity_with_service(
-        control_, entry.record, entry.pidfd, request_id,
+        control_,
+        entry.record,
+        pidfd.value(),
+        request_id,
         config_.descriptor.readiness_timeout_ms);
 }
 
@@ -421,12 +355,14 @@ os::core::Result<void> Supervisor::spawn_service() noexcept {
     }
 
     // A restarted service has a fresh in-process registry. Republish every
-    // still-live external process identity before exposing RUNNING.
+    // still-live external process identity that this Supervisor owns. The
+    // ProcessId itself remains allocated by the shared boot-scoped authority.
     for (auto& entry : process_entries_) {
         if (!entry.occupied || entry.managed_service) continue;
-        if (!pidfd_alive(entry.pidfd.native())) {
-            entry.pidfd.reset();
-            entry = ProcessEntry{};
+        auto live = authority_->lookup(entry.record.peer.process);
+        if (!live) {
+            const auto stale_process = entry.record.peer.process;
+            remove_process_entry(stale_process);
             continue;
         }
         auto publish_result = publish_process_to_service(entry);
@@ -501,9 +437,10 @@ void Supervisor::observe_exit(int status) noexcept {
 void Supervisor::prune_dead_processes() noexcept {
     for (auto& entry : process_entries_) {
         if (!entry.occupied || entry.managed_service) continue;
-        if (!pidfd_alive(entry.pidfd.native())) {
-            entry.pidfd.reset();
-            entry = ProcessEntry{};
+        auto live = authority_->lookup(entry.record.peer.process);
+        if (!live) {
+            const auto stale_process = entry.record.peer.process;
+            remove_process_entry(stale_process);
         }
     }
 }
@@ -563,14 +500,18 @@ Supervisor::register_process(
 
     if (auto* existing = find_process_by_pid(native_pid); existing != nullptr) {
         if (existing->managed_service || existing->record.peer.principal != principal ||
-            existing->record.peer.user != user || !pidfd_alive(existing->pidfd.native())) {
+            existing->record.peer.user != user) {
             return security_error(os::core::errors::security::credential_mismatch);
         }
-        auto publish_result = publish_process_to_service(*existing);
-        if (!publish_result) {
-            return publish_result.error();
+        auto authoritative = authority_->lookup(existing->record.peer.process);
+        if (authoritative) {
+            auto publish_result = publish_process_to_service(*existing);
+            if (!publish_result) return publish_result.error();
+            return existing->record;
         }
-        return existing->record;
+
+        const auto stale_process = existing->record.peer.process;
+        remove_process_entry(stale_process);
     }
 
     auto record_result = create_process_record(native_pid, principal, user, false);
@@ -599,13 +540,21 @@ Supervisor::unregister_process(os::core::ProcessId process_id) noexcept {
 
     if (state_ == ServiceState::running && control_.valid()) {
         if (next_identity_request_id_ == 0U) {
-            return os::core::make_error(os::core::ErrorDomain::ipc, os::ipc::errors::request_id_exhausted);
+            return os::core::make_error(
+                os::core::ErrorDomain::ipc,
+                os::ipc::errors::request_id_exhausted);
         }
-        const auto request_id = os::core::RequestId{next_identity_request_id_++};
+        const auto request_id = os::core::RequestId{next_identity_request_id_};
+        if (next_identity_request_id_ == std::numeric_limits<std::uint64_t>::max()) {
+            next_identity_request_id_ = 0U;
+        } else {
+            ++next_identity_request_id_;
+        }
         auto unregister_result = os::service::unregister_identity_with_service(
             control_, process_id, request_id, config_.descriptor.readiness_timeout_ms);
-        if (!unregister_result && !(unregister_result.error().domain == os::core::ErrorDomain::security &&
-            unregister_result.error().code == os::core::errors::security::unknown_process)) {
+        if (!unregister_result &&
+            !(unregister_result.error().domain == os::core::ErrorDomain::security &&
+              unregister_result.error().code == os::core::errors::security::unknown_process)) {
             return unregister_result.error();
         }
     }
@@ -619,10 +568,9 @@ Supervisor::lookup_process(pid_t native_pid) const noexcept {
     if (entry == nullptr || !entry->occupied) {
         return security_error(os::core::errors::security::unknown_process);
     }
-    if (!pidfd_alive(entry->pidfd.native())) {
-        return security_error(os::core::errors::security::stale_process);
-    }
-    return entry->record;
+    auto authoritative = authority_->lookup(entry->record.peer.process);
+    if (!authoritative) return authoritative.error();
+    return authoritative.value();
 }
 
 os::core::Result<os::ipc::Channel> Supervisor::connect() noexcept {

@@ -26,6 +26,37 @@ ApplicationManager::ApplicationManager(
       supervisor_(storage_supervisor),
       key_supervisor_(&key_supervisor) {}
 
+ApplicationManager::ApplicationManager(
+    os::package::PersistentPackageRegistry& packages,
+    ApplicationPrincipalStore& principals,
+    os::supervisor::Supervisor& storage_supervisor,
+    os::supervisor::Supervisor& key_supervisor,
+    os::supervisor::ServiceBroker& service_broker) noexcept
+    : packages_(packages),
+      principals_(principals),
+      supervisor_(storage_supervisor),
+      key_supervisor_(&key_supervisor),
+      service_broker_(&service_broker) {}
+
+bool ApplicationManager::broker_configuration_valid() const noexcept {
+    return service_broker_ != nullptr && key_supervisor_ != nullptr &&
+        supervisor_.service_id() == os::storage::storage_service_id &&
+        key_supervisor_->service_id() == os::keys::key_service_id &&
+        &supervisor_.process_authority() == &key_supervisor_->process_authority() &&
+        &service_broker_->process_authority() == &supervisor_.process_authority();
+}
+
+os::core::Result<void>
+ApplicationManager::release_instance_identity(os::core::ProcessId process) noexcept {
+    if (process.value() == 0U) {
+        return os::core::make_error(
+            os::core::ErrorDomain::security,
+            os::core::errors::security::invalid_identity);
+    }
+    if (service_broker_ != nullptr) return service_broker_->detach_process(process);
+    return supervisor_.unregister_process(process);
+}
+
 os::core::Result<void>
 ApplicationManager::ensure_key_control() noexcept {
     if (key_supervisor_ == nullptr) return {};

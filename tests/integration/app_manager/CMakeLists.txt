@@ -45,3 +45,42 @@ target_compile_options(application_sandbox_landlock_test PRIVATE
 )
 add_test(NAME application_sandbox_landlock_test COMMAND application_sandbox_landlock_test)
 set_tests_properties(application_sandbox_landlock_test PROPERTIES SKIP_RETURN_CODE 77)
+
+# M2.9 fixture consumes the versioned handle-based bootstrap. It receives
+# Storage + Keys by typed ServiceId and never relies on a fixed service fd.
+add_executable(m2_broker_test_app broker_test_app.cpp)
+target_link_libraries(m2_broker_test_app PRIVATE
+    emnl::osapp
+    emnl::storage_service
+    emnl::key_service
+    emnl_warnings
+)
+target_compile_options(m2_broker_test_app PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+
+if(EMNL_BUILD_OPENSSL_TEST_PROVIDER)
+    add_executable(app_manager_multi_service_broker_test
+        app_manager_multi_service_broker_test.cpp)
+    target_link_libraries(app_manager_multi_service_broker_test PRIVATE
+        emnl::app_manager
+        emnl::key_service
+        emnl_warnings
+    )
+    target_compile_options(app_manager_multi_service_broker_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+    )
+    add_dependencies(app_manager_multi_service_broker_test
+        system.storage
+        system_keys_host_ci
+        m2_broker_test_app
+    )
+    add_test(
+        NAME app_manager_multi_service_broker_test
+        COMMAND app_manager_multi_service_broker_test
+            $<TARGET_FILE:system.storage>
+            $<TARGET_FILE:system_keys_host_ci>
+            $<TARGET_FILE:m2_broker_test_app>
+    )
+    set_tests_properties(app_manager_multi_service_broker_test PROPERTIES LABELS m2-broker)
+endif()
