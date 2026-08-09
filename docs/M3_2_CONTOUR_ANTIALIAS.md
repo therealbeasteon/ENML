@@ -18,6 +18,8 @@ This slice adds a deterministic antialias fringe pass after the existing opaque 
 
 The pass is intentionally bounded to one pixel outside the rasterized contour. Cost therefore tracks visible contour perimeter rather than turning every surface into a high-resolution supersampled offscreen buffer.
 
+`rasterize_opaque_frame()` is now the preferred CPU/economy geometry entry point. It composes the existing deterministic opaque material/depth/focus stage and this contour antialias stage in a fixed order and returns both bounded statistics records. Keeping the stages distinct lets text, trusted compositor overlays, and later optical effects be added without growing a single opaque graphics framework.
+
 ## What this is not
 
 This is not the final ENML vector/path renderer. In particular:
