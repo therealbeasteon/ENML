@@ -100,6 +100,17 @@ enum class SurfaceRole : std::uint8_t {
     secure_system = 4U,
 };
 
+// This is compositor-derived trust metadata, not a drawable application style.
+// Applications submit pixels but cannot select this classification. A later
+// compositor backend can use it to add non-buffer trust attribution so drawing
+// a lookalike inside an application surface is not sufficient to mint trusted
+// system presentation.
+enum class TrustedPresentation : std::uint8_t {
+    none = 0U,
+    system_chrome = 1U,
+    secure_system = 2U,
+};
+
 enum class SurfaceVisibility : std::uint8_t {
     hidden = 0U,
     visible = 1U,
@@ -189,6 +200,7 @@ struct SceneEntry final {
     std::uint8_t buffer_slot {0U};
     bool has_frame {false};
     bool capture_allowed {true};
+    TrustedPresentation trusted_presentation {TrustedPresentation::none};
 };
 
 struct SceneSnapshot final {
