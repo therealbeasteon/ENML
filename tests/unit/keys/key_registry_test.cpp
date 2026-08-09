@@ -32,6 +32,7 @@ public:
         os::keys::AeadNonce& nonce,
         os::keys::AeadTag& tag) noexcept override {
         ++seal_calls;
+        last_seal_key = key;
         if (!key.valid() || profile != os::keys::CryptoProfileId::aes_256_gcm_v1) {
             return os::keys::key_error(os::keys::errors::provider_failure);
         }
@@ -56,6 +57,7 @@ public:
         os::core::ByteSpan ciphertext,
         os::core::MutableByteSpan plaintext) noexcept override {
         ++open_calls;
+        last_open_key = key;
         if (!key.valid() || profile != os::keys::CryptoProfileId::aes_256_gcm_v1) {
             return os::keys::key_error(os::keys::errors::provider_failure);
         }
@@ -83,6 +85,8 @@ public:
     std::size_t seal_calls {0U};
     std::size_t open_calls {0U};
     std::size_t destroy_calls {0U};
+    os::keys::ProviderKeyReference last_seal_key {};
+    os::keys::ProviderKeyReference last_open_key {};
     os::keys::ProviderKeyReference last_destroyed {};
     bool fail_generate {false};
     bool fail_destroy {false};
@@ -119,6 +123,7 @@ int main() {
     assert(created.value().valid());
     assert(registry.record_count() == 1U);
     assert(registry.active_count() == 1U);
+    assert(registry.version_count(key_one) == 1U);
     assert(provider.generate_calls == 1U);
 
     auto described = registry.describe(owner_a, key_one);
@@ -129,12 +134,12 @@ int main() {
     assert(!foreign);
     assert(foreign.error() == os::keys::key_error(os::keys::errors::access_denied));
 
-    auto provider_key = registry.provider_reference(
+    auto provider_key_v1 = registry.provider_reference(
         owner_a,
         key_one,
         os::keys::key_rights::encrypt);
-    assert(provider_key);
-    assert(provider_key.value().valid());
+    assert(provider_key_v1);
+    assert(provider_key_v1.value().valid());
 
     auto invalid_right = registry.provider_reference(owner_a, key_one, 0U);
     assert(!invalid_right);
@@ -152,12 +157,7 @@ int main() {
         key_one,
         1U,
         os::keys::CryptoProfileId::aes_256_gcm_v1,
-        {},
-        {},
-        plaintext,
-        ciphertext,
-        nonce,
-        tag);
+        {}, {}, plaintext, ciphertext, nonce, tag);
     assert(!wrong_owner_seal);
     assert(wrong_owner_seal.error() == os::keys::key_error(os::keys::errors::access_denied));
     assert(provider.seal_calls == 0U);
@@ -167,12 +167,7 @@ int main() {
         key_one,
         2U,
         os::keys::CryptoProfileId::aes_256_gcm_v1,
-        {},
-        {},
-        plaintext,
-        ciphertext,
-        nonce,
-        tag);
+        {}, {}, plaintext, ciphertext, nonce, tag);
     assert(!wrong_version_seal);
     assert(wrong_version_seal.error() ==
         os::keys::key_error(os::keys::errors::key_version_mismatch));
@@ -183,32 +178,83 @@ int main() {
         key_one,
         1U,
         os::keys::CryptoProfileId::aes_256_gcm_v1,
-        {},
-        {},
-        plaintext,
-        ciphertext,
-        nonce,
-        tag);
+        {}, {}, plaintext, ciphertext, nonce, tag);
     assert(valid_seal);
     assert(valid_seal.value() == plaintext.size());
     assert(provider.seal_calls == 1U);
+    assert(provider.last_seal_key == provider_key_v1.value());
 
     auto valid_open = registry.open(
         owner_a,
         key_one,
         1U,
         os::keys::CryptoProfileId::aes_256_gcm_v1,
-        {},
-        {},
-        nonce,
-        tag,
-        ciphertext,
-        reopened_plaintext);
+        {}, {}, nonce, tag, ciphertext, reopened_plaintext);
     assert(valid_open);
     assert(valid_open.value() == plaintext.size());
     assert(reopened_plaintext == plaintext);
     assert(provider.open_calls == 1U);
+    assert(provider.last_open_key == provider_key_v1.value());
 
+    const auto generate_before_wrong_rotate = provider.generate_calls;
+    auto foreign_rotate = registry.rotate(owner_b, key_one);
+    assert(!foreign_rotate);
+    assert(foreign_rotate.error() == os::keys::key_error(os::keys::errors::access_denied));
+    assert(provider.generate_calls == generate_before_wrong_rotate);
+
+    auto rotated = registry.rotate(owner_a, key_one);
+    assert(rotated);
+    assert(rotated.value().version == 2U);
+    assert(registry.version_count(key_one) == 2U);
+
+    auto provider_key_v2 = registry.provider_reference(
+        owner_a,
+        key_one,
+        os::keys::key_rights::encrypt);
+    assert(provider_key_v2);
+    assert(provider_key_v2.value().valid());
+    assert(provider_key_v2.value() != provider_key_v1.value());
+
+    const auto seal_calls_before_old = provider.seal_calls;
+    auto old_version_seal = registry.seal(
+        owner_a,
+        key_one,
+        1U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {}, {}, plaintext, ciphertext, nonce, tag);
+    assert(!old_version_seal);
+    assert(old_version_seal.error() ==
+        os::keys::key_error(os::keys::errors::key_version_mismatch));
+    assert(provider.seal_calls == seal_calls_before_old);
+
+    auto current_seal = registry.seal(
+        owner_a,
+        key_one,
+        2U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {}, {}, plaintext, ciphertext, nonce, tag);
+    assert(current_seal);
+    assert(provider.last_seal_key == provider_key_v2.value());
+
+    auto historical_open = registry.open(
+        owner_a,
+        key_one,
+        1U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {}, {}, nonce, tag, ciphertext, reopened_plaintext);
+    assert(historical_open);
+    assert(provider.last_open_key == provider_key_v1.value());
+
+    auto current_open = registry.open(
+        owner_a,
+        key_one,
+        2U,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {}, {}, nonce, tag, ciphertext, reopened_plaintext);
+    assert(current_open);
+    assert(provider.last_open_key == provider_key_v2.value());
+
+    const auto generate_before_duplicate = provider.generate_calls;
     auto duplicate = registry.create(
         owner_a,
         key_one,
@@ -216,7 +262,7 @@ int main() {
         os::keys::key_rights::all);
     assert(!duplicate);
     assert(duplicate.error() == os::keys::key_error(os::keys::errors::duplicate_key_id));
-    assert(provider.generate_calls == 1U);
+    assert(provider.generate_calls == generate_before_duplicate);
 
     auto metadata_only = registry.create(
         owner_a,
@@ -231,15 +277,16 @@ int main() {
         key_two,
         1U,
         os::keys::CryptoProfileId::aes_256_gcm_v1,
-        {},
-        {},
-        plaintext,
-        ciphertext,
-        nonce,
-        tag);
+        {}, {}, plaintext, ciphertext, nonce, tag);
     assert(!denied_seal);
     assert(denied_seal.error() == os::keys::key_error(os::keys::errors::access_denied));
     assert(provider.seal_calls == seal_calls_before_denied);
+
+    const auto generate_before_denied_rotate = provider.generate_calls;
+    auto denied_rotate = registry.rotate(owner_a, key_two);
+    assert(!denied_rotate);
+    assert(denied_rotate.error() == os::keys::key_error(os::keys::errors::access_denied));
+    assert(provider.generate_calls == generate_before_denied_rotate);
 
     auto denied_destroy = registry.destroy(owner_a, key_two);
     assert(!denied_destroy);
@@ -258,16 +305,34 @@ int main() {
     assert(registry.record_count() == records_before_failure);
     provider.fail_generate = false;
 
+    auto version_limited = registry.create(
+        owner_a,
+        key_three,
+        os::keys::KeyPurpose::application_data_aead,
+        os::keys::key_rights::all);
+    assert(version_limited);
+    for (std::size_t index = 1U; index < os::keys::max_key_versions; ++index) {
+        auto next = registry.rotate(owner_a, key_three);
+        assert(next);
+        assert(next.value().version == static_cast<std::uint32_t>(index + 1U));
+    }
+    assert(registry.version_count(key_three) == os::keys::max_key_versions);
+    const auto generate_before_limit = provider.generate_calls;
+    auto over_limit = registry.rotate(owner_a, key_three);
+    assert(!over_limit);
+    assert(over_limit.error() == os::keys::key_error(os::keys::errors::version_limit));
+    assert(provider.generate_calls == generate_before_limit);
+
     auto wrong_owner_destroy = registry.destroy(owner_b, key_one);
     assert(!wrong_owner_destroy);
     assert(wrong_owner_destroy.error() == os::keys::key_error(os::keys::errors::access_denied));
 
     auto destroyed = registry.destroy(owner_a, key_one);
     assert(destroyed);
-    assert(provider.destroy_calls == 1U);
-    assert(provider.last_destroyed == provider_key.value());
-    assert(registry.record_count() == 2U);
-    assert(registry.active_count() == 1U);
+    assert(provider.destroy_calls == 2U);
+    assert(provider.last_destroyed == provider_key_v2.value());
+    assert(registry.record_count() == 3U);
+    assert(registry.active_count() == 2U);
 
     const auto open_calls_before_destroyed = provider.open_calls;
     auto destroyed_open = registry.open(
@@ -275,12 +340,7 @@ int main() {
         key_one,
         1U,
         os::keys::CryptoProfileId::aes_256_gcm_v1,
-        {},
-        {},
-        nonce,
-        tag,
-        ciphertext,
-        reopened_plaintext);
+        {}, {}, nonce, tag, ciphertext, reopened_plaintext);
     assert(!destroyed_open);
     assert(destroyed_open.error() == os::keys::key_error(os::keys::errors::destroyed));
     assert(provider.open_calls == open_calls_before_destroyed);
