@@ -30,6 +30,22 @@ inline constexpr std::uint32_t service_not_attached = 205U;
 inline constexpr std::uint32_t invalid_request = 206U;
 } // namespace broker_errors
 
+struct BrokeredServiceEndpoint final {
+    os::core::ServiceId service {};
+    std::uint64_t generation {0U};
+    os::ipc::Channel channel {};
+
+    BrokeredServiceEndpoint() noexcept = default;
+    BrokeredServiceEndpoint(const BrokeredServiceEndpoint&) = delete;
+    BrokeredServiceEndpoint& operator=(const BrokeredServiceEndpoint&) = delete;
+    BrokeredServiceEndpoint(BrokeredServiceEndpoint&&) noexcept = default;
+    BrokeredServiceEndpoint& operator=(BrokeredServiceEndpoint&&) noexcept = default;
+
+    [[nodiscard]] bool valid() const noexcept {
+        return service.value() != 0U && generation != 0U && channel.valid();
+    }
+};
+
 // Trusted-system service directory / connection broker.
 //
 // This is intentionally not a public "connect to arbitrary daemon" API. System
@@ -66,6 +82,13 @@ public:
     // service restart kills the old endpoint and a caller must reacquire.
     [[nodiscard]] os::core::Result<os::ipc::Channel>
     connect(os::core::ProcessId process, os::core::ServiceId service) noexcept;
+
+    // M2.10 form of connect(): return the trusted Supervisor generation beside
+    // the endpoint. The generation is observation metadata, not authority. A
+    // service crash keeps the old endpoint stale permanently; callers must ask
+    // again after Supervisor publishes a later generation.
+    [[nodiscard]] os::core::Result<BrokeredServiceEndpoint>
+    connect_current(os::core::ProcessId process, os::core::ServiceId service) noexcept;
 
     // Revoke every service publication owned by this broker attachment. The
     // authoritative ProcessId is released only after all publications have
