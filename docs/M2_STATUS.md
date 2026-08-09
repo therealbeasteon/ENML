@@ -132,7 +132,7 @@ Implemented:
 
 ## M2.6 — durable provider-wrapped key persistence
 
-Status: implemented on PR #19; final merge gate in progress.
+Status: complete and merged.
 
 Implemented:
 
@@ -151,10 +151,38 @@ Implemented:
 - provider restart test with binding/tamper/truncation rejection
 - registry restart test with >32-bit UserId, v1/v2 historical decrypt, v3 post-restart rotation, tombstone recovery, 0600 snapshot mode and temp-name symlink non-following
 - end-to-end cross-process Key Service restart test using a fresh provider and fresh `PersistentKeyRegistry`
-- dedicated design contract in `docs/M2_6_KEY_PERSISTENCE.md`
 
-M2.6 deliberately does not claim production TPM/TEE/HSM protection, measured boot, attestation, recovery policy or filesystem rollback resistance. Those require a hardware/root-security integration contract rather than pretending the CI wrapping key is production security.
+See `docs/M2_6_KEY_PERSISTENCE.md`.
 
-## Next: M2.7 — key hierarchy and root-provider security contract
+M2.6 deliberately does not claim production TPM/TEE/HSM protection, measured boot, attestation, recovery policy or filesystem rollback resistance.
 
-The next slice should bind durable system/profile/application key lifecycles to trusted principals and define the production root-provider/rollback interface without hard-coding one vendor TEE. It should remain narrow: no raw key export, no caller-selected owner, and no claim of hardware-backed security until a real platform provider exists.
+## M2.7 — key hierarchy and root-provider security contract
+
+Status: implementation complete on the M2.7 branch.
+
+Implemented:
+
+- trusted `KeyProtectionScope` values for system, user/profile and application roots
+- `KeyProtectionBinding` tied to trusted `KeyOwner { PrincipalId, UserId }`
+- explicit downward hierarchy rule: system -> profile -> application
+- profile -> application requires the same durable UserId
+- shortcut, upward and cross-user hierarchy edges are rejected
+- opaque process-local `RootKeyReference`; no root-key byte export API
+- `HierarchicalKeyProvider` extending the M2.6 persistence provider contract
+- idempotent provider root-acquisition contract for system and child roots
+- provider-side binding requirement for every root reference
+- fixed-capacity `KeyHierarchy` pairing trusted bindings with root references: one system root, 16 profile roots, 64 application roots
+- profile uniqueness per UserId and application uniqueness per PrincipalId + UserId
+- conflicting root-policy replay is rejected while exact replay is idempotent
+- application data-key generation only after trusted profile/application root acquisition
+- `SecurityEpoch` and compare-and-advance `MonotonicSecurityState` interface for a future hardware anti-rollback source
+- tests for initialization, valid descent, upward/cross-user rejection, principal rebind rejection, missing roots, idempotent policy replay and stale monotonic epochs
+- GCC, Clang and native AArch64 M2 Key gates
+
+See `docs/M2_7_KEY_HIERARCHY.md`.
+
+M2.7 defines a security contract, not a fake hardware implementation. The host OpenSSL provider remains test-only, and KRG snapshots are not claimed rollback-resistant.
+
+## Next: M2.8 — supervised Key Service product integration
+
+The next product slice should launch a real supervised `system.keys`, connect its durable M2.6 registry and M2.7 hierarchy policy, and publish application/profile key policy from trusted lifecycle state. App requests must continue to derive owner identity from `RequestContext.peer`; no caller may select another root, principal, provider handle, or protection scope.

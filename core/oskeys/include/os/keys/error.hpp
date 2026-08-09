@@ -32,6 +32,11 @@ inline constexpr std::uint32_t malformed_registry_snapshot = 22U;
 inline constexpr std::uint32_t unsupported_registry_snapshot = 23U;
 inline constexpr std::uint32_t registry_snapshot_inconsistent = 24U;
 inline constexpr std::uint32_t registry_snapshot_too_large = 25U;
+inline constexpr std::uint32_t invalid_protection_scope = 26U;
+inline constexpr std::uint32_t hierarchy_not_initialized = 27U;
+inline constexpr std::uint32_t hierarchy_conflict = 28U;
+inline constexpr std::uint32_t hierarchy_capacity = 29U;
+inline constexpr std::uint32_t hierarchy_root_not_found = 30U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error key_error(std::uint32_t code) noexcept {
