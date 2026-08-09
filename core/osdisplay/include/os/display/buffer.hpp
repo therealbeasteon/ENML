@@ -10,18 +10,12 @@
 
 namespace os::display {
 
-// Move-only application-side/shared-memory lease. The semantic BufferId is
-// still revalidated by the compositor service on every frame submission; the
-// native handle is only the mapped pixel-memory transport object.
+// Aggregate application-side/shared-memory lease. NativeHandle is itself
+// move-only, so copy operations are implicitly deleted while aggregate
+// initialization remains available for bounded transport decoding.
 struct SharedBufferLease final {
     BufferDescriptor descriptor {};
     os::core::NativeHandle memory {};
-
-    SharedBufferLease() noexcept = default;
-    SharedBufferLease(const SharedBufferLease&) = delete;
-    SharedBufferLease& operator=(const SharedBufferLease&) = delete;
-    SharedBufferLease(SharedBufferLease&&) noexcept = default;
-    SharedBufferLease& operator=(SharedBufferLease&&) noexcept = default;
 
     [[nodiscard]] bool valid() const noexcept {
         return descriptor.valid() && memory.valid();
