@@ -16,11 +16,6 @@ constexpr os::core::PeerIdentity app{
     os::core::UserId{7U},
     os::core::ProcessId{101U},
 };
-constexpr os::core::PeerIdentity shell{
-    shell_principal,
-    os::core::UserId{0U},
-    os::core::ProcessId{301U},
-};
 constexpr os::core::PeerIdentity secure{
     secure_principal,
     os::core::UserId{0U},
