@@ -2,6 +2,7 @@ add_library(oskeys STATIC
     src/registry.cpp
     src/random_id_linux.cpp
     src/ciphertext.cpp
+    src/persistence_linux.cpp
 )
 
 add_library(emnl::oskeys ALIAS oskeys)
