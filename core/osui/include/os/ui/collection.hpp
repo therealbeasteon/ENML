@@ -17,6 +17,9 @@ inline constexpr std::uint16_t max_materialized_collection_items =
 struct CollectionItemKeyTag;
 using CollectionItemKey = os::core::StrongId<CollectionItemKeyTag, std::uint64_t>;
 
+struct CollectionRevisionTag;
+using CollectionRevision = os::core::StrongId<CollectionRevisionTag, std::uint64_t>;
+
 struct CollectionWindowRequest final {
     std::uint32_t item_count {0U};
     std::uint32_t item_extent_q6 {0U};
@@ -62,6 +65,35 @@ struct CollectionRecyclePlan final {
     std::uint16_t count {0U};
 };
 
+// Renderer/UI code materializes a collection from one immutable logical
+// revision. A data source may mutate between frames, but every key lookup for
+// a materialization pass carries the revision captured by snapshot(). A source
+// that has advanced must reject stale revision lookups instead of mixing two
+// logical collection states into one semantic window.
+struct CollectionDataSnapshot final {
+    CollectionRevision revision {};
+    std::uint32_t item_count {0U};
+};
+
+using CollectionSnapshotFn = bool (*)(
+    void* context,
+    CollectionDataSnapshot& output) noexcept;
+
+using CollectionItemKeyAtFn = bool (*)(
+    void* context,
+    CollectionRevision revision,
+    std::uint32_t item_index,
+    CollectionItemKey& output) noexcept;
+
+// In-process backend seam only. The eventual app-facing/OSIDL protocol can be
+// designed after these semantics stabilize; applications do not receive raw
+// function pointers or implementation-owned container addresses.
+struct CollectionDataSourceBackend final {
+    void* context {nullptr};
+    CollectionSnapshotFn snapshot {nullptr};
+    CollectionItemKeyAtFn item_key_at {nullptr};
+};
+
 // Maps virtual items onto a stable, fixed pool of materialized semantic child
 // slots. Keyed binding retains a slot by logical item identity even if that
 // item's index changes. The legacy window-only overload derives identity from
@@ -91,5 +123,18 @@ private:
 [[nodiscard]] os::core::Result<std::int32_t> collection_item_offset_q6(
     const CollectionWindow& window,
     std::uint32_t item_index) noexcept;
+
+// Captures one bounded source revision. Revision zero and item counts beyond
+// ENML's collection ceiling are rejected before layout or recycling begins.
+[[nodiscard]] os::core::Result<CollectionDataSnapshot> collection_data_snapshot(
+    CollectionDataSourceBackend backend) noexcept;
+
+// Resolves stable keys for a materialized window against exactly one captured
+// source revision. Backend refusal is treated as a stale snapshot; zero or
+// duplicate keys are rejected as a malformed source contract.
+[[nodiscard]] os::core::Result<CollectionRecycleRequest> build_collection_recycle_request(
+    const CollectionWindow& window,
+    const CollectionDataSnapshot& snapshot,
+    CollectionDataSourceBackend backend) noexcept;
 
 } // namespace os::ui
