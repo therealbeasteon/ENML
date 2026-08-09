@@ -12,12 +12,19 @@ namespace os::display {
 
 struct SurfaceIdTag;
 using SurfaceId = os::core::StrongId<SurfaceIdTag, std::uint64_t>;
+struct BufferIdTag;
+using BufferId = os::core::StrongId<BufferIdTag, std::uint64_t>;
 
 inline constexpr std::uint32_t max_display_dimension_px = 16384U;
 inline constexpr std::size_t max_surfaces = 64U;
 inline constexpr std::size_t max_surfaces_per_principal = 8U;
 inline constexpr std::size_t max_damage_rectangles = 8U;
 inline constexpr std::uint8_t max_frame_buffer_slots = 3U;
+inline constexpr std::size_t max_shared_buffers = 48U;
+inline constexpr std::size_t max_shared_buffers_per_principal = 8U;
+inline constexpr std::uint64_t max_shared_buffer_bytes = 24ULL * 1024ULL * 1024ULL;
+inline constexpr std::uint64_t max_shared_buffer_bytes_per_principal = 48ULL * 1024ULL * 1024ULL;
+inline constexpr std::uint64_t max_shared_buffer_bytes_global = 128ULL * 1024ULL * 1024ULL;
 
 struct PixelSize final {
     std::uint32_t width {0U};
@@ -65,6 +72,11 @@ enum class SurfaceVisibility : std::uint8_t {
     visible = 1U,
 };
 
+enum class PixelFormat : std::uint32_t {
+    rgba8888 = 1U,
+    rgbx8888 = 2U,
+};
+
 struct DisplayConfiguration final {
     PixelSize size {};
     SafeInsets safe_insets {};
@@ -98,8 +110,23 @@ struct SurfaceDescriptor final {
     }
 };
 
+struct BufferDescriptor final {
+    BufferId id {};
+    os::core::PeerIdentity owner {};
+    PixelSize size {};
+    PixelFormat format {PixelFormat::rgba8888};
+    std::uint32_t stride_bytes {0U};
+    std::uint64_t byte_size {0U};
+
+    [[nodiscard]] constexpr bool valid() const noexcept {
+        return id.value() != 0U && os::core::valid_peer_identity(owner) && size.valid() &&
+            stride_bytes != 0U && byte_size != 0U && byte_size <= max_shared_buffer_bytes;
+    }
+};
+
 struct FrameSubmission final {
     SurfaceId surface {};
+    BufferId buffer {};
     std::uint64_t sequence {0U};
     std::uint8_t buffer_slot {0U};
     std::uint8_t damage_count {0U};
@@ -115,12 +142,14 @@ struct FrameDeadline final {
 
 struct FrameReceipt final {
     SurfaceId surface {};
+    BufferId buffer {};
     std::uint64_t sequence {0U};
     FrameDeadline deadline {};
 };
 
 struct SceneEntry final {
     SurfaceDescriptor surface {};
+    BufferId buffer {};
     std::uint64_t frame_sequence {0U};
     std::uint8_t buffer_slot {0U};
     bool has_frame {false};
