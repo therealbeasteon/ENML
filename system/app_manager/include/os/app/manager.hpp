@@ -11,6 +11,7 @@
 #include <os/core/native_handle.hpp>
 #include <os/core/result.hpp>
 #include <os/core/strong_id.hpp>
+#include <os/ipc/channel.hpp>
 #include <os/package/analyzer.hpp>
 #include <os/package/package.hpp>
 #include <os/package/persistence.hpp>
@@ -38,6 +39,7 @@ inline constexpr std::uint32_t profile_capacity = 110U;
 inline constexpr std::uint32_t profile_not_found = 111U;
 inline constexpr std::uint32_t generation_in_use = 112U;
 inline constexpr std::uint32_t generation_active = 113U;
+inline constexpr std::uint32_t storage_bridge_failed = 114U;
 } // namespace manager_errors
 
 // Trusted Package Service registration. Applications never supply executable
@@ -75,10 +77,28 @@ struct ApplicationInstanceInfo final {
     }
 };
 
-// M1.5 App Manager. Launch requests contain only PackageId plus trusted user
-// context. Active generation, executable object, per-user principal, private
-// data root, native credentials and sandbox policy all come from trusted state.
-// A live InstanceSlot is the authoritative generation pin.
+// M2.2 bridge between trusted application-profile state and the supervised
+// Storage Service. Implementations authenticate themselves to system.storage;
+// applications cannot invoke this interface or choose the target principal.
+class ApplicationStorageBridge {
+public:
+    virtual ~ApplicationStorageBridge() = default;
+
+    [[nodiscard]] virtual os::core::Result<void>
+    provision_private_root(
+        os::core::PrincipalId principal,
+        os::core::UserId user,
+        const os::core::NativeHandle& private_data_directory) noexcept = 0;
+
+    [[nodiscard]] virtual os::core::Result<os::ipc::Channel>
+    connect_application() noexcept = 0;
+};
+
+// M1.5 App Manager with an optional M2.2 brokered-storage cutover. Launch
+// requests contain only PackageId plus trusted user context. Active generation,
+// executable object, per-user principal, native credentials and sandbox policy
+// all come from trusted state. If a Storage bridge is attached, fd5 becomes a
+// Storage Service endpoint and the app receives no direct private-data root.
 class ApplicationManager final {
 public:
     ApplicationManager(
@@ -89,6 +109,10 @@ public:
 
     ApplicationManager(const ApplicationManager&) = delete;
     ApplicationManager& operator=(const ApplicationManager&) = delete;
+
+    void attach_storage_bridge(ApplicationStorageBridge& bridge) noexcept {
+        storage_bridge_ = &bridge;
+    }
 
     [[nodiscard]] os::core::Result<void>
     register_launch_target(LaunchTargetRegistration registration) noexcept;
@@ -151,6 +175,7 @@ private:
     os::package::PersistentPackageRegistry& packages_;
     ApplicationPrincipalStore& principals_;
     os::supervisor::Supervisor& supervisor_;
+    ApplicationStorageBridge* storage_bridge_ {nullptr};
     std::array<LaunchTarget, m1_launch_target_capacity> targets_ {};
     std::array<ApplicationProfile, m1_application_profile_capacity> profiles_ {};
     std::array<InstanceSlot, m1_application_instance_capacity> instances_ {};
