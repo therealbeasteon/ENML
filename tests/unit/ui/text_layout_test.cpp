@@ -90,7 +90,7 @@ int main() {
 
     auto text = os::ui::make_semantic_text("Hello world");
     assert(text);
-    const auto advance = os::ui::logical_from_dp(8U);
+    std::uint32_t advance = os::ui::logical_from_dp(8U);
     auto shaped = shape_ascii(text.value(), body_style.value(), advance);
     assert(os::ui::shaped_text_valid(text.value(), body_style.value(), shaped));
 
@@ -98,7 +98,7 @@ int main() {
         text.value(),
         body_style.value(),
         os::ui::TextShaperBackend{
-            .context = const_cast<std::uint32_t*>(&advance),
+            .context = &advance,
             .shape = ascii_backend,
         });
     assert(backend_shaped);
@@ -122,7 +122,7 @@ int main() {
         text.value(),
         body_style.value(),
         os::ui::TextShaperBackend{
-            .context = const_cast<std::uint32_t*>(&advance),
+            .context = &advance,
             .shape = malformed_backend,
         });
     assert(!malformed);
