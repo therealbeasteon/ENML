@@ -18,4 +18,27 @@ os::core::Result<OpaqueFrameRasterStats> rasterize_opaque_frame(
     };
 }
 
+os::core::Result<OpaqueTextFrameRasterStats> rasterize_opaque_frame_with_text(
+    const RenderCommandBuffer& commands,
+    TextCommandRasterBackend text_backend,
+    const RasterTheme& theme,
+    RasterTarget target,
+    TextCommandRasterPolicy text_policy) noexcept {
+    auto geometry = rasterize_opaque_frame(commands, theme, target);
+    if (!geometry) return geometry.error();
+
+    auto text = rasterize_render_command_text(
+        commands,
+        text_backend,
+        theme,
+        target,
+        text_policy);
+    if (!text) return text.error();
+
+    return OpaqueTextFrameRasterStats{
+        .geometry = geometry.value(),
+        .text = text.value(),
+    };
+}
+
 } // namespace os::ui
