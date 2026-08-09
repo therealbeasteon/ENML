@@ -118,10 +118,10 @@ struct TextMeasurement final {
     std::uint16_t line_count {0U};
 };
 
-// Renderer-owned shaping backend seam. The callback may wrap HarfBuzz or a
-// future platform shaper and may use platform-owned font assets internally.
-// It is deliberately a small no-allocation ABI: application code never sees
-// the callback, font handles, font paths or backend implementation details.
+// Minimal renderer-owned shaping seam retained for isolated backend testing.
+// Production integration should prefer FontAwareTextShaperBackend so the
+// shaper receives only provider-resolved opaque faces rather than inventing or
+// rediscovering font assets outside the validated provider boundary.
 using ShapeTextBackendFn = bool (*)(
     void* context,
     const SemanticText& source,
@@ -131,6 +131,18 @@ using ShapeTextBackendFn = bool (*)(
 struct TextShaperBackend final {
     void* context {nullptr};
     ShapeTextBackendFn shape {nullptr};
+};
+
+using ShapeTextWithFontsBackendFn = bool (*)(
+    void* context,
+    const SemanticText& source,
+    const ResolvedTextStyle& style,
+    const FontFaceSet& faces,
+    ShapedText& output) noexcept;
+
+struct FontAwareTextShaperBackend final {
+    void* context {nullptr};
+    ShapeTextWithFontsBackendFn shape {nullptr};
 };
 
 [[nodiscard]] os::core::Result<FontFallbackChain> font_fallback_chain(
@@ -158,13 +170,23 @@ struct TextShaperBackend final {
     const ResolvedTextStyle& style,
     const ShapedText& shaped) noexcept;
 
-// Invokes a renderer-owned backend and validates its output before returning
-// it to layout/rendering code. Failed, absent or malformed backends cannot
-// smuggle unchecked glyph/run data into ENML's renderer pipeline.
+// Invokes the minimal renderer-owned backend and validates its output. This is
+// useful for isolated shaping-contract tests; real platform integration should
+// use shape_text_with_fonts() below.
 [[nodiscard]] os::core::Result<ShapedText> shape_text(
     const SemanticText& source,
     const ResolvedTextStyle& style,
     TextShaperBackend backend) noexcept;
+
+// Production-oriented shaping handoff: the font provider resolves semantic
+// fallback roles first, then the shaper receives that validated opaque face
+// set. No application-controlled font path or native handle can bypass the
+// platform font policy through this path.
+[[nodiscard]] os::core::Result<ShapedText> shape_text_with_fonts(
+    const SemanticText& source,
+    const ResolvedTextStyle& style,
+    const FontFaceSet& faces,
+    FontAwareTextShaperBackend backend) noexcept;
 
 // Measurement is derived from validated shaped advances, never from byte or
 // code-point counts. This keeps large-text reflow honest once real platform
