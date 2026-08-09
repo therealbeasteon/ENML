@@ -26,6 +26,7 @@ inline constexpr std::uint32_t output_too_small = 16U;
 inline constexpr std::uint32_t key_version_mismatch = 17U;
 inline constexpr std::uint32_t key_id_mismatch = 18U;
 inline constexpr std::uint32_t too_large = 19U;
+inline constexpr std::uint32_t version_limit = 20U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error key_error(std::uint32_t code) noexcept {

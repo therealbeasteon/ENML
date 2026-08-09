@@ -22,6 +22,7 @@ inline constexpr std::uint32_t key_open_operation = 2U;
 inline constexpr std::uint32_t key_object_destroy_operation = 1U;
 inline constexpr std::uint32_t key_object_encrypt_operation = 2U;
 inline constexpr std::uint32_t key_object_decrypt_operation = 3U;
+inline constexpr std::uint32_t key_object_rotate_operation = 4U;
 inline constexpr std::size_t max_key_objects = 64U;
 
 class KeyObjectHandle final {
@@ -52,6 +53,9 @@ public:
         os::core::ByteSpan aad,
         os::core::MutableByteSpan plaintext_output,
         os::core::MutableByteSpan scratch) noexcept;
+
+    [[nodiscard]] os::core::Result<KeyDescriptor>
+    rotate(os::core::MutableByteSpan scratch) noexcept;
 
     [[nodiscard]] os::core::Result<void>
     destroy(os::core::MutableByteSpan scratch) noexcept;
@@ -125,6 +129,7 @@ private:
     [[nodiscard]] os::core::Result<std::size_t> allocate_slot() noexcept;
     void clear_slot(std::size_t index) noexcept;
     void clear_slots_for(KeyId id) noexcept;
+    void update_slots_for(KeyDescriptor descriptor) noexcept;
 };
 
 } // namespace os::keys
