@@ -63,7 +63,7 @@ int main() {
         owner_a,
         key_one,
         os::keys::KeyPurpose::application_data_aead,
-        os::keys::rights::all);
+        os::keys::key_rights::all);
     assert(created);
     assert(created.value().id == key_one);
     assert(created.value().version == 1U);
@@ -83,7 +83,7 @@ int main() {
     auto provider_key = registry.provider_reference(
         owner_a,
         key_one,
-        os::keys::rights::encrypt);
+        os::keys::key_rights::encrypt);
     assert(provider_key);
     assert(provider_key.value().valid());
 
@@ -95,7 +95,7 @@ int main() {
         owner_a,
         key_one,
         os::keys::KeyPurpose::application_data_aead,
-        os::keys::rights::all);
+        os::keys::key_rights::all);
     assert(!duplicate);
     assert(duplicate.error() == os::keys::key_error(os::keys::errors::duplicate_key_id));
     assert(provider.generate_calls == 1U);
@@ -104,7 +104,7 @@ int main() {
         owner_a,
         key_two,
         os::keys::KeyPurpose::application_data_aead,
-        os::keys::rights::metadata);
+        os::keys::key_rights::metadata);
     assert(metadata_only);
     auto denied_destroy = registry.destroy(owner_a, key_two);
     assert(!denied_destroy);
@@ -117,7 +117,7 @@ int main() {
         owner_a,
         key_three,
         os::keys::KeyPurpose::application_data_aead,
-        os::keys::rights::all);
+        os::keys::key_rights::all);
     assert(!failed_create);
     assert(failed_create.error() == os::keys::key_error(os::keys::errors::provider_failure));
     assert(registry.record_count() == records_before_failure);
@@ -142,7 +142,7 @@ int main() {
         owner_a,
         key_one,
         os::keys::KeyPurpose::application_data_aead,
-        os::keys::rights::all);
+        os::keys::key_rights::all);
     assert(!reuse_destroyed_id);
     assert(reuse_destroyed_id.error() == os::keys::key_error(os::keys::errors::duplicate_key_id));
 
@@ -156,7 +156,7 @@ int main() {
             owner_a,
             id,
             os::keys::KeyPurpose::application_data_aead,
-            os::keys::rights::all);
+            os::keys::key_rights::all);
         assert(result);
     }
     const auto generate_before_full = provider.generate_calls;
@@ -164,7 +164,7 @@ int main() {
         owner_a,
         os::keys::KeyId{0x4B45593300000000ULL, 1U},
         os::keys::KeyPurpose::application_data_aead,
-        os::keys::rights::all);
+        os::keys::key_rights::all);
     assert(!full);
     assert(full.error() == os::keys::key_error(os::keys::errors::registry_full));
     assert(provider.generate_calls == generate_before_full);
