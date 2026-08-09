@@ -17,6 +17,10 @@ inline constexpr os::core::ServiceId bootstrap_service_id{0xFFFF0001U};
 inline constexpr std::uint32_t bootstrap_operation_initialize = 1U;
 inline constexpr int bootstrap_control_fd = 3;
 inline constexpr int service_endpoint_fd = 4;
+// Optional trusted service-private state directory. The Supervisor installs it
+// only when ServiceLaunchConfig carries an already-authorized directory fd.
+// Applications never inherit this descriptor through the public service path.
+inline constexpr int service_state_directory_fd = 5;
 
 struct BootstrapRecordV1 final {
     os::core::PeerIdentity identity {};
