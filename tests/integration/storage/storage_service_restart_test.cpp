@@ -2,6 +2,8 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <string>
+#include <utility>
 
 #include <fcntl.h>
 #include <signal.h>
