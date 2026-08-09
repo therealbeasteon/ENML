@@ -30,13 +30,65 @@ struct KeyRecord final {
     std::array<KeyVersionRecord, max_key_versions> versions {};
 };
 
+// Service-facing logical key store contract. Both the in-memory M2 registry and
+// the durable M2.6 registry implement this interface; callers never receive a
+// provider secret reference through it.
+class KeyStore {
+public:
+    virtual ~KeyStore() = default;
+
+    [[nodiscard]] virtual os::core::Result<KeyDescriptor>
+    create(
+        KeyOwner owner,
+        KeyId id,
+        KeyPurpose purpose,
+        RightsMask rights) noexcept = 0;
+
+    [[nodiscard]] virtual os::core::Result<KeyDescriptor>
+    describe(KeyOwner caller, KeyId id) const noexcept = 0;
+
+    [[nodiscard]] virtual os::core::Result<KeyDescriptor>
+    rotate(KeyOwner caller, KeyId id) noexcept = 0;
+
+    [[nodiscard]] virtual os::core::Result<std::size_t>
+    seal(
+        KeyOwner caller,
+        KeyId id,
+        std::uint32_t key_version,
+        CryptoProfileId profile,
+        os::core::ByteSpan envelope_aad,
+        os::core::ByteSpan caller_aad,
+        os::core::ByteSpan plaintext,
+        os::core::MutableByteSpan ciphertext,
+        AeadNonce& nonce,
+        AeadTag& tag) noexcept = 0;
+
+    [[nodiscard]] virtual os::core::Result<std::size_t>
+    open(
+        KeyOwner caller,
+        KeyId id,
+        std::uint32_t key_version,
+        CryptoProfileId profile,
+        os::core::ByteSpan envelope_aad,
+        os::core::ByteSpan caller_aad,
+        const AeadNonce& nonce,
+        const AeadTag& tag,
+        os::core::ByteSpan ciphertext,
+        os::core::MutableByteSpan plaintext) noexcept = 0;
+
+    [[nodiscard]] virtual os::core::Result<void>
+    destroy(KeyOwner caller, KeyId id) noexcept = 0;
+};
+
+class PersistentKeyRegistry;
+
 // Fixed-capacity metadata registry. Public KeyId values are locators, not
 // authority: every lookup is checked against the trusted caller owner.
 // A logical KeyId may retain several provider-owned key versions so rotation
 // can move new encryption forward without making existing ciphertext
 // undecryptable. Destroyed records remain tombstones and are never silently
 // reused within this registry generation.
-class KeyRegistry final {
+class KeyRegistry final : public KeyStore {
 public:
     explicit KeyRegistry(KeyProvider& provider) noexcept : provider_(&provider) {}
 
@@ -45,13 +97,13 @@ public:
         KeyOwner owner,
         KeyId id,
         KeyPurpose purpose,
-        RightsMask rights) noexcept;
+        RightsMask rights) noexcept override;
 
     [[nodiscard]] os::core::Result<KeyDescriptor>
-    describe(KeyOwner caller, KeyId id) const noexcept;
+    describe(KeyOwner caller, KeyId id) const noexcept override;
 
     [[nodiscard]] os::core::Result<KeyDescriptor>
-    rotate(KeyOwner caller, KeyId id) noexcept;
+    rotate(KeyOwner caller, KeyId id) noexcept override;
 
     [[nodiscard]] os::core::Result<ProviderKeyReference>
     provider_reference(KeyOwner caller, KeyId id, RightsMask required_right) const noexcept;
@@ -67,7 +119,7 @@ public:
         os::core::ByteSpan plaintext,
         os::core::MutableByteSpan ciphertext,
         AeadNonce& nonce,
-        AeadTag& tag) noexcept;
+        AeadTag& tag) noexcept override;
 
     [[nodiscard]] os::core::Result<std::size_t>
     open(
@@ -80,16 +132,18 @@ public:
         const AeadNonce& nonce,
         const AeadTag& tag,
         os::core::ByteSpan ciphertext,
-        os::core::MutableByteSpan plaintext) noexcept;
+        os::core::MutableByteSpan plaintext) noexcept override;
 
     [[nodiscard]] os::core::Result<void>
-    destroy(KeyOwner caller, KeyId id) noexcept;
+    destroy(KeyOwner caller, KeyId id) noexcept override;
 
     [[nodiscard]] std::size_t record_count() const noexcept;
     [[nodiscard]] std::size_t active_count() const noexcept;
     [[nodiscard]] std::size_t version_count(KeyId id) const noexcept;
 
 private:
+    friend class PersistentKeyRegistry;
+
     [[nodiscard]] KeyRecord* find(KeyId id) noexcept;
     [[nodiscard]] const KeyRecord* find(KeyId id) const noexcept;
     [[nodiscard]] KeyVersionRecord* find_version(KeyRecord& record, std::uint32_t version) noexcept;
