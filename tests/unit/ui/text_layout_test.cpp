@@ -61,6 +61,20 @@ bool ascii_backend(
     return true;
 }
 
+bool font_aware_ascii_backend(
+    void* context,
+    const os::ui::SemanticText& text,
+    const os::ui::ResolvedTextStyle& style,
+    const os::ui::FontFaceSet& faces,
+    os::ui::ShapedText& output) noexcept {
+    if (context == nullptr || faces.find(os::ui::FontFamilyRole::interface) == nullptr) {
+        return false;
+    }
+    const auto advance_q6 = *static_cast<const std::uint32_t*>(context);
+    output = shape_ascii(text, style, advance_q6);
+    return true;
+}
+
 bool failed_backend(
     void*,
     const os::ui::SemanticText&,
@@ -190,6 +204,39 @@ int main() {
         });
     assert(backend_shaped);
     assert(backend_shaped.value().glyph_count == shaped.glyph_count);
+
+    // The production-oriented path requires a provider-resolved face set and
+    // hands only those opaque face IDs to the shaping backend.
+    auto font_aware_shaped = os::ui::shape_text_with_fonts(
+        text.value(),
+        body_style.value(),
+        body_faces.value(),
+        os::ui::FontAwareTextShaperBackend{
+            .context = &advance,
+            .shape = font_aware_ascii_backend,
+        });
+    assert(font_aware_shaped);
+    assert(font_aware_shaped.value().glyph_count == shaped.glyph_count);
+
+    auto wrong_faces = body_faces.value();
+    wrong_faces.faces[0].family = os::ui::FontFamilyRole::display;
+    auto rejected_faces = os::ui::shape_text_with_fonts(
+        text.value(),
+        body_style.value(),
+        wrong_faces,
+        os::ui::FontAwareTextShaperBackend{
+            .context = &advance,
+            .shape = font_aware_ascii_backend,
+        });
+    assert(!rejected_faces);
+    expect_ui_error(rejected_faces.error(), os::ui::errors::invalid_font_face);
+
+    auto font_aware_unavailable = os::ui::shape_text_with_fonts(
+        text.value(), body_style.value(), body_faces.value(), {});
+    assert(!font_aware_unavailable);
+    expect_ui_error(
+        font_aware_unavailable.error(),
+        os::ui::errors::text_shaper_unavailable);
 
     auto unavailable = os::ui::shape_text(
         text.value(),
