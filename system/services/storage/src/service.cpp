@@ -16,6 +16,7 @@
 #include <os/ipc/decoder.hpp>
 #include <os/ipc/encoder.hpp>
 #include <os/ipc/wire.hpp>
+#include <os/service/identity.hpp>
 #include <os/storage/error.hpp>
 
 #include "storage_codec.generated.hpp"
@@ -63,6 +64,30 @@ validate_scratch(os::core::MutableByteSpan scratch) noexcept {
         return ipc_error(os::ipc::errors::buffer_too_small);
     }
     return {};
+}
+
+[[nodiscard]] os::core::Result<os::ipc::RequestContext>
+resolve_main_request(
+    const os::ipc::InboundMessage& message,
+    os::ipc::PeerIdentityResolver& identity_resolver) noexcept {
+    const auto& header = message.header();
+    if (!has_flag(header.flags, os::ipc::WireFlag::request) ||
+        has_flag(header.flags, os::ipc::WireFlag::response) ||
+        has_flag(header.flags, os::ipc::WireFlag::event) ||
+        has_flag(header.flags, os::ipc::WireFlag::error) ||
+        has_flag(header.flags, os::ipc::WireFlag::oneway) ||
+        has_flag(header.flags, os::ipc::WireFlag::cancellable) ||
+        header.service_id != storage_service_id ||
+        header.request_id.value() == 0U) {
+        return ipc_error(os::ipc::errors::protocol_violation);
+    }
+
+    auto identity = identity_resolver.resolve(message.sender_credentials());
+    if (!identity) return identity.error();
+    return os::ipc::RequestContext{
+        .peer = identity.value(),
+        .request_id = header.request_id,
+    };
 }
 
 [[nodiscard]] os::core::Result<os::ipc::InboundMessage>
@@ -543,6 +568,38 @@ StorageClient::open_private_root(os::core::MutableByteSpan scratch) noexcept {
 }
 
 os::core::Result<void>
+StorageProvisioner::provision_private_root(
+    os::core::PrincipalId target_principal,
+    os::core::UserId target_user,
+    const os::core::NativeHandle& authorized_directory,
+    os::core::MutableByteSpan scratch) noexcept {
+    if (connection_ == nullptr) return ipc_error(os::ipc::errors::invalid_channel);
+    if (!os::core::valid_principal(target_principal) || !authorized_directory.valid()) {
+        return storage_error(errors::invalid_root);
+    }
+    auto scratch_result = validate_scratch(scratch);
+    if (!scratch_result) return scratch_result.error();
+
+    os::ipc::Encoder encoder{scratch.first(os::ipc::max_inline_payload_size)};
+    auto encoded = encoder.write_u64_le(target_principal.high);
+    if (!encoded) return encoded.error();
+    encoded = encoder.write_u64_le(target_principal.low);
+    if (!encoded) return encoded.error();
+    encoded = encoder.write_u64_le(target_user.value());
+    if (!encoded) return encoded.error();
+
+    const std::span<const os::core::NativeHandle> handles{&authorized_directory, 1U};
+    auto call = connection_->call(
+        storage_service_id,
+        storage_provision_private_root_operation,
+        encoder.written(),
+        handles,
+        scratch);
+    if (!call) return call.error();
+    return require_empty_success(call.value());
+}
+
+os::core::Result<void>
 PrivateRootRegistry::register_root(
     os::core::PrincipalId principal,
     os::core::UserId user,
@@ -621,20 +678,28 @@ StorageService::dispatch_once(
     if (endpoint_ == nullptr || identity_resolver_ == nullptr || roots_ == nullptr || !endpoint_->valid()) {
         return ipc_error(os::ipc::errors::invalid_channel);
     }
+    if ((control_ == nullptr) != (identity_registry_ == nullptr)) {
+        return ipc_error(os::ipc::errors::invalid_channel);
+    }
+    if (control_ != nullptr && !control_->valid()) {
+        return ipc_error(os::ipc::errors::invalid_channel);
+    }
     auto scratch_result = validate_scratch(receive_buffer);
     if (!scratch_result) return scratch_result.error();
     if (timeout_ms < -1) return os::core::core_error(os::core::errors::core::invalid_argument);
 
-    std::array<pollfd, max_storage_objects + 1U> descriptors{};
+    std::array<pollfd, max_storage_objects + 2U> descriptors{};
     for (auto& descriptor : descriptors) {
         descriptor.fd = -1;
         descriptor.events = POLLIN;
         descriptor.revents = 0;
     }
-    descriptors[0].fd = endpoint_->native_fd();
+
+    descriptors[0].fd = control_ == nullptr ? -1 : control_->native_fd();
+    descriptors[1].fd = endpoint_->native_fd();
     for (std::size_t index = 0U; index < objects_.size(); ++index) {
         if (objects_[index].occupied) {
-            descriptors[index + 1U].fd = objects_[index].endpoint.native_fd();
+            descriptors[index + 2U].fd = objects_[index].endpoint.native_fd();
         }
     }
 
@@ -648,15 +713,26 @@ StorageService::dispatch_once(
     if (poll_result < 0) return storage_error(errors::io_failure);
     if (poll_result == 0) return {};
 
-    if ((descriptors[0].revents & POLLIN) != 0) {
+    if (control_ != nullptr) {
+        if ((descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+            (descriptors[0].revents & POLLIN) == 0) {
+            return ipc_error(os::ipc::errors::peer_died);
+        }
+        if ((descriptors[0].revents & POLLIN) != 0) {
+            return os::service::handle_identity_control_once(
+                *control_, receive_buffer, *identity_registry_);
+        }
+    }
+
+    if ((descriptors[1].revents & POLLIN) != 0) {
         return dispatch_main(receive_buffer);
     }
-    if ((descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
+    if ((descriptors[1].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0) {
         return ipc_error(os::ipc::errors::peer_died);
     }
 
     for (std::size_t index = 0U; index < objects_.size(); ++index) {
-        const auto revents = descriptors[index + 1U].revents;
+        const auto revents = descriptors[index + 2U].revents;
         if ((revents & POLLIN) != 0) {
             return dispatch_object(index, receive_buffer);
         }
@@ -674,16 +750,81 @@ StorageService::dispatch_main(os::core::MutableByteSpan receive_buffer) noexcept
     if (!received) return received.error();
     auto message = std::move(received).value();
 
-    auto context = os::ipc::validate_rpc_request(message, storage_service_id, *identity_resolver_);
+    auto context = resolve_main_request(message, *identity_resolver_);
     if (!context) {
         return os::ipc::send_rpc_error(*endpoint_, message.header(), context.error());
     }
+
+    if (message.header().operation_id == storage_provision_private_root_operation) {
+        if (!os::core::valid_principal(provisioning_principal_) ||
+            context.value().peer.principal != provisioning_principal_) {
+            return os::ipc::send_rpc_error(
+                *endpoint_, message.header(), storage_error(errors::access_denied));
+        }
+        if (!has_flag(message.header().flags, os::ipc::WireFlag::has_handles) ||
+            message.header().handle_count != 1U || message.handle_count() != 1U) {
+            return os::ipc::send_rpc_error(
+                *endpoint_, message.header(), ipc_error(os::ipc::errors::protocol_violation));
+        }
+
+        os::ipc::Decoder decoder{message.payload()};
+        auto principal_high = decoder.read_u64_le();
+        if (!principal_high) return os::ipc::send_rpc_error(*endpoint_, message.header(), principal_high.error());
+        auto principal_low = decoder.read_u64_le();
+        if (!principal_low) return os::ipc::send_rpc_error(*endpoint_, message.header(), principal_low.error());
+        auto user = decoder.read_u64_le();
+        if (!user) return os::ipc::send_rpc_error(*endpoint_, message.header(), user.error());
+        auto end = decoder.require_end();
+        if (!end) {
+            return os::ipc::send_rpc_error(
+                *endpoint_, message.header(), ipc_error(os::ipc::errors::protocol_violation));
+        }
+
+        const os::core::PrincipalId target_principal{
+            principal_high.value(),
+            principal_low.value(),
+        };
+        const os::core::UserId target_user{user.value()};
+        if (!os::core::valid_principal(target_principal)) {
+            return os::ipc::send_rpc_error(
+                *endpoint_, message.header(), storage_error(errors::invalid_root));
+        }
+
+        // Re-publishing an already-installed profile after another app launch
+        // is intentionally idempotent. M2.2 does not silently retarget a live
+        // principal/user mapping to a different directory object.
+        if (roots_->find(target_principal, target_user) != nullptr) {
+            return os::ipc::send_rpc_response(*endpoint_, message.header(), {});
+        }
+
+        auto directory_handle = message.take_handle(0U);
+        if (!directory_handle) {
+            return os::ipc::send_rpc_error(*endpoint_, message.header(), directory_handle.error());
+        }
+        auto root = PrivateRoot::adopt_authorized_directory(std::move(directory_handle).value());
+        if (!root) {
+            return os::ipc::send_rpc_error(*endpoint_, message.header(), root.error());
+        }
+        auto registered = roots_->register_root(
+            target_principal, target_user, std::move(root).value());
+        if (!registered) {
+            return os::ipc::send_rpc_error(*endpoint_, message.header(), registered.error());
+        }
+        return os::ipc::send_rpc_response(*endpoint_, message.header(), {});
+    }
+
     if (message.header().operation_id != storage_open_private_root_operation) {
         return os::ipc::send_rpc_error(
             *endpoint_, message.header(),
             os::core::make_error(
                 os::core::ErrorDomain::service,
                 os::core::errors::service::unknown_operation));
+    }
+
+    if (message.header().handle_count != 0U || message.handle_count() != 0U ||
+        has_flag(message.header().flags, os::ipc::WireFlag::has_handles)) {
+        return os::ipc::send_rpc_error(
+            *endpoint_, message.header(), ipc_error(os::ipc::errors::protocol_violation));
     }
 
     os::ipc::Decoder decoder{message.payload()};
