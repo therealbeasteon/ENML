@@ -116,6 +116,7 @@ int main() {
     assert(
         secure_hit.value().trusted_presentation ==
         os::display::TrustedPresentation::secure_system);
+    assert(compositor.validate_input_hit(secure_hit.value()));
 
     auto legacy_secure = compositor.hit_test(160, 130);
     assert(legacy_secure && legacy_secure.value() == secure_hit.value().surface);
@@ -124,6 +125,9 @@ int main() {
         secure,
         secure_surface.value().id,
         os::display::SurfaceVisibility::hidden));
+    auto stale_secure = compositor.validate_input_hit(secure_hit.value());
+    assert(!stale_secure);
+    expect_error(stale_secure.error(), os::display::errors::stale_input_hit);
 
     // With secure UI hidden, the application popup owns the same point. The
     // event recipient learns its own local point, not global scene geometry.
@@ -138,11 +142,17 @@ int main() {
     assert(
         popup_hit.value().trusted_presentation ==
         os::display::TrustedPresentation::none);
+    assert(compositor.validate_input_hit(popup_hit.value()));
 
     // A surface whose presented buffer was revoked cannot keep receiving input
     // for pixels the compositor no longer considers presented. Routing falls
-    // through to the framed application root underneath it.
+    // through to the framed application root underneath it, and the old hit is
+    // explicitly stale if a transport tries to deliver it later.
     compositor.invalidate_buffer(buffer_for(popup.value().id));
+    auto stale_popup = compositor.validate_input_hit(popup_hit.value());
+    assert(!stale_popup);
+    expect_error(stale_popup.error(), os::display::errors::stale_input_hit);
+
     auto app_hit = compositor.hit_test_input(160, 130);
     assert(app_hit);
     assert(app_hit.value().surface == app_surface.value().id);
@@ -150,6 +160,15 @@ int main() {
     assert(app_hit.value().frame_sequence == 3U);
     assert(app_hit.value().local_x == 160);
     assert(app_hit.value().local_y == 130);
+    assert(compositor.validate_input_hit(app_hit.value()));
+
+    // A newly presented frame invalidates an event targeted to the old frame.
+    // This closes the hit-test -> IPC-delivery TOCTOU window without requiring
+    // a permanent input lock over the compositor scene.
+    show_and_frame(compositor, app, app_surface.value(), 4U);
+    auto stale_frame = compositor.validate_input_hit(app_hit.value());
+    assert(!stale_frame);
+    expect_error(stale_frame.error(), os::display::errors::stale_input_hit);
 
     // Global points not owned by any input-eligible framed surface fail closed.
     assert(compositor.set_visibility(
