@@ -4,6 +4,7 @@
 #include <compare>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 
 #include <os/core/identity.hpp>
 #include <os/core/strong_id.hpp>
@@ -14,6 +15,38 @@ struct SurfaceIdTag;
 using SurfaceId = os::core::StrongId<SurfaceIdTag, std::uint64_t>;
 struct BufferIdTag;
 using BufferId = os::core::StrongId<BufferIdTag, std::uint64_t>;
+
+// M3 display object ids are service-generation scoped. The high 32 bits name
+// the Supervisor generation and the low 32 bits are a generation-local serial.
+// Generation zero and serial zero are reserved as invalid. This keeps the
+// compact 64-bit wire shape while making stale ids from a dead compositor
+// generation structurally unable to alias objects in its replacement.
+inline constexpr std::uint64_t display_object_local_mask = 0xFFFF'FFFFULL;
+inline constexpr std::uint64_t max_display_object_generation =
+    static_cast<std::uint64_t>(std::numeric_limits<std::uint32_t>::max());
+
+[[nodiscard]] constexpr bool valid_display_generation(std::uint64_t generation) noexcept {
+    return generation != 0U && generation <= max_display_object_generation;
+}
+
+[[nodiscard]] constexpr std::uint64_t make_display_object_value(
+    std::uint64_t generation,
+    std::uint32_t serial) noexcept {
+    if (!valid_display_generation(generation) || serial == 0U) return 0U;
+    return (generation << 32U) | static_cast<std::uint64_t>(serial);
+}
+
+[[nodiscard]] constexpr std::uint32_t display_object_generation(std::uint64_t value) noexcept {
+    return static_cast<std::uint32_t>(value >> 32U);
+}
+
+[[nodiscard]] constexpr std::uint32_t display_object_serial(std::uint64_t value) noexcept {
+    return static_cast<std::uint32_t>(value & display_object_local_mask);
+}
+
+[[nodiscard]] constexpr bool valid_display_object_value(std::uint64_t value) noexcept {
+    return display_object_generation(value) != 0U && display_object_serial(value) != 0U;
+}
 
 inline constexpr std::uint32_t max_display_dimension_px = 16384U;
 inline constexpr std::size_t max_surfaces = 64U;
@@ -106,7 +139,8 @@ struct SurfaceDescriptor final {
     bool accepts_input {true};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return id.value() != 0U && os::core::valid_peer_identity(owner) && bounds.nonempty();
+        return valid_display_object_value(id.value()) &&
+            os::core::valid_peer_identity(owner) && bounds.nonempty();
     }
 };
 
@@ -119,7 +153,8 @@ struct BufferDescriptor final {
     std::uint64_t byte_size {0U};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return id.value() != 0U && os::core::valid_peer_identity(owner) && size.valid() &&
+        return valid_display_object_value(id.value()) &&
+            os::core::valid_peer_identity(owner) && size.valid() &&
             stride_bytes != 0U && byte_size != 0U && byte_size <= max_shared_buffer_bytes;
     }
 };
