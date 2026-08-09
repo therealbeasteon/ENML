@@ -30,9 +30,6 @@ struct KeyRecord final {
     std::array<KeyVersionRecord, max_key_versions> versions {};
 };
 
-// Service-facing logical key store contract. Both the in-memory M2 registry and
-// the durable M2.6 registry implement this interface; callers never receive a
-// provider secret reference through it.
 class KeyStore {
 public:
     virtual ~KeyStore() = default;
@@ -82,12 +79,6 @@ public:
 
 class PersistentKeyRegistry;
 
-// Fixed-capacity metadata registry. Public KeyId values are locators, not
-// authority: every lookup is checked against the trusted caller owner.
-// A logical KeyId may retain several provider-owned key versions so rotation
-// can move new encryption forward without making existing ciphertext
-// undecryptable. Destroyed records remain tombstones and are never silently
-// reused within this registry generation.
 class KeyRegistry final : public KeyStore {
 public:
     explicit KeyRegistry(KeyProvider& provider) noexcept : provider_(&provider) {}
@@ -98,6 +89,18 @@ public:
         KeyId id,
         KeyPurpose purpose,
         RightsMask rights) noexcept override;
+
+    // Trusted internal construction hook used when a reviewed hierarchy/root
+    // provider has already generated the provider-owned secret under the
+    // correct application root. This never crosses public IPC. On failure the
+    // caller still owns `provider_key` and must destroy it.
+    [[nodiscard]] os::core::Result<KeyDescriptor>
+    adopt_generated(
+        KeyOwner owner,
+        KeyId id,
+        KeyPurpose purpose,
+        RightsMask rights,
+        ProviderKeyReference provider_key) noexcept;
 
     [[nodiscard]] os::core::Result<KeyDescriptor>
     describe(KeyOwner caller, KeyId id) const noexcept override;
