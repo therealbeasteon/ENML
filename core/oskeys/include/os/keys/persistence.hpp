@@ -15,7 +15,7 @@ inline constexpr std::uint32_t key_registry_snapshot_magic_v1 = 0x3147524BU; // 
 inline constexpr std::uint16_t key_registry_snapshot_version_v1 = 1U;
 inline constexpr std::uint16_t key_registry_snapshot_header_size_v1 = 32U;
 inline constexpr std::size_t max_key_registry_snapshot_bytes = 288U * 1024U;
-inline constexpr std::size_t key_registry_binding_bytes_v1 = 56U;
+inline constexpr std::size_t key_registry_binding_bytes_v1 = 60U;
 
 // Durable logical-key registry. The caller provides an already-authorized
 // state-directory handle and a provider that can persist opaque wrapped/sealed
