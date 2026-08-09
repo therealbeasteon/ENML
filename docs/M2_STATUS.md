@@ -158,7 +158,7 @@ M2.6 deliberately does not claim production TPM/TEE/HSM protection, measured boo
 
 ## M2.7 — key hierarchy and root-provider security contract
 
-Status: implementation complete on the M2.7 branch.
+Status: complete and merged.
 
 Implemented:
 
@@ -183,6 +183,37 @@ See `docs/M2_7_KEY_HIERARCHY.md`.
 
 M2.7 defines a security contract, not a fake hardware implementation. The host OpenSSL provider remains test-only, and KRG snapshots are not claimed rollback-resistant.
 
-## Next: M2.8 — supervised Key Service product integration
+## M2.8 — supervised Key Service product integration
 
-The next product slice should launch a real supervised `system.keys`, connect its durable M2.6 registry and M2.7 hierarchy policy, and publish application/profile key policy from trusted lifecycle state. App requests must continue to derive owner identity from `RequestContext.peer`; no caller may select another root, principal, provider handle, or protection scope.
+Status: implementation complete on the M2.8 branch; merge is gated on final branch-wide CI.
+
+Implemented:
+
+- real supervised host/CI `system.keys` executable using the existing Supervisor bootstrap/lifecycle path
+- private already-authorized Key Service state-directory capability at fixed fd 5; no public/caller-controlled state path
+- private Key Service lifecycle control for profile-root ensure, application enable and application disable
+- supervisor identity register/unregister handled on the same inherited private control plane
+- `ApplicationKeyPolicy` keyed by durable trusted `PrincipalId + UserId`
+- policy disable denies future create/open and closes all live `KeyObject` endpoints for that owner without destroying durable key state
+- hierarchy-backed product store so v1 creation and later rotation generate provider material beneath the trusted application root
+- trusted internal generated-provider-key adoption into `KeyRegistry`/`PersistentKeyRegistry`; provider/root references remain private
+- App Manager desired-vs-published Key policy state with service-generation-aware replay
+- App Manager revokes Key authority before Storage/process teardown on uninstall
+- same-signer reinstall retains durable principal/key state and requires a fresh trusted policy publication/capability acquisition
+- Storage + Key profile activation rollback avoids leaving a newly-installed profile half-authorized when later publication fails
+- supervised restart gate proving old KeyObject endpoints remain stale, process identity is republished separately from key policy, durable KeyId/v1/v2 ciphertext survive, and rotation continues after restart
+- App Manager integration gate proving automatic Key-policy replay after `system.keys` generation change and uninstall/reinstall authority semantics
+- Key Service polls only live public/object descriptors rather than passing its entire 64-slot policy capacity to `poll(2)`, preserving the sandbox `RLIMIT_NOFILE` and keeping kernel work proportional to active capabilities
+- GCC, Clang, ASan/UBSan and native AArch64 Key product gates in the M2 workflow
+
+See `docs/M2_8_KEY_SERVICE_PRODUCT_INTEGRATION.md`.
+
+M2.8 does not claim that launched applications already receive a Key Service endpoint. The current Supervisor is still a single-service prototype with per-instance logical ProcessId allocation. Registering one app independently with Storage and Key supervisors would create conflicting identities, so that problem is deliberately deferred instead of faked.
+
+Production TPM/TEE/HSM/secure-element roots, verified-boot/attestation coupling and crash-consistent hardware monotonic anti-rollback remain later security/BSP work.
+
+## Next: M2.9 — identity-preserving multi-service connection broker
+
+The next slice should introduce one boot-scoped process identity authority and a narrow service-directory/connection-broker path so one launched process keeps the same `PeerIdentity` while receiving authorized Storage, Key and later platform-service connections.
+
+M2.9 must not solve this by independently allocating a different logical `ProcessId` in each single-service Supervisor. The broker should preserve the existing kernel-credential evidence, trusted process registry, typed service-channel and stale-generation semantics while keeping service discovery/routing authority out of application request payloads.
