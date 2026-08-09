@@ -5,10 +5,12 @@
 #include <cstdint>
 
 #include <os/core/identity.hpp>
+#include <os/core/native_handle.hpp>
 #include <os/core/result.hpp>
 #include <os/core/span.hpp>
 #include <os/ipc/channel.hpp>
 #include <os/ipc/rpc.hpp>
+#include <os/service/identity.hpp>
 #include <os/storage/directory.hpp>
 #include <os/storage/file.hpp>
 #include <os/storage/private_root.hpp>
@@ -21,6 +23,13 @@ namespace os::storage {
 inline constexpr os::core::ServiceId storage_service_id{0x0000F020U};
 inline constexpr os::core::ServiceId storage_object_service_id{0x0000F021U};
 inline constexpr std::uint32_t storage_open_private_root_operation = 1U;
+
+// Private supervisor/control-channel extensions. They deliberately use the
+// bootstrap control service rather than the public Storage endpoint. Only
+// trusted system code holding a duplicate of the supervisor control channel can
+// publish or revoke roots; applications can never invoke these operations.
+inline constexpr std::uint32_t storage_control_register_root_operation = 100U;
+inline constexpr std::uint32_t storage_control_unregister_root_operation = 101U;
 
 inline constexpr std::size_t max_private_roots = 64U;
 inline constexpr std::size_t max_storage_objects = 64U;
@@ -169,6 +178,35 @@ private:
     os::ipc::ClientConnection* connection_ {nullptr};
 };
 
+// Trusted-system client for the service's private supervisor control channel.
+// The target PrincipalId/UserId is allowed in this payload because possession
+// of this channel is itself system authority; the public Storage endpoint never
+// accepts caller-supplied identity for root selection.
+class StorageControlClient final {
+public:
+    explicit StorageControlClient(os::ipc::Channel& control) noexcept
+        : control_(&control) {}
+
+    [[nodiscard]] os::core::Result<void>
+    register_private_root(
+        os::core::PrincipalId principal,
+        os::core::UserId user,
+        const os::core::NativeHandle& directory,
+        os::core::MutableByteSpan scratch,
+        std::uint32_t timeout_ms) noexcept;
+
+    [[nodiscard]] os::core::Result<void>
+    unregister_private_root(
+        os::core::PrincipalId principal,
+        os::core::UserId user,
+        os::core::MutableByteSpan scratch,
+        std::uint32_t timeout_ms) noexcept;
+
+private:
+    os::ipc::Channel* control_ {nullptr};
+    std::uint64_t next_request_id_ {0x8000000000000001ULL};
+};
+
 // Trusted policy registry. Applications never register roots and no registration
 // method accepts a Linux pathname. The key is durable application principal +
 // user; ProcessId is deliberately not part of private-data identity.
@@ -179,6 +217,9 @@ public:
         os::core::PrincipalId principal,
         os::core::UserId user,
         PrivateRoot root) noexcept;
+
+    [[nodiscard]] os::core::Result<void>
+    unregister_root(os::core::PrincipalId principal, os::core::UserId user) noexcept;
 
     [[nodiscard]] PrivateRoot*
     find(os::core::PrincipalId principal, os::core::UserId user) noexcept;
@@ -213,6 +254,15 @@ public:
 
     [[nodiscard]] os::core::Result<void>
     dispatch_once(os::core::MutableByteSpan receive_buffer, int timeout_ms) noexcept;
+
+    // Storage-specific router for the private supervisor control channel. It
+    // preserves the existing identity register/unregister protocol and adds
+    // root publication/revocation operations on the same trusted channel.
+    [[nodiscard]] os::core::Result<void>
+    dispatch_control_once(
+        os::ipc::Channel& control,
+        os::core::MutableByteSpan receive_buffer,
+        os::service::IdentityRegistry& identity_registry) noexcept;
 
     [[nodiscard]] std::size_t live_object_count() const noexcept;
 
@@ -249,6 +299,7 @@ private:
 
     [[nodiscard]] os::core::Result<std::size_t> allocate_slot() noexcept;
     void clear_slot(std::size_t index) noexcept;
+    void clear_objects_for(os::core::PrincipalId principal, os::core::UserId user) noexcept;
 };
 
 } // namespace os::storage
