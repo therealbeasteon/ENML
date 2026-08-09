@@ -8,4 +8,4 @@ target_compile_options(arm64_runtime_probe_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
 add_test(NAME arm64_runtime_probe_test COMMAND arm64_runtime_probe_test)
-set_tests_properties(arm64_runtime_probe_test PROPERTIES LABELS "arm64;qemu-user-safe")
+set_tests_properties(arm64_runtime_probe_test PROPERTIES LABELS "m0;arm64;qemu-user-safe")

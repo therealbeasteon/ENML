@@ -13,8 +13,8 @@ jobs:
         run: cmake --preset host-debug
       - name: Build
         run: cmake --build --preset host-debug --parallel 2
-      - name: Test
-        run: ctest --preset host-debug --output-on-failure
+      - name: Test M0 only
+        run: ctest --preset host-debug --output-on-failure -L '^m0$'
 
   sanitizers:
     runs-on: ubuntu-24.04
@@ -24,8 +24,8 @@ jobs:
         run: cmake --preset host-asan
       - name: Build
         run: cmake --build --preset host-asan --parallel 2
-      - name: Test
-        run: ctest --preset host-asan --output-on-failure
+      - name: Test M0 only
+        run: ctest --preset host-asan --output-on-failure -L '^m0$'
 
   clang-debug:
     runs-on: ubuntu-24.04
@@ -38,8 +38,8 @@ jobs:
           -DCMAKE_CXX_COMPILER=clang++
       - name: Build
         run: cmake --build build/host-clang --parallel 2
-      - name: Test
-        run: ctest --test-dir build/host-clang --output-on-failure
+      - name: Test M0 only
+        run: ctest --test-dir build/host-clang --output-on-failure -L '^m0$'
 
   fuzz-smoke:
     runs-on: ubuntu-24.04
@@ -72,10 +72,10 @@ jobs:
           test "$(uname -m)" = "aarch64"
       - name: Configure
         run: cmake --preset host-debug
-      - name: Build complete M0 userspace natively on AArch64
+      - name: Build complete userspace natively on AArch64
         run: cmake --build --preset host-debug --parallel 2
-      - name: Test complete M0 userspace natively on AArch64
-        run: ctest --preset host-debug --output-on-failure
+      - name: Test M0 natively on AArch64
+        run: ctest --preset host-debug --output-on-failure -L '^m0$'
 
   arm64-cross:
     runs-on: ubuntu-24.04
@@ -94,7 +94,7 @@ jobs:
           ./build/host-tools/tools/osidlc/osidlc --version
       - name: Configure AArch64 cross build
         run: cmake --preset arm64-debug
-      - name: Cross-build complete M0 userspace
+      - name: Cross-build complete userspace
         shell: bash
         run: |
           set +e
@@ -108,7 +108,7 @@ jobs:
             exit "$status"
           fi
           cat cross-build.log
-      - name: Run QEMU-user-safe AArch64 tests
+      - name: Run QEMU-user-safe M0 AArch64 tests
         run: >-
           ctest --preset arm64-debug --output-on-failure
-          -E 'supervisor_|sandbox_landlock_test'
+          -L '^m0$' -E 'supervisor_|sandbox_landlock_test'

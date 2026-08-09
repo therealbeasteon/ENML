@@ -5,6 +5,7 @@ function(add_emnl_rpc_integration_test name source)
         $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
     )
     add_test(NAME ${name} COMMAND ${name})
+    set_tests_properties(${name} PROPERTIES LABELS "m0")
 endfunction()
 
 add_emnl_rpc_integration_test(echo_process_rpc_test echo_process_rpc_test.cpp)
@@ -22,3 +23,4 @@ target_compile_options(echo_rpc_baseline_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
 add_test(NAME echo_rpc_baseline_test COMMAND echo_rpc_baseline_test)
+set_tests_properties(echo_rpc_baseline_test PROPERTIES LABELS "m0")

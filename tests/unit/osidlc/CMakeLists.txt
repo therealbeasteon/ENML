@@ -1,3 +1,4 @@
 add_executable(osidlc_compiler_test compiler_test.cpp)
 target_link_libraries(osidlc_compiler_test PRIVATE osidlc_lib emnl_warnings)
 add_test(NAME osidlc_compiler_test COMMAND osidlc_compiler_test)
+set_tests_properties(osidlc_compiler_test PROPERTIES LABELS "m0")
