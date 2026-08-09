@@ -1,14 +1,54 @@
 # M3.2 — bounded semantic input routing
 
-This slice establishes the first deterministic pointer-to-semantic-action boundary for ENML UI.
+This slice establishes the first deterministic physical-surface-to-semantic-action path for ENML UI while preserving compositor authority and keeping raw hardware input private.
 
 ## Purpose
 
-Applications should reason about semantic actions such as activate, focus, toggle and select. They should not receive Linux input device descriptors, evdev structures, compositor-private hit-test state or raw hardware coordinates.
+Applications should reason about semantic actions such as activate, focus, toggle and select. They should not receive Linux input device descriptors, evdev structures, compositor-private scene ordering or global hardware coordinates.
 
-A future hardware/input adapter is responsible for converting device-specific input into ENML logical Q6 coordinates. `osui` then resolves that point against an immutable semantic `RendererSnapshot`.
+The input path is deliberately split across subsystem boundaries:
 
-## Routing contract
+`trusted hardware/input adapter`
+→ global display point inside the compositor
+→ compositor-authorized `SurfaceInputHit`
+→ surface-local pixel point
+→ bounded logical viewport transform
+→ semantic `LogicalPoint`
+→ semantic hit routing/action authorization
+
+This keeps display ownership, coordinate normalization and semantic action authority separate instead of building one privileged catch-all input/UI service.
+
+## Compositor-owned surface targeting
+
+`osdisplay::Compositor::hit_test_input()` is the privileged display-side seam. It chooses the topmost visible, framed and input-enabled surface using the compositor's authoritative scene ordering.
+
+The result contains only the data a future trusted delivery bridge needs:
+
+- exact generation-scoped `SurfaceId`;
+- exact `PeerIdentity` owner;
+- surface role;
+- surface pixel size;
+- the exact presented frame sequence;
+- surface-local x/y coordinates;
+- compositor-derived trusted-presentation classification.
+
+The result intentionally does not need to be forwarded wholesale to applications. A platform input service can use owner/surface/frame identity for authorization and deliver only the permitted surface-local semantic event to the target process.
+
+Tying the hit to `frame_sequence` lets future delivery policy reason about the exact UI frame the compositor considered visible when the event was targeted. Buffer invalidation removes `has_frame`, so a surface whose presented pixels were revoked cannot continue receiving hits for an image the compositor no longer presents.
+
+## Physical-to-logical normalization
+
+`osui::logical_point_from_surface_pixel()` converts a compositor-authorized surface-local pixel into the logical Q6 viewport used by `SemanticTree`.
+
+The transform:
+
+- uses bounded integer arithmetic only;
+- supports non-integer physical/logical scale ratios;
+- is half-open on the surface edge rather than clamping out-of-surface coordinates into a control;
+- carries only surface dimensions and logical viewport dimensions;
+- does not expose global screen coordinates, Linux input-device identity or compositor stacking state to semantic UI.
+
+## Semantic routing contract
 
 `route_pointer_action()`:
 
@@ -42,27 +82,26 @@ Hidden overlays do not participate in the effective hit stack.
 
 ## Resource and power discipline
 
-The router:
+The current path:
 
-- allocates no heap memory;
+- allocates no heap memory in compositor hit localization or semantic routing;
 - creates no worker or timer thread;
 - performs no polling;
 - owns no background gesture recognizer;
-- operates over the existing bounded 256-node snapshot and depth-16 hierarchy.
-
-Input work therefore happens only when the platform has an input event to route.
+- operates over the existing bounded 64-surface compositor scene and 256-node semantic snapshot;
+- performs input work only when the platform has an input event to route.
 
 ## Security boundary
 
-This is not yet the hardware input service. It is the semantic boundary that such a service can call later.
+This is still not the complete hardware input service. The current work establishes both ends of the trusted seam: compositor-authoritative target localization and application-side semantic routing.
 
-The eventual platform bridge must authenticate its endpoint/peer authority, normalize coordinates into the surface-local logical space, and keep `/dev/input`, seat/device state, compositor internals and hardware-specific gesture mechanisms private to trusted platform components.
+The eventual privileged transport must authenticate its endpoint/peer authority, keep `/dev/input`, seat/device state and calibration private, preserve surface generation/owner/frame identity long enough to reject stale delivery, and ensure an event cannot be redirected to another process by application-supplied target IDs.
 
 ## Visual/UX relationship
 
-The routing rules intentionally track the same semantic hierarchy and ordering that the renderer uses. This reduces the risk that the user sees one control as topmost while input is delivered to a different lower control.
+The routing rules intentionally track the same scene/semantic ordering used by the compositor and renderer. This reduces the risk that the user sees one surface/control as topmost while input is delivered to a different lower target.
 
-The mechanism does not prescribe ENML's visual appearance. Authored curves, materials, motion and typography remain renderer concerns; input consumes semantic geometry and action authority rather than copying another platform's gesture model.
+The mechanism does not prescribe ENML's visual appearance. Authored curves, materials, motion and typography remain renderer concerns; input consumes authoritative geometry and semantic action authority rather than copying another platform's gesture model.
 
 ## Not yet claimed
 
@@ -75,7 +114,7 @@ This slice does not yet provide:
 - keyboard/navigation focus traversal;
 - IME/text-edit input;
 - hardware key mapping;
-- a privileged input daemon/service;
+- the authenticated cross-process input transport/service endpoint;
 - raw touch calibration or device discovery.
 
 Those must be added as bounded, explicit platform contracts rather than smuggled into the semantic UI layer.
