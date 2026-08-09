@@ -146,6 +146,38 @@ namespace {
 
 } // namespace
 
+os::core::Result<LogicalPoint> logical_point_from_surface_pixel(
+    InputViewportTransform transform,
+    SurfacePixelPoint point) noexcept {
+    if (transform.surface_width_px == 0U || transform.surface_height_px == 0U ||
+        transform.surface_width_px > max_logical_dimension_dp ||
+        transform.surface_height_px > max_logical_dimension_dp ||
+        transform.logical_width_q6 == 0U || transform.logical_height_q6 == 0U ||
+        transform.logical_width_q6 > max_logical_dimension_q6 ||
+        transform.logical_height_q6 > max_logical_dimension_q6) {
+        return ui_error(errors::invalid_input_transform);
+    }
+    if (point.x >= transform.surface_width_px || point.y >= transform.surface_height_px) {
+        return ui_error(errors::invalid_input_point);
+    }
+
+    const std::uint64_t x_q6 =
+        static_cast<std::uint64_t>(point.x) * transform.logical_width_q6 /
+        transform.surface_width_px;
+    const std::uint64_t y_q6 =
+        static_cast<std::uint64_t>(point.y) * transform.logical_height_q6 /
+        transform.surface_height_px;
+    if (x_q6 >= transform.logical_width_q6 || y_q6 >= transform.logical_height_q6 ||
+        x_q6 > max_logical_dimension_q6 || y_q6 > max_logical_dimension_q6) {
+        return ui_error(errors::invalid_input_transform);
+    }
+
+    return LogicalPoint{
+        .x_q6 = static_cast<std::int32_t>(x_q6),
+        .y_q6 = static_cast<std::int32_t>(y_q6),
+    };
+}
+
 os::core::Result<PointerRoute> route_pointer_action(
     const RendererSnapshot& snapshot,
     LogicalPoint point,
