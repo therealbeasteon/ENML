@@ -104,6 +104,11 @@ public:
 
     [[nodiscard]] std::size_t live_object_count() const noexcept;
 
+    // Trusted control-plane revocation. It does not destroy logical keys; it
+    // closes every currently minted object capability for this durable owner so
+    // stale clients observe peer death and must reacquire after policy returns.
+    void revoke_owner(KeyOwner owner) noexcept;
+
 private:
     struct ObjectSlot final {
         bool occupied {false};
