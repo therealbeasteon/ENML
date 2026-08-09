@@ -14,6 +14,7 @@ add_library(osui STATIC
     src/glyph_raster.cpp
     src/text_command_raster.cpp
     src/input.cpp
+    src/accessibility.cpp
     src/motion.cpp
 )
 add_library(emnl::osui ALIAS osui)
