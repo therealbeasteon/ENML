@@ -2,6 +2,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cerrno>
+#include <cstdio>
 #include <utility>
 
 #include <poll.h>
@@ -19,6 +20,15 @@ namespace {
 [[nodiscard]] bool peer_died(const os::core::Error& error) noexcept {
     return error.domain == os::core::ErrorDomain::ipc &&
         error.code == os::ipc::errors::peer_died;
+}
+
+void report_fatal(const char* stage, const os::core::Error& error) noexcept {
+    std::fprintf(
+        stderr,
+        "system.storage fatal stage=%s domain=%u code=%u\n",
+        stage,
+        static_cast<unsigned>(error.domain),
+        static_cast<unsigned>(error.code));
 }
 
 } // namespace
@@ -65,6 +75,7 @@ int main() {
             auto handled = service.dispatch_control_once(control, control_buffer, identities);
             if (!handled) {
                 if (peer_died(handled.error())) return 0;
+                report_fatal("control", handled.error());
                 return 15;
             }
         }
@@ -72,6 +83,7 @@ int main() {
         auto dispatched = service.dispatch_once(request_buffer, 10);
         if (!dispatched) {
             if (peer_died(dispatched.error())) return 0;
+            report_fatal("public", dispatched.error());
             return 16;
         }
     }
