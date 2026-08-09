@@ -4,18 +4,7 @@
 
 Status: complete and merged.
 
-Implemented:
-
-- additive stable `ErrorDomain::display` and no-exceptions/no-RTTI `core/osdisplay`;
-- generation-scoped strong `SurfaceId`, bounded display geometry/safe insets/timing;
-- application, popup, system-chrome and secure-system roles with exact `PeerIdentity` ownership;
-- one application root per live process in the initial phone model and popup attachment constrained to its exact-process parent;
-- compositor-owned application stacking; applications cannot choose global z or self-activate;
-- trusted shell/secure-UI principals and secure-system top-band/capture exclusion;
-- fixed 64-surface global and eight-surface-per-principal budgets;
-- bounded frame metadata/damage, replay rejection, geometry invalidation and deterministic scene snapshots;
-- trusted top-down hit testing over visible/input-enabled/framed surfaces;
-- GCC, Clang, ASan/UBSan and native AArch64 display gates.
+Implemented: bounded `osdisplay`, generation-scoped `SurfaceId`, exact `PeerIdentity` ownership, application/popup/system-chrome/secure-system roles, compositor-owned stacking, trusted shell/secure UI principals, bounded frame/damage metadata, secure-system capture exclusion, deterministic scene snapshots, authoritative top-down input hit testing and GCC/Clang/ASan+UBSan/native-AArch64 gates.
 
 See `docs/M3_0_DISPLAY_COMPOSITOR_FOUNDATION.md`.
 
@@ -23,15 +12,7 @@ See `docs/M3_0_DISPLAY_COMPOSITOR_FOUNDATION.md`.
 
 Status: complete and merged in PR #25.
 
-Implemented:
-
-- generation-scoped `BufferId`/`SurfaceId` namespaces derived from trusted Supervisor generation;
-- fixed shared-buffer count and byte ceilings, Linux memfd backing/seals and move-only leases;
-- exact `PeerIdentity` buffer ownership, process revocation and scene invalidation on buffer release;
-- supervised `system.compositor` using the existing pidfd-backed identity registry;
-- per-message kernel credential validation before public compositor operations;
-- typed surface/buffer/frame operations and restart integration proving stale channels/IDs do not alias the replacement service generation;
-- GCC, Clang, ASan/UBSan and native AArch64 display/service gates.
+Implemented: generation-scoped `BufferId`/`SurfaceId`, bounded shared-buffer counts and bytes, Linux memfd backing/seals, exact buffer ownership/revocation, supervised `system.compositor`, pidfd-backed runtime identity, per-message kernel credential validation, typed surface/buffer/frame RPC and restart integration proving stale channels/IDs cannot alias a replacement compositor generation.
 
 See `docs/M3_1_SHARED_BUFFER_COMPOSITOR_SERVICE.md`.
 
@@ -39,164 +20,118 @@ See `docs/M3_1_SHARED_BUFFER_COMPOSITOR_SERVICE.md`.
 
 Status: implementation in progress on `m3-2-semantic-ui-foundation`.
 
-`docs/M3_2_EXIT_CRITERIA.md` is now the objective definition of when this branch is good enough to leave draft. M3.2 completion means these semantic/render/input/accessibility contracts are stable and current-head validated; it does not pretend to finish later DRM/KMS/GPU, telephony, verified boot, update/recovery or full power-management milestones.
+`docs/M3_2_EXIT_CRITERIA.md` defines when this branch is actually good enough to leave draft. M3.2 is a trustworthy semantic UI/render/input/accessibility foundation, not a claim that later DRM/KMS/GPU, telephony, update/recovery, verified-boot or full power-management tracks are finished.
 
 ### Semantic UI, layout and accessibility
 
 Implemented:
 
-- additive `ErrorDomain::ui` and no-exceptions/no-RTTI `core/osui`;
-- strong monotonic `UiNodeId` plus separate semantic `StyleTokenId`;
-- fixed 256-node tree, 32 direct children per node, depth 16 and fixed 160-byte validated UTF-8 labels;
-- semantic roles/state/actions with unique focus and effective ancestor visibility authorization;
-- fixed-capacity accessibility projection from semantic nodes rather than framebuffer pixels;
-- accessibility-hidden grouping/re-parenting and 100–300% text scaling;
-- Q6 density-independent geometry, safe-inset-aware responsive list/detail layout and minimum touch-target policy;
-- revision-bound `AccessibilityServiceSnapshot` and stale-snapshot action rejection;
-- accessibility actions re-authorized through the same `SemanticTree::focus()` / `dispatch_action()` invariants;
-- `AccessibilityBridgeAuthority` binding privileged snapshot/action access to a supervisor-assigned trusted accessibility principal;
-- editable-text accessibility deliberately deferred until bounded text-input/caret/selection/IME semantics exist;
-- no OCR/framebuffer scraping, accessibility polling loop or accessibility worker introduced by this layer.
+- no-exceptions/no-RTTI `core/osui` and additive `ErrorDomain::ui`;
+- bounded 256-node semantic tree, 32 children/node, depth 16, strong monotonic `UiNodeId` and fixed validated UTF-8 labels;
+- semantic roles/state/actions, unique focus and effective ancestor-visibility authorization;
+- fixed accessibility projection from semantics rather than framebuffer pixels;
+- Q6 density-independent geometry, safe-inset responsive layout, 100–300% text scale and minimum touch targets;
+- revision-bound accessibility snapshots/actions with stale-request rejection;
+- `AccessibilityBridgeAuthority` restricting privileged access to a trusted accessibility principal;
+- accessibility actions re-authorized through the same live `SemanticTree` invariants;
+- no OCR/framebuffer scraping, accessibility polling loop or dedicated accessibility worker.
 
-See `docs/M3_2_ACCESSIBILITY_BRIDGE.md` and `docs/M3_2_SEMANTIC_UI_FOUNDATION.md`.
+Editable accessibility text remains deferred until bounded caret/selection/text-input/IME semantics exist.
 
 ### Collections
 
 Implemented:
 
-- virtualization planning for up to 1,000,000 logical items with 64-bit deep scroll/content extents;
-- fixed recycler bounded by the semantic child budget;
-- strong 64-bit stable `CollectionItemKey` independent of mutable index;
-- stable slot retention through insertion/reordering;
-- strong `CollectionRevision`, captured `CollectionDataSnapshot` and stale-revision rejection;
-- zero/duplicate-key and malformed-source rejection;
-- bounded ordered `CollectionChangeSet` with at most 16 insert/remove/move/update/reset operations;
-- conservative visible-window invalidation so distant changes need not rematerialize visible rows;
-- bounded revision/key-consistent `CollectionContentWindow` publication;
-- required primary semantic label, optional secondary label and enabled/selected state without renderer/font/texture pointers;
-- content callback receives the exact already-validated stable key for its captured revision, preventing identity/content drift;
-- publication remains bounded to the materialized window and introduces no million-row prefetch or idle worker.
+- virtualization for up to 1,000,000 logical items with bounded materialization and 64-bit deep extents;
+- stable 64-bit `CollectionItemKey`, fixed recycler and stable slot retention across insertion/reordering;
+- strong revisions/snapshots, bounded mutation sets and stale/zero/duplicate-key rejection;
+- bounded revision/key-consistent content publication with primary/secondary semantic labels plus enabled/selected state;
+- conservative visible-window invalidation and no million-row eager prefetch/idle worker.
 
-The callback backend remains an internal seam, not public ABI. The eventual app-facing protocol should transport bounded records/messages rather than implementation-owned function pointers.
+The callback backend remains internal. Public app transport must be bounded record/message based rather than exposing implementation-owned function pointers.
 
-See `docs/M3_2_COLLECTION_CONTENT.md`.
-
-### ENML visual and concrete raster foundation
+### Rendering and ENML visual language
 
 Implemented:
 
-- semantic design-token table independent of concrete vendor colors/assets;
-- optical materials: opaque/translucent/crystal/smoked/luminous;
-- flush/inset/raised/floating/hero depth roles;
-- authored rectilinear/soft/continuous/swept/capsule contours with asymmetric swept geometry;
-- micro/responsive/transition/reveal motion roles;
-- reduced-transparency, reduced-motion, high-contrast and 100–300% text-scale resolution;
-- economy/balanced/full implementation budgets and explicit renderer capability profile;
-- capability/power/accessibility fallbacks that preserve hierarchy, state and contour identity;
-- immutable renderer snapshots, bounded deltas and deterministic fixed-capacity `RenderCommandBuffer`;
-- first concrete caller-owned opaque CPU raster with semantic palette resolution, material tint, per-corner contour geometry, depth fallback, leading-edge light and final focus/outline treatment;
-- deterministic fixed 2×2 subpixel outside-fringe antialiasing for continuous/swept silhouettes without floating point, heap allocation, path engine or shader compiler;
-- `rasterize_opaque_frame()` and `rasterize_opaque_frame_with_text()` composed CPU/economy frame paths.
+- semantic design-token boundary independent of concrete vendor assets/colors;
+- opaque/translucent/crystal/smoked/luminous materials, flush→hero depth, authored rectilinear/soft/continuous/swept/capsule contours and bounded motion roles;
+- accessibility/capability/power quality fallbacks preserving hierarchy/state/contour identity;
+- immutable renderer snapshots, bounded deltas, deterministic `RenderCommandBuffer` and bounded `RenderDamagePlan`;
+- caller-owned opaque CPU raster with semantic palette, material tint, authored per-corner geometry, bounded depth/lighting and final focus/outline treatment;
+- deterministic fixed subpixel contour antialiasing without floating point, heap allocation, general path engine, shader compiler or background cache;
+- semantic-only changes can generate zero pixel damage, moved nodes damage old+new bounds, and pathological damage lists fall back explicitly to full redraw.
 
-The opaque renderer remains the identity baseline. Live translucency/backdrop filtering is not allowed to become the only thing that makes ENML recognizable. Current contour AA is a bounded first stage; true analytic/interior edge coverage remains work before final visual quality is claimed.
-
-See `docs/M3_2_CONTOUR_ANTIALIAS.md`, `docs/M3_2_OPAQUE_RASTER_BASELINE.md` and `docs/M3_2_ENML_VISUAL_LANGUAGE.md`.
+Opaque figure/ground and state remain the identity baseline. Live backdrop/translucency must enhance ENML, not become the only reason it is recognizable.
 
 ### Text/font/paragraph rendering
 
 Implemented:
 
-- platform-owned semantic font-family roles and bounded fallback chains;
-- renderer-private `FontProviderBackend` mapping roles to opaque `FontFaceId` values;
-- validated face sets with no application font paths, vendor family names or native handles;
-- bounded `ShapedText` contract: at most 160 glyphs, 32 font/direction runs and 16 lines;
-- UTF-8 cluster-boundary, fallback-family, direction, line partition and logical-extent validation;
-- renderer-private shaping and paragraph seams with explicit width/line/wrap/overflow/base-direction constraints;
-- deliberate refusal to implement a partial home-grown bidi/script shaper in `osui`;
-- renderer-private bounded glyph-mask provider (up to 512 × 512 per glyph) and real coverage-to-RGBA painting;
-- renderer-owned font vertical metrics and baseline placement from validated ascent/descent rather than guessed percentages;
-- fallback-aware line-box validation;
-- direct `RenderContentKind::text` → face resolution → paragraph shaping → line metrics → glyph-mask paint path;
-- no text worker, font scanner, polling loop or unbounded glyph cache.
+- platform-owned semantic font roles and bounded fallback chains;
+- renderer-private opaque font face/provider contracts;
+- bounded shaped-text and paragraph contracts with validated UTF-8 clusters, font/direction runs, lines and extents;
+- renderer-private glyph-mask provider with real coverage→RGBA painting;
+- renderer-owned ascent/descent/line-gap metrics and direct render-command text paint path;
+- composed geometry+text opaque frame raster;
+- no font scanner, text worker, polling loop or unbounded glyph cache.
 
-ENML does **not** yet claim a production Unicode/font backend, final font assets, final hinting, color-font support or GPU glyph atlas. A reviewed production renderer-private implementation still has to plug into these seams before production text support is claimed.
+ENML still does **not** claim a production Unicode/font backend, final font assets/hinting, color-font support or GPU glyph atlas. A reviewed renderer-private production implementation must plug into the existing seams before production text support is claimed.
 
-See `docs/M3_2_TEXT_RENDERING.md`.
-
-### Input routing and trusted delivery authority
+### Input routing and authenticated targeting transport
 
 Implemented:
 
-- semantic `LogicalPoint` routing for activate/focus/toggle/select;
-- immutable semantic-snapshot validation before trusting IDs/parent chains/depth/bounds/actions;
-- deepest visible hit ownership with equal-depth overlap matching the current renderer's later-painted order;
-- ancestor-path action resolution so text inside a button routes naturally to the button;
-- visible disabled/non-actionable top overlays block unrelated lower-sibling click-through by default;
-- live dispatch is re-authorized through `SemanticTree`;
-- compositor-owned `SurfaceInputHit` chooses the topmost visible/framed/input-enabled surface from authoritative scene state;
-- input hits carry exact generation-scoped surface ID, exact owner, role, surface size, presented frame sequence, trusted classification and **surface-local** coordinates;
-- buffer invalidation, visibility change, bounds change or new frame can invalidate a previously issued hit;
-- `validate_input_hit()` re-checks owner/role/frame/size/visibility/input eligibility immediately before privileged delivery, providing an explicit hit-test→delivery TOCTOU defense;
-- `InputBridgeAuthority` allows authoritative global-scene targeting only to a supervisor-assigned trusted input principal;
-- `logical_point_from_surface_pixel()` maps authorized surface-local physical pixels into semantic Q6 space using bounded integer arithmetic, non-integer scale support and half-open edge rejection;
-- no application-facing `/dev/input`, evdev structure, raw global scene state or input polling thread.
+- deterministic semantic Q6 pointer routing for activate/focus/toggle/select with fresh live-tree re-authorization;
+- topmost-path ownership, ancestor action resolution and no disabled/non-actionable click-through by default;
+- compositor-owned `SurfaceInputHit` containing exact generation-scoped surface, owner, role, surface size, presented frame sequence, trusted classification and **surface-local** coordinates;
+- buffer invalidation, visibility/bounds changes and newer frames invalidate stale input hits;
+- `validate_input_hit()` re-checks owner/role/frame/size/visibility/input eligibility immediately before delivery;
+- `InputBridgeAuthority` binds global-scene targeting to a trusted input principal;
+- bounded integer surface-pixel→semantic-Q6 normalization with non-integer scale support and half-open edge rejection;
+- authenticated compositor RPC operations for hit-test and pre-delivery validation;
+- separate `InputCompositorClient` privileged facade rather than adding global-scene operations to the ordinary app client;
+- every privileged request passes normal kernel-credential RPC validation and then the trusted input-principal check;
+- fixed bounded `SurfaceInputHit` wire encoding validates enums, local coordinates and role/trust consistency;
+- cross-process `SOCK_SEQPACKET`/`fork()` integration proves trusted-principal success and ordinary-principal denial using real kernel packet credentials;
+- no application-facing `/dev/input`, evdev structure, global scene state or input polling worker.
 
-The authenticated cross-process transport around this authority seam is still pending. It must use the existing kernel-credential/identity-registry pattern and must not accept an application-supplied target surface as authority.
+The remaining input work is the final trusted input-service→owning-app event transport plus later gesture/multitouch/keyboard/IME contracts. Applications must never choose the target surface as authority.
 
 See `docs/M3_2_INPUT_ROUTING.md`.
 
 ### Motion and power discipline
 
-Implemented:
-
-- bounded event-driven `MotionTimeline`;
-- no animation worker/timer thread, polling loop or unbounded animation queue;
-- animation sampled only on compositor/render timing opportunities;
-- at most one caller-supplied future compositor tick requested;
-- reduced-motion uses the same bounded path;
-- absent/stale timing opportunities cause no retry spin.
-
-The phone should become quiet when there is no useful visual work.
+Implemented: bounded event-driven `MotionTimeline`, no animation worker/polling loop, sampling only on compositor/render timing opportunities, at most one requested future compositor tick, reduced-motion through the same path, and no retry spin when timing is absent/stale.
 
 ### Trusted system presentation
 
-Implemented:
+Implemented: compositor-derived trust classification, secure-system capture exclusion, bounded compositor-owned `TrustedOverlaySnapshot`, and role/classification consistency validation. Application pixels cannot self-mint trusted-system attribution.
 
-- compositor-derived `TrustedPresentation` classification;
-- apps/popups cannot self-mint system or secure-system trust attribution;
-- secure-system capture exclusion remains separate from visual attribution;
-- bounded compositor-owned `TrustedOverlaySnapshot` containing trusted authority/bounds/frame sequence but no app-selected icon, color, string, texture or shader;
-- role/classification consistency checks reject inconsistent records.
-
-The actual ENML trust mark and its private compositor/backend rendering are intentionally not frozen yet; it must be original, system-owned and usability-tested rather than copied from another platform.
-
-See `docs/M3_2_TRUSTED_PRESENTATION.md`.
+The actual ENML trust mark and private compositor rendering remain intentionally unfrozen; they must be original, system-owned and usability-tested.
 
 ### Reference/product contract
 
-`docs/PROJECT_VISION.md`, `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md` and `docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md` remain the project guardrails.
-
-The supplied Symbian, Linux/Tizen, hardening/security, mobile-network, cryptography and UI/UX material is engineering evidence and guidance, not a template. ENML keeps its own ABI, ownership model and visual language. The visual target remains original, classic/crafted/luxurious, colorful, dimensional and curve-authored, while remaining fast, legible and recognizably ENML when premium effects are reduced.
+`docs/PROJECT_VISION.md`, `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md` and `docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md` remain guardrails. Supplied Symbian, Linux/Tizen, security/hardening and UI references are engineering evidence, not templates. ENML keeps its own ABI/security model and its original classic, crafted, luxurious, colorful, dimensional, curve-authored visual language.
 
 ### Validation status
 
-Head `daf508e1f0612db9d1af1c19b025f6548fbccc88` completed the M3 Semantic UI matrix on GCC, Clang, ASan/UBSan and native AArch64, and its M1, M2 key/private-storage/service-broker and M3 Display/Compositor runs completed successfully.
+Code head `62c42d6e8a60ad34de929258d04352bfc31a8301` completed the M3 Display/Compositor matrix successfully on GCC, Clang, ASan/UBSan and native AArch64, including the authenticated input transport integration gate. Its M3 Semantic UI gates were also green where completed before the subsequent documentation/CI-scoping commits.
 
-The current branch extends that validated baseline with compositor-authoritative input localization/stale-hit revalidation, trusted input/accessibility principal authority seams, physical→logical input normalization, revision-bound accessibility actions, bounded collection content publication and CI concurrency cleanup. The **current head must pass** fresh GCC, Clang, ASan/UBSan and native-AArch64 M3 UI and M3 Display gates before this tranche is considered validated. Queued/pending CI is not a pass.
+The current head extends that validated code only with input-transport documentation, exit-criteria/status synchronization and CI scoping so branch pushes do not duplicate PR display validation. The **current head still must be green** on the required M3 matrices before the PR leaves draft; an older successful code head is not sufficient for merge readiness.
 
-M3 UI/Display PR workflows now group concurrency by PR/ref rather than head SHA so future superseded M3 validation runs cancel instead of growing an unbounded queue.
+M3 PR workflows use concurrency grouping so superseded validation is cancelled rather than accumulating an unbounded queue. Display branch pushes are now scoped to `main`; feature branches validate through the pull-request event instead of running duplicate push+PR display matrices.
 
 ### Remaining M3.2 work
 
-- complete authenticated cross-process transport around the trusted input/accessibility authority seams;
-- integrate and review the production renderer-private Unicode/font provider/shaper/raster backend;
-- improve contour quality from outside-fringe AA toward bounded analytic/interior coverage;
-- strengthen bounded depth/lighting without allowing optical effects to erase focus/state;
-- connect collection publication to bounded message/OSIDL records without exposing callback pointers;
+- finish authenticated accessibility transport/session ownership and final trusted input-service→application event delivery;
+- integrate/review a production renderer-private Unicode/font provider/shaper/raster backend;
+- improve contour quality toward bounded analytic/interior coverage and strengthen depth/lighting without obscuring focus/state;
+- connect collection content/change publication to bounded message/OSIDL records;
 - connect `TrustedOverlaySnapshot` to private compositor rendering and design/usability-test the actual ENML trust mark;
 - continue compositor-deadline-aware scene transitions;
-- add later text-input/IME, keyboard focus traversal and gesture contracts without smuggling raw hardware APIs into application UI;
-- freeze public semantic UI/OSIDL only after these in-process invariants stabilize;
+- add later text-input/IME, keyboard traversal and gesture contracts without exposing raw hardware APIs;
+- freeze public semantic UI/OSIDL only after these invariants stabilize;
 - align the eventual Figma component system with the same semantic token vocabulary and evaluate accessibility/usability before freezing the visual language.
 
-Hardware DRM/KMS/GPU backends, production shader implementation, telephony/radio, verified boot/attestation, production TPM/TEE/HSM providers, recovery/update and full power-management integration remain later tracks and must not be faked inside M3.2.
+Hardware DRM/KMS/GPU backends, production shader stacks, telephony/radio, verified boot/attestation, production TPM/TEE/HSM providers, recovery/update and full power-management integration remain later tracks and must not be faked inside M3.2.
