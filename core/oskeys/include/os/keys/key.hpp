@@ -33,13 +33,13 @@ enum class KeyPurpose : std::uint32_t {
 
 using RightsMask = std::uint32_t;
 
-namespace rights {
+namespace key_rights {
 inline constexpr RightsMask metadata = 1U << 0U;
 inline constexpr RightsMask encrypt = 1U << 1U;
 inline constexpr RightsMask decrypt = 1U << 2U;
 inline constexpr RightsMask destroy = 1U << 3U;
 inline constexpr RightsMask all = metadata | encrypt | decrypt | destroy;
-} // namespace rights
+} // namespace key_rights
 
 struct KeyDescriptor final {
     KeyId id {};
@@ -48,7 +48,8 @@ struct KeyDescriptor final {
     RightsMask rights {0U};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return id.valid() && version != 0U && rights != 0U && (rights & ~rights::all) == 0U;
+        return id.valid() && version != 0U && rights != 0U &&
+            (rights & ~key_rights::all) == 0U;
     }
 
     [[nodiscard]] friend constexpr auto operator<=>(
@@ -68,7 +69,7 @@ struct KeyOwner final {
 }
 
 [[nodiscard]] constexpr bool valid_rights(RightsMask value) noexcept {
-    return value != 0U && (value & ~rights::all) == 0U;
+    return value != 0U && (value & ~key_rights::all) == 0U;
 }
 
 } // namespace os::keys
