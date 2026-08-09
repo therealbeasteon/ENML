@@ -7,6 +7,7 @@
 #include <cstdint>
 #include <cstdlib>
 #include <limits>
+#include <span>
 #include <string_view>
 #include <utility>
 
@@ -20,6 +21,8 @@
 #include <os/app/bootstrap.hpp>
 #include <os/core/error.hpp>
 #include <os/ipc/constants.hpp>
+#include <os/keys/service.hpp>
+#include <os/storage/service.hpp>
 
 namespace os::app {
 namespace {
@@ -38,13 +41,13 @@ inline constexpr int application_executable_fd = 4;
     return result;
 }
 
-void close_extra_descriptors() noexcept {
+void close_extra_descriptors(unsigned first_fd) noexcept {
 #if defined(SYS_close_range)
-    if (::syscall(SYS_close_range, 6U, ~0U, 0U) == 0) return;
+    if (::syscall(SYS_close_range, first_fd, ~0U, 0U) == 0) return;
 #endif
     long limit = ::sysconf(_SC_OPEN_MAX);
     if (limit < 0 || limit > 4096) limit = 4096;
-    for (int fd = 6; fd < static_cast<int>(limit); ++fd) {
+    for (int fd = static_cast<int>(first_fd); fd < static_cast<int>(limit); ++fd) {
         (void)::close(fd);
     }
 }
@@ -132,25 +135,42 @@ open_private_data_root(int directory_fd) noexcept {
 
 [[noreturn]] void exec_application_child(
     int executable_fd,
-    int storage_service_fd,
+    int legacy_storage_service_fd,
     int bootstrap_fd,
     const os::sandbox::SandboxPolicyV1& sandbox) noexcept {
     const int bootstrap_temp = duplicate_cloexec(bootstrap_fd);
     const int executable_temp = duplicate_cloexec(executable_fd);
-    const int storage_temp = duplicate_cloexec(storage_service_fd);
-    if (bootstrap_temp < 0 || executable_temp < 0 || storage_temp < 0) std::_Exit(120);
+    const int storage_temp = legacy_storage_service_fd >= 0
+        ? duplicate_cloexec(legacy_storage_service_fd)
+        : -1;
+    if (bootstrap_temp < 0 || executable_temp < 0 ||
+        (legacy_storage_service_fd >= 0 && storage_temp < 0)) {
+        std::_Exit(120);
+    }
 
     if (::dup2(bootstrap_temp, application_bootstrap_fd) < 0 ||
         ::dup2(executable_temp, application_executable_fd) < 0 ||
-        ::dup2(storage_temp, application_storage_service_fd) < 0 ||
         !set_cloexec(application_executable_fd)) {
+        std::_Exit(121);
+    }
+    if (legacy_storage_service_fd >= 0 &&
+        ::dup2(storage_temp, application_storage_service_fd) < 0) {
         std::_Exit(121);
     }
 
     (void)::close(bootstrap_temp);
     (void)::close(executable_temp);
-    (void)::close(storage_temp);
-    close_extra_descriptors();
+    if (storage_temp >= 0) (void)::close(storage_temp);
+
+    if (legacy_storage_service_fd >= 0) {
+        close_extra_descriptors(
+            static_cast<unsigned>(application_storage_service_fd + 1));
+    } else {
+        // Bootstrap v2 has no preassigned service fd. Close fd 5 and every
+        // higher inherited descriptor before sandbox/exec. Service endpoints
+        // arrive later only as typed SCM_RIGHTS capabilities on fd 3.
+        close_extra_descriptors(static_cast<unsigned>(application_storage_service_fd));
+    }
 
     const os::sandbox::ApplicationSandboxHandlesV1 sandbox_handles{
         .executable_fd = application_executable_fd,
@@ -191,6 +211,12 @@ void kill_and_reap(pid_t pid) noexcept {
         error.code == os::core::errors::security::unknown_process;
 }
 
+[[nodiscard]] bool is_already_detached(const os::core::Error& error) noexcept {
+    return is_unknown_process(error) ||
+        (error.domain == os::core::ErrorDomain::service &&
+         error.code == os::supervisor::broker_errors::process_not_attached);
+}
+
 } // namespace
 
 ApplicationManager::ApplicationManager(
@@ -202,8 +228,11 @@ ApplicationManager::ApplicationManager(
 ApplicationManager::~ApplicationManager() {
     for (auto& slot : instances_) {
         if (!slot.occupied) continue;
+        // Revoke service identity before killing the process. The process may
+        // still possess endpoint fds, but services no longer resolve its sender
+        // credentials to authority once this call completes.
+        os::core::discard_result(release_instance_identity(slot.info.identity.process));
         kill_and_reap(slot.info.native_pid);
-        os::core::discard_result(supervisor_.unregister_process(slot.info.identity.process));
         slot = InstanceSlot{};
     }
 }
@@ -361,6 +390,11 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
         return manager_error(manager_errors::profile_not_found);
     }
 
+    const bool broker_mode = service_broker_ != nullptr;
+    if (broker_mode && !broker_configuration_valid()) {
+        return manager_error(manager_errors::broker_misconfigured);
+    }
+
     auto storage_policy = republish_profiles_if_needed();
     if (!storage_policy) return storage_policy.error();
     // An uninstall disables and revokes this retained profile without deleting
@@ -370,9 +404,12 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
     auto current_profile_policy = publish_profile(*profile);
     if (!current_profile_policy) return current_profile_policy.error();
 
-    auto storage_connection_result = supervisor_.connect();
-    if (!storage_connection_result) return storage_connection_result.error();
-    auto storage_connection = std::move(storage_connection_result).value();
+    os::ipc::Channel legacy_storage_connection{};
+    if (!broker_mode) {
+        auto storage_connection_result = supervisor_.connect();
+        if (!storage_connection_result) return storage_connection_result.error();
+        legacy_storage_connection = std::move(storage_connection_result).value();
+    }
 
     InstanceSlot* free_instance = nullptr;
     for (auto& slot : instances_) {
@@ -401,41 +438,116 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
         bootstrap_pair[0].close();
         exec_application_child(
             target->executable.native(),
-            storage_connection.native_fd(),
+            broker_mode ? -1 : legacy_storage_connection.native_fd(),
             bootstrap_pair[1].native_fd(),
             profile->sandbox);
     }
 
     bootstrap_pair[1].close();
-    storage_connection.close();
+    legacy_storage_connection.close();
 
-    auto identity = supervisor_.register_process(child, profile->principal, user);
-    if (!identity) {
-        kill_and_reap(child);
-        return identity.error();
+    os::service::ProcessIdentityRecord identity_record{};
+    if (broker_mode) {
+        const std::array services{
+            os::storage::storage_service_id,
+            os::keys::key_service_id,
+        };
+        auto attached = service_broker_->attach_process(
+            child,
+            profile->principal,
+            user,
+            std::span<const os::core::ServiceId>{services});
+        if (!attached) {
+            kill_and_reap(child);
+            return attached.error();
+        }
+        identity_record = attached.value();
+    } else {
+        auto identity = supervisor_.register_process(child, profile->principal, user);
+        if (!identity) {
+            kill_and_reap(child);
+            return identity.error();
+        }
+        identity_record = identity.value();
     }
 
     const ApplicationBootstrapRecordV1 bootstrap{
         .instance = instance_id,
-        .identity = identity.value().peer,
+        .identity = identity_record.peer,
         .package_generation = target->package.generation.value(),
     };
-    auto send = send_bootstrap_request(bootstrap_pair[0], bootstrap);
+
+    os::core::Result<void> send{};
+    if (broker_mode) {
+        auto storage_channel_result = service_broker_->connect(
+            identity_record.peer.process,
+            os::storage::storage_service_id);
+        if (!storage_channel_result) {
+            auto released = release_instance_identity(identity_record.peer.process);
+            kill_and_reap(child);
+            if (!released && !is_already_detached(released.error())) return released.error();
+            return storage_channel_result.error();
+        }
+        auto key_channel_result = service_broker_->connect(
+            identity_record.peer.process,
+            os::keys::key_service_id);
+        if (!key_channel_result) {
+            auto released = release_instance_identity(identity_record.peer.process);
+            kill_and_reap(child);
+            if (!released && !is_already_detached(released.error())) return released.error();
+            return key_channel_result.error();
+        }
+
+        auto storage_channel = std::move(storage_channel_result).value();
+        auto key_channel = std::move(key_channel_result).value();
+        std::array<os::core::NativeHandle, 2U> endpoints{
+            storage_channel.take_native_handle_for_transfer(),
+            key_channel.take_native_handle_for_transfer(),
+        };
+        const std::array services{
+            os::storage::storage_service_id,
+            os::keys::key_service_id,
+        };
+        send = send_bootstrap_request_v2(
+            bootstrap_pair[0],
+            bootstrap,
+            std::span<const os::core::ServiceId>{services},
+            std::span<const os::core::NativeHandle>{endpoints});
+    } else {
+        send = send_bootstrap_request(bootstrap_pair[0], bootstrap);
+    }
+
     if (!send) {
-        os::core::discard_result(supervisor_.unregister_process(identity.value().peer.process));
+        auto released = release_instance_identity(identity_record.peer.process);
         kill_and_reap(child);
+        if (!released && !is_already_detached(released.error())) return released.error();
         return send.error();
     }
 
     std::array<std::byte, os::ipc::max_wire_packet_size> receive_buffer{};
-    auto ready = wait_for_ready(
-        bootstrap_pair[0],
-        receive_buffer,
-        bootstrap,
-        target->readiness_timeout_ms);
+    os::core::Result<void> ready{};
+    if (broker_mode) {
+        const std::array services{
+            os::storage::storage_service_id,
+            os::keys::key_service_id,
+        };
+        ready = wait_for_ready_v2(
+            bootstrap_pair[0],
+            receive_buffer,
+            bootstrap,
+            std::span<const os::core::ServiceId>{services},
+            target->readiness_timeout_ms);
+    } else {
+        ready = wait_for_ready(
+            bootstrap_pair[0],
+            receive_buffer,
+            bootstrap,
+            target->readiness_timeout_ms);
+    }
     if (!ready) {
-        os::core::discard_result(supervisor_.unregister_process(identity.value().peer.process));
+        auto released = release_instance_identity(identity_record.peer.process);
         kill_and_reap(child);
+        if (!released && !is_already_detached(released.error())) return released.error();
         return ready.error();
     }
 
@@ -444,12 +556,13 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
         .application = target->package.application,
         .generation = target->package.generation,
         .content = target->package.content,
-        .identity = identity.value().peer,
+        .identity = identity_record.peer,
         .native_pid = child,
     };
     if (!info.valid()) {
-        os::core::discard_result(supervisor_.unregister_process(identity.value().peer.process));
+        auto released = release_instance_identity(identity_record.peer.process);
         kill_and_reap(child);
+        if (!released && !is_already_detached(released.error())) return released.error();
         return manager_error(manager_errors::invalid_target);
     }
 
@@ -459,11 +572,21 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
 }
 
 os::core::Result<void> ApplicationManager::maintain() noexcept {
-    auto service = supervisor_.maintain();
-    if (!service && supervisor_.status().state == os::supervisor::ServiceState::crash_loop) {
-        return service.error();
+    auto storage_service = supervisor_.maintain();
+    if (!storage_service && supervisor_.status().state == os::supervisor::ServiceState::crash_loop) {
+        return storage_service.error();
     }
-    if (supervisor_.status().state == os::supervisor::ServiceState::running) {
+
+    if (key_supervisor_ != nullptr) {
+        auto key_service = key_supervisor_->maintain();
+        if (!key_service && key_supervisor_->status().state == os::supervisor::ServiceState::crash_loop) {
+            return key_service.error();
+        }
+    }
+
+    if (supervisor_.status().state == os::supervisor::ServiceState::running &&
+        (key_supervisor_ == nullptr ||
+         key_supervisor_->status().state == os::supervisor::ServiceState::running)) {
         auto roots = republish_profiles_if_needed();
         if (!roots) return roots.error();
     }
@@ -479,8 +602,8 @@ os::core::Result<void> ApplicationManager::maintain() noexcept {
         if (result == 0) continue;
         if (result < 0) return manager_error(os::core::errors::service::launch_failed);
         if (result == slot.info.native_pid) {
-            auto unregister = supervisor_.unregister_process(slot.info.identity.process);
-            if (!unregister && !is_unknown_process(unregister.error())) return unregister.error();
+            auto released = release_instance_identity(slot.info.identity.process);
+            if (!released && !is_already_detached(released.error())) return released.error();
             slot = InstanceSlot{};
         }
     }
