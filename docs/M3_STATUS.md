@@ -124,8 +124,13 @@ Implemented:
 - per-corner contour rasterization where smoothing changes pixel coverage
 - directional opaque depth fallback and leading-edge lighting
 - focus/outline treatment applied after optical lighting so interaction state remains legible
+- deterministic fixed 2×2 subpixel antialias fringe for authored continuous/swept CPU silhouettes
+- one-pixel AA cost bounded to contour perimeter rather than supersampling whole offscreen surfaces
+- `rasterize_opaque_frame()` composing material/depth/focus raster and contour AA in one preferred CPU/economy geometry path
 
 The current opaque-first raster is intentionally the identity baseline. Live translucency/backdrop filtering must enhance an already recognizable ENML interface rather than become the only source of identity.
+
+See `docs/M3_2_CONTOUR_ANTIALIAS.md` and `docs/M3_2_OPAQUE_RASTER_BASELINE.md`.
 
 ### Text/font/paragraph rendering
 
@@ -145,13 +150,18 @@ Implemented:
 - renderer-private `GlyphMaskProviderBackend`
 - transient bounded glyph coverage masks up to 512 × 512 pixels with stride/capacity/bearing validation
 - real coverage-to-RGBA glyph rasterization into caller-owned target memory
+- renderer-owned `FontLineMetricsBackend` for actual ascent/descent/line-gap resolution at semantic typography size
+- baseline placement derived from validated real vertical metrics rather than a guessed percentage of font size
+- fallback-family-aware line-box validation so multilingual paragraphs cannot silently overlap adjacent lines
+- `rasterize_render_command_text()` connecting `RenderContentKind::text` commands directly to font resolution, paragraph shaping, line metrics and glyph painting
+- `rasterize_opaque_frame_with_text()` composing real geometry and real text pixels from the same deterministic `RenderCommandBuffer`
 - empty glyph masks for spacing/non-ink glyphs
 - clipped coverage blending with explicit unavailable/failed/malformed provider errors
 - no text worker thread, background font scanner, polling loop or unbounded glyph cache introduced by this slice
 
 See `docs/M3_2_TEXT_RENDERING.md`.
 
-ENML still does **not** claim a production Unicode shaper, final platform font assets, final hinting, color-font support or a GPU glyph atlas. The bounded seams and real mask-to-pixel path are now ready for those renderer-private implementations.
+ENML still does **not** claim a production Unicode shaper, final platform font assets, final hinting, color-font support or a GPU glyph atlas. The bounded seams and real command-to-pixel path are now ready for those renderer-private implementations.
 
 ### Motion and power discipline
 
@@ -183,7 +193,7 @@ See `docs/M3_2_TRUSTED_PRESENTATION.md`.
 
 ### Reference and product-vision contract
 
-The branch now contains `docs/PROJECT_VISION.md`, `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md`, and `docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md`.
+The branch contains `docs/PROJECT_VISION.md`, `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md`, and `docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md`.
 
 The implementation contract is:
 
@@ -198,18 +208,15 @@ The original visual direction remains a hard requirement: ENML must be original,
 
 ### Validation status
 
-A prior pre-text-raster head passed the M3 Semantic UI matrix on GCC, Clang, ASan/UBSan and native AArch64.
+Head `a79bd25956f8d2887dfd2871e2f77fc6f96df479` completed the repository workflows successfully, including M0 CI, M1 package/app foundation, M2 key/private-storage/service-broker, M3 Semantic UI and M3 Display/Compositor.
 
-A later CI failure was diagnosed as workflow wiring rather than a code-test failure: `ui_motion_timeline_test` had been registered with CTest but omitted from the explicit workflow build-target list. The workflow now builds every registered M3 UI target, including motion, paragraph layout, glyph raster and collection changes, across all four UI jobs.
-
-The current branch head must complete the fresh GCC, Clang, ASan/UBSan and native-AArch64 UI/display runs before the new paragraph/glyph/collection/trusted-overlay tranche is considered validated. Do not treat queued CI as a pass.
+The current branch extends that validated baseline with contour antialiasing, the composed opaque geometry path, real font-line metrics and direct render-command text painting. The fresh GCC, Clang, ASan/UBSan and native-AArch64 M3 UI line must complete before this newest renderer tranche is treated as validated. Queued CI is not a pass.
 
 ### Remaining M3.2 work
 
 - integrate a reviewed production renderer-private font provider + Unicode shaping implementation with the existing bounded contracts
+- move contour quality from the current outside-fringe baseline toward bounded analytic/interior edge coverage without adding a heavyweight general graphics framework
 - connect collection change/content publication to the eventual semantic app API/OSIDL without exposing implementation-owned function pointers
-- improve contour edges from the deterministic binary/smoothing baseline to bounded anti-aliased/vector-quality coverage
-- connect glyph painting into the full render-command text path
 - connect `TrustedOverlaySnapshot` to the future private hardware/display compositor backend and design/usability-test the actual ENML trust mark
 - strengthen bounded depth/lighting before adding live translucency/backdrop filtering
 - continue compositor-deadline-aware motion integration with real scene transitions
