@@ -124,6 +124,7 @@ int main() {
     constexpr std::uint32_t width = 12U;
     constexpr std::uint32_t height = 10U;
     const os::ui::Rgba8 background{10U, 20U, 30U, 255U};
+    const os::ui::Rgba8 half_coverage{130U, 130U, 130U, 255U};
     std::array<os::ui::Rgba8, width * height> pixels{};
     for (auto& pixel : pixels) pixel = background;
 
@@ -157,7 +158,7 @@ int main() {
 
     const auto foreground = theme.colors[color_index(os::ui::ColorRole::text_primary)];
     assert(pixels[3U * width + 2U] == foreground);
-    assert(pixels[3U * width + 3U] == os::ui::Rgba8{130U, 130U, 130U, 255U});
+    assert(pixels[3U * width + 3U] == half_coverage);
     assert(pixels[4U * width + 2U] == foreground);
     assert(pixels[4U * width + 3U] == background);
     assert(pixels[5U * width + 2U] == foreground);
