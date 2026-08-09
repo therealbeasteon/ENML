@@ -1,4 +1,5 @@
 #include <os/ui/collection.hpp>
+#include <os/ui/contour.hpp>
 #include <os/ui/design.hpp>
 #include <os/ui/tree.hpp>
 #include <os/ui/types.hpp>
@@ -80,6 +81,39 @@ int main() {
         static_cast<os::ui::OpticalMaterialRole>(255U));
     assert(!invalid_material);
     expect_ui_error(invalid_material.error(), os::ui::errors::invalid_style);
+
+    const os::ui::LogicalRect contour_bounds{
+        .x_q6 = 0,
+        .y_q6 = 0,
+        .width_q6 = os::ui::logical_from_dp(320U),
+        .height_q6 = os::ui::logical_from_dp(80U),
+    };
+    auto swept = os::ui::resolve_contour(contour_bounds, os::ui::CurveRole::swept);
+    assert(swept);
+    assert(swept.value().asymmetric);
+    assert(swept.value().smoothing_percent > 50U);
+    assert(swept.value().radii.top_left_q6 < swept.value().radii.top_right_q6);
+    assert(swept.value().radii.bottom_left_q6 > swept.value().radii.bottom_right_q6);
+
+    const os::ui::LogicalRect capsule_bounds{
+        .x_q6 = 0,
+        .y_q6 = 0,
+        .width_q6 = os::ui::logical_from_dp(200U),
+        .height_q6 = os::ui::logical_from_dp(48U),
+    };
+    auto capsule = os::ui::resolve_contour(capsule_bounds, os::ui::CurveRole::capsule);
+    assert(capsule);
+    const auto capsule_radius = os::ui::logical_from_dp(24U);
+    assert(capsule.value().radii.top_left_q6 == capsule_radius);
+    assert(capsule.value().radii.top_right_q6 == capsule_radius);
+    assert(capsule.value().radii.bottom_right_q6 == capsule_radius);
+    assert(capsule.value().radii.bottom_left_q6 == capsule_radius);
+
+    auto invalid_contour = os::ui::resolve_contour(
+        os::ui::LogicalRect{},
+        os::ui::CurveRole::continuous);
+    assert(!invalid_contour);
+    expect_ui_error(invalid_contour.error(), os::ui::errors::invalid_bounds);
 
     auto normal = os::ui::typography_metrics(os::ui::TypographyRole::body, 100U);
     auto large = os::ui::typography_metrics(os::ui::TypographyRole::body, 200U);
