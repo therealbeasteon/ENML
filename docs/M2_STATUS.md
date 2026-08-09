@@ -69,7 +69,7 @@ See `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`.
 
 ## M2.3 — resource accounting and revocation hardening
 
-Status: implementation complete; final PR gates pending before merge.
+Status: complete and merged.
 
 Implemented:
 
@@ -87,24 +87,40 @@ Implemented:
 - integration proof that uninstall revokes Storage authority without deleting private data
 - GCC, Clang and native AArch64 Storage gates cover quota, root revocation, service restart and uninstall revocation
 
-### I/O accounting decision
-
-The current Storage Service is single-threaded and synchronous: it dispatches at most one object request at a time, and each read/write/atomic operation is already bounded by `max_storage_io_bytes` / `max_storage_atomic_bytes` plus the 64 KiB OSIP message ceiling. A separate "outstanding bytes per principal" counter would not enforce an additional property in this execution model. Add such accounting when Storage gains concurrent/asynchronous requests or queued background I/O, where multiple operations can actually be outstanding.
+The current Storage Service is synchronous/single-threaded, so per-operation byte ceilings already bound the only request that can be active. Add per-principal outstanding request/byte admission budgets when Storage gains concurrent/asynchronous queues.
 
 See `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`.
 
-## Next
+## M2.4 — Key Service foundation and storage-key separation
 
-M2.4: Key Service foundation and storage-key separation.
+Status: in progress on `m2-4-key-service-foundation`.
 
-Initial scope:
+Implemented in the current branch:
 
-- define opaque key identities/handles; never expose raw long-lived key bytes through public app APIs
-- separate Storage authority from key authority
-- model root/system/profile/application key hierarchy without binding the public ABI to a specific TPM/TEE vendor
-- use authenticated encryption with an explicit current cryptographic profile rather than copying historical BitLocker algorithms
-- support key versioning/rotation and cryptographic deletion semantics
-- keep unlock credentials distinct from raw data-encryption keys
-- add bounded, identity-authenticated Key Service IPC and adversarial caller-identity tests
+- additive `ErrorDomain::key` for stable key-service errors
+- opaque 128-bit logical `KeyId`; key ids are locators, never authority
+- explicit key purpose and server-held rights metadata
+- `KeyProvider` contract returns opaque provider references and has no raw long-lived key-export API
+- fixed-capacity `KeyRegistry` keyed by trusted `PrincipalId + UserId`
+- cross-owner describe/provider/destroy denial
+- destroyed records remain tombstones so a logical key id is not silently reused
+- provider failure does not publish a partial registry record
+- typed `KeyClient` and move-only `KeyObjectHandle`
+- bounded `KeyService` main/object endpoints on stable service ids
+- create/open owner identity derives only from `RequestContext.peer`
+- possession-based object endpoint for management authority; public KeyId alone is insufficient
+- destroying a key invalidates every already-minted object endpoint for that key
+- fork/inherited-main-channel adversarial test uses per-message `SCM_CREDENTIALS` to prove a second principal cannot open the first principal's key
+- dedicated GCC, Clang and native AArch64 key gates
 
-Boot measurement/verified-boot integration and hardware-backed sealing remain later hardware/BSP work; M2.4 begins with the userspace service contracts and software-backed test provider.
+Not implemented yet and therefore not claimed:
+
+- production `system.keys` executable/provider
+- encryption/decryption operations
+- a frozen AEAD crypto profile
+- key-registry/provider persistence across service or device restart
+- rotation with retained old versions for existing ciphertext
+- hardware-backed TPM/TEE/HSM sealing
+- boot measurement/attestation/recovery policy
+
+See `docs/M2_4_KEY_SERVICE_FOUNDATION.md`.
