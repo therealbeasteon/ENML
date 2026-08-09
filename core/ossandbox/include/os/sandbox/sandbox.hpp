@@ -22,8 +22,9 @@ struct SandboxPolicyV1 final {
 
 // Borrowed Linux-private descriptors used only while constructing an
 // application sandbox. executable_fd must name the exact immutable executable
-// selected by App Manager; private_data_directory_fd is the authorized
-// per-application, per-user writable data root.
+// selected by App Manager. private_data_directory_fd is optional: -1 means the
+// application receives no direct writable filesystem tree. M2.2 product apps
+// use that mode and reach private data only through Storage Service objects.
 struct ApplicationSandboxHandlesV1 final {
     int executable_fd {-1};
     int private_data_directory_fd {-1};
@@ -34,9 +35,9 @@ struct ApplicationSandboxHandlesV1 final {
 apply_before_exec(const char* executable_path, const SandboxPolicyV1& policy) noexcept;
 
 // Applies the application restriction profile using already-authorized file
-// descriptors. When Landlock is required, executable/runtime material is
-// read-only and executable while the private data root is writable but never
-// granted execute rights. Linux paths remain private implementation details.
+// descriptors. When a private-data fd is present, it is writable but never
+// executable. When it is -1, Landlock grants no direct private-data tree.
+// Linux paths remain private implementation details.
 [[nodiscard]] os::core::Result<void>
 apply_application_before_exec(
     const ApplicationSandboxHandlesV1& handles,
