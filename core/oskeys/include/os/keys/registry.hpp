@@ -108,6 +108,15 @@ public:
     [[nodiscard]] os::core::Result<KeyDescriptor>
     rotate(KeyOwner caller, KeyId id) noexcept override;
 
+    // Rotation counterpart to adopt_generated(). Authorization/version bounds
+    // are identical to rotate(), but provider material was generated beneath a
+    // trusted M2.7 application root. Caller owns provider_key on failure.
+    [[nodiscard]] os::core::Result<KeyDescriptor>
+    rotate_adopt_generated(
+        KeyOwner caller,
+        KeyId id,
+        ProviderKeyReference provider_key) noexcept;
+
     [[nodiscard]] os::core::Result<ProviderKeyReference>
     provider_reference(KeyOwner caller, KeyId id, RightsMask required_right) const noexcept;
 
