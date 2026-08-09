@@ -24,6 +24,7 @@ target_link_libraries(app_manager_launch_test PRIVATE emnl::app_manager emnl_war
 target_compile_options(app_manager_launch_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
+add_dependencies(app_manager_launch_test system.storage)
 
 # The name deliberately retains the supervisor_ prefix so the existing QEMU
 # user-mode cross gate excludes this fork/exec integration test. It runs in
