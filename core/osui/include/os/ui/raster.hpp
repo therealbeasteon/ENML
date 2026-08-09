@@ -47,6 +47,8 @@ struct RasterTarget final {
 struct RasterStats final {
     std::uint16_t commands_seen {0U};
     std::uint16_t surfaces_filled {0U};
+    std::uint16_t shadows_drawn {0U};
+    std::uint16_t lit_edges_drawn {0U};
     std::uint64_t pixel_writes {0U};
 };
 
@@ -54,10 +56,10 @@ inline constexpr std::uint32_t max_raster_dimension = 4096U;
 
 // First concrete ENML paint stage: bounded, deterministic, CPU-side and
 // intentionally opaque. It realizes semantic palette roles, material tint,
-// focus/outline state and per-corner authored contour asymmetry without yet
-// depending on blur, shaders, font glyph masks, GPU APIs or live backdrop
-// sampling. Rich optical effects are layered later; identity does not depend
-// on those effects being present.
+// focus/outline state, authored contour smoothing/asymmetry, and a bounded
+// directional depth/specular fallback without yet depending on blur, shaders,
+// font glyph masks, GPU APIs or live backdrop sampling. Rich optical effects
+// are layered later; identity does not depend on those effects being present.
 [[nodiscard]] os::core::Result<RasterStats> rasterize_opaque_materials(
     const RenderCommandBuffer& commands,
     const RasterTheme& theme,
