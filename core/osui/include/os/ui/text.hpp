@@ -11,6 +11,8 @@ namespace os::ui {
 
 // Font families remain semantic platform roles. Applications do not select
 // font files, filesystem paths, vendor family names or renderer font handles.
+// Distinct roles do not require unrelated typefaces: a theme may map display
+// and interface to coordinated cuts of one family to preserve visual cohesion.
 enum class FontFamilyRole : std::uint8_t {
     interface = 1U,
     display = 2U,
