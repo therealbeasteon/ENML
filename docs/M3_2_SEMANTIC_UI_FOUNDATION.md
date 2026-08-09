@@ -16,7 +16,7 @@ application state/controller
         |
         +--> logical responsive layout
         |
-        +--> collection virtualization window
+        +--> collection virtualization + stable item keys
         |
         +--> immutable RendererSnapshot + bounded RendererDelta
         |
@@ -31,9 +31,15 @@ application state/controller
  deterministic RenderCommandBuffer
         |
         +--> resolved contour intent
-        +--> resolved typography metrics
+        +--> semantic font fallback chain
         +--> resolved optical/depth/motion intent
-        +--> explicit quality-budget fallback
+        +--> quality + renderer-capability fallback
+        |
+        +--> renderer-owned bounded shaping contract
+        |       +--> UTF-8 cluster validation
+        |       +--> font/direction runs
+        |       +--> line partitioning
+        |       +--> advance-derived measurement
         |
         v
  future concrete 2D/material/text renderer
@@ -84,7 +90,7 @@ Dirty metadata is only an optimization hint. If removal bookkeeping overflows be
 
 ## Deterministic renderer command lowering
 
-`build_render_commands()` now lowers a validated `RendererSnapshot` into a fixed-capacity `RenderCommandBuffer`. This is still renderer intent rather than a paint/GPU ABI.
+`build_render_commands()` lowers a validated `RendererSnapshot` into a fixed-capacity `RenderCommandBuffer`. This is still renderer intent rather than a paint/GPU ABI.
 
 The lowering contract:
 
@@ -93,13 +99,44 @@ The lowering contract:
 - computes effective visibility through the ancestor chain so hidden containers suppress descendant paint intent;
 - sorts commands deterministically by monotonic `UiNodeId` rather than depending on backing-slot order;
 - resolves `StyleTokenId` through visual preferences, contour geometry and scaled typography metrics;
+- attaches a platform-owned semantic font fallback chain rather than a font path or vendor family name;
 - emits at most one renderer command per styled semantic node, preserving the 256-node bound;
 - treats style ID zero as semantic-only/unstyled, so accessibility/interaction nodes can exist without requiring paint;
 - carries semantic role/state and focus visibility but no RGB values, glyph IDs, shader handles, textures, physical pixels or vendor graphics objects.
 
 Semantic labels are deliberately not assumed to be visible control text. Until the app-facing content contract distinguishes visual content from accessibility naming, only `UiRole::text` is copied into `RenderCommand::visual_text`. This prevents the renderer foundation from freezing an accessibility label into the visual-content ABI by accident.
 
-`VisualQualityTier` is also explicit. Full quality preserves the resolved optical intent. Balanced quality bounds expensive blur. Economy quality disables live backdrop work and reduces secondary optical blur/specular cost while preserving the same material family, contour, hierarchy and semantic state. Quality fallback therefore changes implementation cost, not ENML's identity.
+`VisualQualityTier` is explicit. Full quality preserves the resolved optical intent. Balanced quality bounds expensive blur. Economy quality disables live backdrop work and reduces secondary optical blur/specular cost while preserving the same material family, contour, hierarchy and semantic state. Quality fallback therefore changes implementation cost, not ENML's identity.
+
+Renderer capability is separate from quality and accessibility preference. `RenderCapabilities` can independently declare alpha-compositing, live-backdrop and spatial-motion support plus bounded blur limits. Unsupported capabilities degrade to an opaque/static or lower-cost implementation while keeping the same semantic material family, authored contour and hierarchy. A low-capability renderer therefore remains recognizably ENML rather than switching to a second generic theme.
+
+## Bounded text shaping and measurement contract
+
+ENML does not yet claim a production text shaper. The current work establishes the fixed-capacity contract a renderer-owned shaper must satisfy before its output can be trusted.
+
+Font selection remains semantic. `FontFamilyRole` currently distinguishes interface, display, international, symbols and monospace families. A theme may map display/interface roles to coordinated cuts of one ENML family; applications never choose filesystem paths, vendor font names or renderer font handles.
+
+For one semantic text value, the shaping boundary is bounded to:
+
+- at most 160 glyph records, matching the semantic UTF-8 byte ceiling;
+- at most 32 font/direction runs;
+- at most 16 lines;
+- Q6 logical advances and offsets bounded by the UI logical-geometry limits.
+
+`shaped_text_valid()` validates renderer/backend output against the original semantic text and resolved font policy. It checks:
+
+- source UTF-8 validity;
+- run/glyph/line capacity limits;
+- run text ranges on UTF-8 code-point boundaries;
+- glyph cluster offsets on UTF-8 boundaries inside the owning run;
+- font families against the resolved semantic fallback chain;
+- left-to-right/right-to-left run direction without requiring cluster offsets to be monotonically increasing in visual order;
+- complete bounded partitioning of glyphs by runs and lines;
+- logical advance/offset bounds and semantic line-height consistency.
+
+`measure_shaped_text()` derives width from validated glyph advances and height from the semantic line-height contract. It deliberately does not estimate text width from byte counts or Unicode code-point counts. This lets later large-text/reflow work use real shaping metrics once platform font assets and a production shaping backend are connected.
+
+The remaining text work is actual font-provider/shaper integration, paragraph bidi resolution, line breaking and layout integration. Glyph IDs remain renderer-private and do not enter `RenderCommand` or app UI ABI.
 
 ## Logical geometry and reflow
 
@@ -111,11 +148,11 @@ The default 600dp dual-pane breakpoint remains provisional policy evidence, not 
 
 Text design metrics currently support 100% through 300% scaling. Tests verify that large text increases row extent and collection reflow while stable semantic node identity is preserved during phone/tablet-like recomposition.
 
-## Bounded collection virtualization
+## Bounded collection virtualization and stable identity
 
 `plan_collection_window()` provides a fixed-capacity virtualization contract for large logical collections without materializing unbounded semantic children.
 
-The current contract:
+The current window contract:
 
 - permits up to 1,000,000 logical items;
 - keeps materialized items bounded by the semantic child limit;
@@ -124,7 +161,11 @@ The current contract:
 - keeps per-item materialized coordinates near the viewport rather than requiring enormous node geometry;
 - rejects overscroll, impossible viewports and windows that would exceed the materialized budget.
 
-This is a layout/planning primitive. A later data-source/object protocol still needs to define item identity, recycling and mutation across application/service boundaries.
+`CollectionRecycler` owns a fixed pool of materialized child slots. The original window-only binding remains available for index-stable collections, but M3.2 now also has strong 64-bit `CollectionItemKey` identity separate from collection index.
+
+A keyed recycle request supplies one non-zero unique key for each item in the current materialized window. The recycler retains a slot by key even when insertion/removal/reordering changes that item's logical index. New keys take the lowest free slot deterministically. This lets a higher UI layer keep one semantic `UiNodeId` attached to a recycler slot without confusing item identity with current list position.
+
+A later data-source/mutation protocol still needs to define how applications publish item content, keys and changes across the eventual UI/service boundary. The identity/recycling invariant now exists before that public protocol is frozen.
 
 ## Focus and actions
 
@@ -151,11 +192,12 @@ The current token vocabulary includes:
 - motion roles: none, micro, responsive, transition and reveal;
 - material tint roles;
 - reduced-transparency, reduced-motion and high-contrast resolution;
-- quality-budget lowering that preserves authored geometry and hierarchy.
+- quality-budget lowering that preserves authored geometry and hierarchy;
+- capability fallback independent of quality/accessibility policy.
 
 This is deliberately not a copy of Material Design, iOS, BlackBerry, Windows, One UI or another vendor system. See `docs/M3_2_ENML_VISUAL_LANGUAGE.md`.
 
-The concrete palette, path tessellation, text shaping, shaders and animation engine remain renderer-owned implementation details rather than application ABI.
+The concrete palette, path tessellation, production text shaping, shaders and animation engine remain renderer-owned implementation details rather than application ABI.
 
 ## Reference-driven decisions
 
@@ -167,16 +209,17 @@ The supplied Figma reference informs the design workflow and the construction vo
 
 The supplied UX and natural-interface references reinforce desirability, aesthetics, timing, motion, discoverability, direct feedback and user testing. The recent mobile UI/UX review also reinforces micro-interactions, inclusive design, responsive composition and the requirement to balance richer visuals against performance and battery cost.
 
-Those references guide why the renderer carries semantic hierarchy, immediate feedback intent, scalable typography and graceful quality fallbacks. They do not define ENML's concrete silhouettes, palette, animation signature or optical implementation.
+Those references guide why the renderer carries semantic hierarchy, immediate feedback intent, scalable typography, stable identity and graceful quality/capability fallbacks. They do not define ENML's concrete silhouettes, palette, animation signature or optical implementation.
 
 ## Current limits / next work
 
 M3.2 does not yet include:
 
 - actual widget/pixel rendering;
-- glyph shaping or font fallback resolution;
+- a production renderer-owned shaping/font-provider implementation;
+- paragraph bidi resolution and line breaking;
 - scroll physics;
-- collection data-source/recycling protocol;
+- collection data-source/mutation protocol above stable keys;
 - hardware input service/router;
 - accessibility service IPC;
 - semantic tree serialization/OSIDL;
@@ -185,4 +228,4 @@ M3.2 does not yet include:
 - path tessellation or GPU shader implementation;
 - animation scheduler tied to compositor frame deadlines.
 
-The next M3.2 work should establish a bounded platform-owned font/fallback contract and text-layout/shaping boundary without baking font files or vendor typography into app ABI, then continue into collection recycling and concrete opaque-first material rendering. Hardware-specific graphics work remains behind the private renderer/display layer.
+The next M3.2 implementation slice should connect a real bounded text-shaping/font-provider backend to the now-validated shape contract, then build the collection data-source/mutation protocol and an opaque-first bounded 2D material rasterizer before enabling live blur/translucency. Hardware-specific graphics work remains behind the private renderer/display layer.
