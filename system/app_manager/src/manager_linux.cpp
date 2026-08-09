@@ -132,29 +132,29 @@ open_private_data_root(int directory_fd) noexcept {
 
 [[noreturn]] void exec_application_child(
     int executable_fd,
-    int private_data_directory_fd,
+    int storage_service_fd,
     int bootstrap_fd,
     const os::sandbox::SandboxPolicyV1& sandbox) noexcept {
     const int bootstrap_temp = duplicate_cloexec(bootstrap_fd);
     const int executable_temp = duplicate_cloexec(executable_fd);
-    const int data_temp = duplicate_cloexec(private_data_directory_fd);
-    if (bootstrap_temp < 0 || executable_temp < 0 || data_temp < 0) std::_Exit(120);
+    const int storage_temp = duplicate_cloexec(storage_service_fd);
+    if (bootstrap_temp < 0 || executable_temp < 0 || storage_temp < 0) std::_Exit(120);
 
     if (::dup2(bootstrap_temp, application_bootstrap_fd) < 0 ||
         ::dup2(executable_temp, application_executable_fd) < 0 ||
-        ::dup2(data_temp, application_private_data_fd) < 0 ||
+        ::dup2(storage_temp, application_storage_service_fd) < 0 ||
         !set_cloexec(application_executable_fd)) {
         std::_Exit(121);
     }
 
     (void)::close(bootstrap_temp);
     (void)::close(executable_temp);
-    (void)::close(data_temp);
+    (void)::close(storage_temp);
     close_extra_descriptors();
 
     const os::sandbox::ApplicationSandboxHandlesV1 sandbox_handles{
         .executable_fd = application_executable_fd,
-        .private_data_directory_fd = application_private_data_fd,
+        .private_data_directory_fd = -1,
     };
     auto sandbox_result = os::sandbox::apply_application_before_exec(sandbox_handles, sandbox);
     if (!sandbox_result) std::_Exit(122);
@@ -312,6 +312,9 @@ ApplicationManager::register_application_profile(ApplicationProfileRegistration 
         return manager_error(manager_errors::profile_conflict);
     }
 
+    auto current_profiles = republish_profiles_if_needed();
+    if (!current_profiles) return current_profiles.error();
+
     ApplicationProfile* free_profile = nullptr;
     for (auto& profile : profiles_) {
         if (!profile.occupied) {
@@ -321,14 +324,23 @@ ApplicationManager::register_application_profile(ApplicationProfileRegistration 
     }
     if (free_profile == nullptr) return manager_error(manager_errors::profile_capacity);
 
+    auto principal = principals_.resolve_or_allocate(registration.application, registration.user);
+    if (!principal) return principal.error();
     auto data_root = open_private_data_root(registration.private_data_directory.native());
     if (!data_root) return data_root.error();
 
     free_profile->occupied = true;
     free_profile->application = registration.application;
     free_profile->user = registration.user;
+    free_profile->principal = principal.value().principal;
     free_profile->private_data_directory = std::move(data_root).value();
     free_profile->sandbox = registration.sandbox;
+
+    auto published = publish_profile(*free_profile);
+    if (!published) {
+        *free_profile = ApplicationProfile{};
+        return published.error();
+    }
     return {};
 }
 
@@ -344,11 +356,16 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
         return manager_error(manager_errors::target_not_found);
     }
     ApplicationProfile* profile = find_profile(owner.value(), user);
-    if (profile == nullptr || !profile->private_data_directory.valid()) {
+    if (profile == nullptr || !profile->private_data_directory.valid() ||
+        !os::core::valid_principal(profile->principal)) {
         return manager_error(manager_errors::profile_not_found);
     }
-    auto principal = principals_.resolve_or_allocate(owner.value(), user);
-    if (!principal) return principal.error();
+
+    auto storage_policy = republish_profiles_if_needed();
+    if (!storage_policy) return storage_policy.error();
+    auto storage_connection_result = supervisor_.connect();
+    if (!storage_connection_result) return storage_connection_result.error();
+    auto storage_connection = std::move(storage_connection_result).value();
 
     InstanceSlot* free_instance = nullptr;
     for (auto& slot : instances_) {
@@ -377,14 +394,15 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
         bootstrap_pair[0].close();
         exec_application_child(
             target->executable.native(),
-            profile->private_data_directory.native(),
+            storage_connection.native_fd(),
             bootstrap_pair[1].native_fd(),
             profile->sandbox);
     }
 
     bootstrap_pair[1].close();
+    storage_connection.close();
 
-    auto identity = supervisor_.register_process(child, principal.value().principal, user);
+    auto identity = supervisor_.register_process(child, profile->principal, user);
     if (!identity) {
         kill_and_reap(child);
         return identity.error();
@@ -434,6 +452,15 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
 }
 
 os::core::Result<void> ApplicationManager::maintain() noexcept {
+    auto service = supervisor_.maintain();
+    if (!service && supervisor_.status().state == os::supervisor::ServiceState::crash_loop) {
+        return service.error();
+    }
+    if (supervisor_.status().state == os::supervisor::ServiceState::running) {
+        auto roots = republish_profiles_if_needed();
+        if (!roots) return roots.error();
+    }
+
     for (auto& slot : instances_) {
         if (!slot.occupied) continue;
         int status = 0;
