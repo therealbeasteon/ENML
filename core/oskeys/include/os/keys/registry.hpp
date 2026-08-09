@@ -13,18 +13,28 @@
 namespace os::keys {
 
 inline constexpr std::size_t max_key_records = 128U;
+inline constexpr std::size_t max_key_versions = 8U;
+
+struct KeyVersionRecord final {
+    bool occupied {false};
+    bool destroyed {false};
+    std::uint32_t version {0U};
+    ProviderKeyReference provider_key {};
+};
 
 struct KeyRecord final {
     bool occupied {false};
     bool destroyed {false};
     KeyOwner owner {};
     KeyDescriptor descriptor {};
-    ProviderKeyReference provider_key {};
+    std::array<KeyVersionRecord, max_key_versions> versions {};
 };
 
 // Fixed-capacity metadata registry. Public KeyId values are locators, not
-// authority: every lookup is still checked against the trusted caller owner.
-// Destroyed records remain tombstones so a logical KeyId cannot be silently
+// authority: every lookup is checked against the trusted caller owner.
+// A logical KeyId may retain several provider-owned key versions so rotation
+// can move new encryption forward without making existing ciphertext
+// undecryptable. Destroyed records remain tombstones and are never silently
 // reused within this registry generation.
 class KeyRegistry final {
 public:
@@ -39,6 +49,9 @@ public:
 
     [[nodiscard]] os::core::Result<KeyDescriptor>
     describe(KeyOwner caller, KeyId id) const noexcept;
+
+    [[nodiscard]] os::core::Result<KeyDescriptor>
+    rotate(KeyOwner caller, KeyId id) noexcept;
 
     [[nodiscard]] os::core::Result<ProviderKeyReference>
     provider_reference(KeyOwner caller, KeyId id, RightsMask required_right) const noexcept;
@@ -74,17 +87,25 @@ public:
 
     [[nodiscard]] std::size_t record_count() const noexcept;
     [[nodiscard]] std::size_t active_count() const noexcept;
+    [[nodiscard]] std::size_t version_count(KeyId id) const noexcept;
 
 private:
     [[nodiscard]] KeyRecord* find(KeyId id) noexcept;
     [[nodiscard]] const KeyRecord* find(KeyId id) const noexcept;
+    [[nodiscard]] KeyVersionRecord* find_version(KeyRecord& record, std::uint32_t version) noexcept;
+    [[nodiscard]] const KeyVersionRecord*
+    find_version(const KeyRecord& record, std::uint32_t version) const noexcept;
 
     [[nodiscard]] os::core::Result<const KeyRecord*>
-    authorize(
+    authorize_record(KeyOwner caller, KeyId id, RightsMask required_right) const noexcept;
+
+    [[nodiscard]] os::core::Result<const KeyVersionRecord*>
+    authorize_version(
         KeyOwner caller,
         KeyId id,
         std::uint32_t key_version,
-        RightsMask required_right) const noexcept;
+        RightsMask required_right,
+        bool require_current) const noexcept;
 
     KeyProvider* provider_ {nullptr};
     std::array<KeyRecord, max_key_records> records_ {};
