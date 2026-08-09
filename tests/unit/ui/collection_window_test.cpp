@@ -1,5 +1,6 @@
 #include <os/ui/collection.hpp>
 
+#include <array>
 #include <cassert>
 #include <cstdint>
 
@@ -11,6 +12,24 @@ namespace {
 void expect_ui_error(const os::core::Error& error, std::uint32_t code) {
     assert(error.domain == os::core::ErrorDomain::ui);
     assert(error.code == code);
+}
+
+[[nodiscard]] std::uint16_t slot_for(
+    const os::ui::CollectionRecyclePlan& plan,
+    std::uint32_t item_index) {
+    for (std::uint16_t index = 0U; index < plan.count; ++index) {
+        if (plan.bindings[index].item_index == item_index) return plan.bindings[index].slot;
+    }
+    return os::ui::max_materialized_collection_items;
+}
+
+[[nodiscard]] bool retained_item(
+    const os::ui::CollectionRecyclePlan& plan,
+    std::uint32_t item_index) {
+    for (std::uint16_t index = 0U; index < plan.count; ++index) {
+        if (plan.bindings[index].item_index == item_index) return plan.bindings[index].retained;
+    }
+    return false;
 }
 
 } // namespace
@@ -54,6 +73,41 @@ int main() {
     assert(!outside_window);
     expect_ui_error(outside_window.error(), os::ui::errors::invalid_collection);
 
+    // Recycle a fixed semantic child pool instead of allocating one child per
+    // logical list item. Overlap across a one-row scroll keeps the same slots.
+    os::ui::CollectionRecycler recycler{};
+    auto first_plan = recycler.bind(top.value());
+    assert(first_plan);
+    assert(first_plan.value().count == top.value().count);
+    assert(recycler.active_count() == top.value().count);
+    for (std::uint16_t index = 0U; index < first_plan.value().count; ++index) {
+        assert(!first_plan.value().bindings[index].retained);
+    }
+
+    auto one_row_down = os::ui::plan_collection_window(os::ui::CollectionWindowRequest{
+        .item_count = 10'000U,
+        .item_extent_q6 = os::ui::logical_from_dp(56U),
+        .scroll_offset_q6 = os::ui::logical_from_dp(56U),
+        .viewport_extent_q6 = os::ui::logical_from_dp(640U),
+        .overscan_items = 2U,
+    });
+    assert(one_row_down);
+    auto second_plan = recycler.bind(one_row_down.value());
+    assert(second_plan);
+    const std::uint32_t overlap_first = one_row_down.value().first_index;
+    const std::uint32_t overlap_end =
+        top.value().end_index() < one_row_down.value().end_index()
+            ? top.value().end_index()
+            : one_row_down.value().end_index();
+    for (std::uint32_t item = overlap_first; item < overlap_end; ++item) {
+        assert(retained_item(second_plan.value(), item));
+        assert(slot_for(first_plan.value(), item) == slot_for(second_plan.value(), item));
+    }
+    assert(recycler.active_count() == one_row_down.value().count);
+
+    recycler.reset();
+    assert(recycler.active_count() == 0U);
+
     auto empty = os::ui::plan_collection_window(os::ui::CollectionWindowRequest{
         .item_count = 0U,
         .viewport_extent_q6 = os::ui::logical_from_dp(640U),
@@ -61,6 +115,9 @@ int main() {
     assert(empty);
     assert(empty.value().count == 0U);
     assert(empty.value().content_extent_q6 == 0U);
+    auto empty_plan = recycler.bind(empty.value());
+    assert(empty_plan);
+    assert(empty_plan.value().count == 0U);
 
     auto too_dense = os::ui::plan_collection_window(os::ui::CollectionWindowRequest{
         .item_count = 10'000U,
