@@ -12,7 +12,10 @@ jobs:
       - name: Configure
         run: cmake --preset host-debug
       - name: Build key foundation
-        run: cmake --build --preset host-debug --target key_registry_test --parallel 2
+        run: >-
+          cmake --build --preset host-debug
+          --target key_registry_test key_service_identity_test
+          --parallel 2
       - name: Test key foundation
         run: ctest --preset host-debug --output-on-failure -R '^key_'
 
@@ -26,7 +29,10 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           -DCMAKE_CXX_COMPILER=clang++
       - name: Build key foundation
-        run: cmake --build build/m2-keys-clang --target key_registry_test --parallel 2
+        run: >-
+          cmake --build build/m2-keys-clang
+          --target key_registry_test key_service_identity_test
+          --parallel 2
       - name: Test key foundation
         run: ctest --test-dir build/m2-keys-clang --output-on-failure -R '^key_'
 
@@ -39,6 +45,9 @@ jobs:
       - name: Configure
         run: cmake --preset host-debug
       - name: Build key foundation natively
-        run: cmake --build --preset host-debug --target key_registry_test --parallel 2
+        run: >-
+          cmake --build --preset host-debug
+          --target key_registry_test key_service_identity_test
+          --parallel 2
       - name: Test key foundation natively
         run: ctest --preset host-debug --output-on-failure -R '^key_'
