@@ -56,6 +56,15 @@ public:
     [[nodiscard]] os::core::Result<KeyDescriptor>
     rotate(KeyOwner caller, KeyId id) noexcept override;
 
+    // Trusted rotation variant for provider material generated beneath the
+    // existing application root. Ownership/replacement semantics mirror
+    // adopt_generated().
+    [[nodiscard]] os::core::Result<KeyDescriptor>
+    rotate_adopt_generated(
+        KeyOwner caller,
+        KeyId id,
+        ProviderKeyReference provider_key) noexcept;
+
     [[nodiscard]] os::core::Result<std::size_t>
     seal(
         KeyOwner caller,
