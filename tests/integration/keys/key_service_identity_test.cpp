@@ -65,6 +65,30 @@ public:
         return os::keys::ProviderKeyReference{next_reference_++};
     }
 
+    os::core::Result<std::size_t> seal(
+        os::keys::ProviderKeyReference,
+        os::keys::CryptoProfileId,
+        os::core::ByteSpan,
+        os::core::ByteSpan,
+        os::core::ByteSpan,
+        os::core::MutableByteSpan,
+        os::keys::AeadNonce&,
+        os::keys::AeadTag&) noexcept override {
+        return os::keys::key_error(os::keys::errors::unsupported_crypto_profile);
+    }
+
+    os::core::Result<std::size_t> open(
+        os::keys::ProviderKeyReference,
+        os::keys::CryptoProfileId,
+        os::core::ByteSpan,
+        os::core::ByteSpan,
+        const os::keys::AeadNonce&,
+        const os::keys::AeadTag&,
+        os::core::ByteSpan,
+        os::core::MutableByteSpan) noexcept override {
+        return os::keys::key_error(os::keys::errors::unsupported_crypto_profile);
+    }
+
     os::core::Result<void>
     destroy(os::keys::ProviderKeyReference key) noexcept override {
         if (!key.valid()) return os::keys::key_error(os::keys::errors::provider_failure);
@@ -139,10 +163,6 @@ int main() {
     auto duplicate = std::move(duplicate_result).value();
     assert(duplicate.descriptor().id == key_id);
 
-    // A forked process inherits the same transport descriptor, but per-message
-    // SCM_CREDENTIALS changes the trusted caller identity. Knowing the public
-    // KeyId and possessing the main transport is therefore insufficient to
-    // open another principal's key.
     const pid_t attacker = ::fork();
     assert(attacker >= 0);
     if (attacker == 0) {
@@ -162,8 +182,6 @@ int main() {
     assert(created.destroy(scratch));
     assert(!created.valid());
 
-    // Destroy is key-wide revocation. A second already-minted bearer endpoint
-    // for the same key is closed by the service rather than remaining usable.
     auto stale_destroy = duplicate.destroy(scratch);
     assert(!stale_destroy);
     assert(stale_destroy.error().domain == os::core::ErrorDomain::ipc);
@@ -174,8 +192,6 @@ int main() {
     assert(destroyed_open.error().domain == os::core::ErrorDomain::key);
     assert(destroyed_open.error().code == os::keys::errors::destroyed);
 
-    // The service remains alive and can create a fresh logical key after
-    // revoking the previous one.
     auto second = keys.create_application_data_key(scratch);
     assert(second);
     assert(second.value().descriptor().id != key_id);

@@ -21,6 +21,30 @@ public:
         return os::keys::ProviderKeyReference{next_reference++};
     }
 
+    os::core::Result<std::size_t> seal(
+        os::keys::ProviderKeyReference,
+        os::keys::CryptoProfileId,
+        os::core::ByteSpan,
+        os::core::ByteSpan,
+        os::core::ByteSpan,
+        os::core::MutableByteSpan,
+        os::keys::AeadNonce&,
+        os::keys::AeadTag&) noexcept override {
+        return os::keys::key_error(os::keys::errors::unsupported_crypto_profile);
+    }
+
+    os::core::Result<std::size_t> open(
+        os::keys::ProviderKeyReference,
+        os::keys::CryptoProfileId,
+        os::core::ByteSpan,
+        os::core::ByteSpan,
+        const os::keys::AeadNonce&,
+        const os::keys::AeadTag&,
+        os::core::ByteSpan,
+        os::core::MutableByteSpan) noexcept override {
+        return os::keys::key_error(os::keys::errors::unsupported_crypto_profile);
+    }
+
     os::core::Result<void>
     destroy(os::keys::ProviderKeyReference key) noexcept override {
         ++destroy_calls;
@@ -146,9 +170,6 @@ int main() {
     assert(!reuse_destroyed_id);
     assert(reuse_destroyed_id.error() == os::keys::key_error(os::keys::errors::duplicate_key_id));
 
-    // Tombstones consume registry identity space intentionally. Fill the
-    // remaining slots with unique logical ids and verify capacity is checked
-    // before asking the provider to generate another secret.
     std::uint64_t next_id = 100U;
     while (registry.record_count() < os::keys::max_key_records) {
         const os::keys::KeyId id{0x4B45593200000000ULL, next_id++};
