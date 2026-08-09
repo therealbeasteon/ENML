@@ -9,10 +9,10 @@
 
 namespace os::keys::testing {
 
-// Host/CI-only software provider. This exists to exercise Key Service AEAD and
-// lifecycle contracts on x86-64/AArch64. It is not a production hardware root
-// and must never be treated as equivalent to TPM/TEE/HSM-backed protection.
-class OpenSslTestKeyProvider final : public KeyProvider {
+// Host/CI-only software provider. This exists to exercise Key Service AEAD,
+// lifecycle, rotation and persistence contracts on x86-64/AArch64. Its fixed
+// wrapping key is deliberately test-only and is NOT a production hardware root.
+class OpenSslTestKeyProvider final : public PersistentKeyProvider {
 public:
     OpenSslTestKeyProvider() noexcept = default;
     ~OpenSslTestKeyProvider() override;
@@ -48,6 +48,17 @@ public:
     [[nodiscard]] os::core::Result<void>
     destroy(ProviderKeyReference key) noexcept override;
 
+    [[nodiscard]] os::core::Result<std::size_t>
+    persist_reference(
+        ProviderKeyReference key,
+        KeyPurpose purpose,
+        os::core::MutableByteSpan output) noexcept override;
+
+    [[nodiscard]] os::core::Result<ProviderKeyReference>
+    restore_reference(
+        KeyPurpose purpose,
+        os::core::ByteSpan persistent_blob) noexcept override;
+
 private:
     static constexpr std::size_t key_bytes = 32U;
 
@@ -62,8 +73,10 @@ private:
     [[nodiscard]] static ProviderKeyReference make_reference(
         std::size_t index,
         std::uint32_t generation) noexcept;
+    [[nodiscard]] os::core::Result<ProviderKeyReference>
+    install_key(os::core::ByteSpan key_material) noexcept;
 
-    std::array<Slot, max_key_records> slots_ {};
+    std::array<Slot, max_key_records * max_key_versions> slots_ {};
 };
 
 } // namespace os::keys::testing
