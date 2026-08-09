@@ -9,6 +9,8 @@
 
 namespace os::keys {
 
+inline constexpr std::size_t max_persistent_provider_blob_bytes = 256U;
+
 // Key providers own secret material. ENML core/service code receives only an
 // opaque provider reference and never asks a provider to export a long-lived
 // raw key. Hardware-backed TPM/TEE/HSM providers can implement this interface
@@ -48,6 +50,31 @@ public:
 
     [[nodiscard]] virtual os::core::Result<void>
     destroy(ProviderKeyReference key) noexcept = 0;
+};
+
+// Internal durability extension for providers that can make a key survive a
+// Key Service restart. The returned bytes are an opaque provider representation
+// and MUST NOT be an unwrapped long-lived key. A production hardware provider
+// may encode a sealed/wrapped key or a durable secure-object locator. The core
+// never interprets these bytes. `binding` is canonical registry metadata that
+// the provider must authenticate so a persisted provider object cannot be
+// transplanted to a different logical key/version/owner record.
+class PersistentKeyProvider : public KeyProvider {
+public:
+    ~PersistentKeyProvider() override = default;
+
+    [[nodiscard]] virtual os::core::Result<std::size_t>
+    persist_reference(
+        ProviderKeyReference key,
+        KeyPurpose purpose,
+        os::core::ByteSpan binding,
+        os::core::MutableByteSpan output) noexcept = 0;
+
+    [[nodiscard]] virtual os::core::Result<ProviderKeyReference>
+    restore_reference(
+        KeyPurpose purpose,
+        os::core::ByteSpan binding,
+        os::core::ByteSpan persistent_blob) noexcept = 0;
 };
 
 } // namespace os::keys

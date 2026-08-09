@@ -31,6 +31,11 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - Revoking a Storage profile invalidates all already-minted object endpoints for that `PrincipalId + UserId`.
 - RPC error responses never transfer handles. Successful handle-bearing messages must keep flags/count/SCM_RIGHTS consistent.
 - Long-lived cryptographic keys must never become public raw-byte application APIs.
+- `KeyId` is a locator, not authority. Every Key Service operation remains bound to trusted `PrincipalId + UserId` and server-held rights.
+- Provider references are private process-local implementation handles and must never be serialized as durable key identity.
+- Durable key state stores only provider-owned opaque sealed/wrapped objects. The core must never interpret those blobs as raw keys.
+- Key rotation keeps a stable logical KeyId and versioned ciphertext metadata. New encryption uses the current version; retained historical versions exist only for authorized decrypt until an explicit retirement policy is implemented.
+- Destroy/revocation, package uninstall, file deletion, key rotation, and provider-object cleanup are distinct lifecycle operations.
 
 ## Completed implementation
 
@@ -40,8 +45,11 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - M2.1: identity-rooted Storage Service, typed directory/file object capabilities, bounded handle transfer, server-authoritative rights reduction and adversarial identity tests.
 - M2.2: supervised `system.storage`, App Manager profile publication/republication, no direct private-data directory in apps, generation-bound Storage capabilities and restart behavior.
 - M2.3: per-profile object quotas, quota isolation by `PrincipalId + UserId`, deterministic root/object revocation, uninstall Storage-policy revocation while retaining data/principal continuity, and fresh capability reacquisition on reinstall/re-enable.
+- M2.4: typed Key Service AEAD path, opaque KeyIds/provider references, trusted identity enforcement, bounded `EKEY` AES-256-GCM-v1 envelopes, tamper/wrong-AAD/wrong-owner/inherited-fd tests.
+- M2.5: stable logical-key rotation, explicit rotate right, up to eight retained versions, historical decrypt, current-version encryption and key-wide destruction/revocation.
+- M2.6: provider-wrapped persistence and durable `KRG1` registry are implemented on PR #19. They use canonical owner/key/version binding, an already-authorized state directory, transactional temp/fsync/rename/fsync publication, durable tombstones, restart recovery and end-to-end Key Service restart tests. Treat M2.6 as complete only after PR #19 is merged green.
 
-Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_PRIVATE_STORAGE.md`, `docs/M2_1_STORAGE_SERVICE.md`, `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`, and `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md` before changing those substrates.
+Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_PRIVATE_STORAGE.md`, `docs/M2_1_STORAGE_SERVICE.md`, `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`, `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`, and `docs/M2_6_KEY_PERSISTENCE.md` before changing those substrates.
 
 ## Storage invariants
 
@@ -58,6 +66,18 @@ Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_P
 - App Manager may retain private data and durable principal state after uninstall while live Storage authority remains revoked.
 - Current Storage I/O is synchronous/single-threaded and per-operation bounded. Add outstanding byte/request budgets when concurrent/asynchronous Storage queues are introduced, not as inert counters today.
 
+## Key-service invariants
+
+- Public applications never provide `KeyOwner`, `PrincipalId`, `UserId`, raw provider handles, or raw long-lived key bytes.
+- A `KeyObjectHandle` is an object capability but its operations are still checked against trusted per-message peer identity.
+- AES-256-GCM-v1 is the current reviewed service profile; do not invent custom crypto or silently switch profiles.
+- The `EKEY` envelope authenticates canonical metadata plus caller AAD.
+- `PersistentKeyProvider` returns opaque provider-owned durability blobs. A production provider may use TPM/TEE/HSM sealed objects or secure locators; the OpenSSL provider and fixed wrapping root are test-only.
+- `KRG1` persistence is explicit little-endian and bounded. Never serialize `KeyRecord`, `KeyDescriptor`, `ProviderKeyReference`, or other native C++ layout directly.
+- `KBD1` provider binding covers logical KeyId, full PrincipalId, full 64-bit UserId, purpose, rights and the specific retained version so provider blobs cannot be transplanted between records.
+- Durable KeyId tombstones prevent a destroyed logical identifier from silently becoming a different key after restart.
+- M2.6 does not provide filesystem rollback resistance. Do not claim anti-rollback until registry state is bound to a hardware/verified-boot monotonic security source.
+
 ## CI boundary
 
 M0 is a frozen foundation gate. M0 CTests carry the explicit `m0` label; the M0 workflow selects that label rather than accidentally running M1/M2 tests. The cross/QEMU gate additionally excludes supervisor/Landlock tests that require native kernel process semantics. Native AArch64 remains the authoritative full-kernel behavior gate.
@@ -70,24 +90,20 @@ Read `docs/REFERENCE_NOTES_2026_08_08.md` before architecture-sensitive changes.
 
 For kernel/BSP work, preserve an upstream-first Linux strategy and small reviewable patches. For C++ core code, prefer type-rich lightweight abstractions, RAII, deterministic ownership and moves. For encryption design, borrow key-hierarchy/boot-integrity principles from historical full-disk-encryption systems without copying their obsolete algorithm choices.
 
-## Current next milestone: M2.4 Key Service foundation
+## Current next milestone: M2.7 key hierarchy and root-provider security contract
 
-M2.4 begins the userspace cryptographic authority layer. Keep it narrow and testable; do not jump directly to hardware-backed attestation or full verified boot.
+After M2.6 merges, continue with a narrow key-lifecycle slice rather than jumping directly to attestation or vendor-specific TEE code.
 
-Required first slice:
+Required direction:
 
-1. Define stable opaque key identifiers and move-only key/session handles. No public raw long-lived key bytes.
-2. Add a bounded `system.keys` service with identity-authenticated OSIP requests.
-3. Separate permission to request a key operation from possession of a specific key handle/right.
-4. Model a logical hierarchy suitable for system/profile/application keys, but keep TPM/TEE/HSM details behind a provider interface.
-5. Add a software-backed test provider only for host/CI; do not mistake it for production hardware protection.
-6. Define key creation/import policy narrowly. Applications must not choose another principal's key owner in a public payload.
-7. Support version metadata and rotation without changing a durable logical key identity.
-8. Add explicit destroy/cryptographic-erasure semantics distinct from package uninstall or file deletion.
-9. Use authenticated encryption under a current reviewed cryptographic profile; do not invent a cipher or copy historical BitLocker suites.
-10. Add adversarial tests: forged owner identity, stale handle, rights escalation, destroyed key, wrong key version, malformed payload, process death, and service restart.
-
-Keep boot sealing, measured boot, recovery policy, hardware-root selection and attestation as later hardware/BSP integration work unless a minimal provider contract is needed to avoid painting the API into a corner.
+1. Define trusted logical scopes for system, user/profile and application data keys without allowing callers to claim another scope/owner.
+2. Bind application/profile key acquisition to existing durable `PrincipalId + UserId` and App Manager/Storage policy state.
+3. Separate durable logical parent/root identity from child data-key versions; do not expose raw parent material.
+4. Define the production root-provider contract needed for hardware-sealed roots and boot/lock-state policy while keeping the CI provider explicitly non-production.
+5. Define an anti-rollback/monotonic-state interface boundary, but do not fake rollback resistance on ordinary host filesystems.
+6. Preserve current M2.4-M2.6 Key Service wire behavior unless an additive operation is required.
+7. Add adversarial tests for cross-principal hierarchy confusion, wrong user/profile scope, stale key capability after policy revocation, metadata transplant and restart.
+8. Keep hardware attestation, full verified-boot integration and vendor TEE implementation as later BSP/security-root work unless a minimal interface is required now.
 
 ## Build and test
 
@@ -111,4 +127,4 @@ cmake --build build/host-clang
 ctest --test-dir build/host-clang --output-on-failure
 ```
 
-M2/M2.4 process-sensitive tests must run on GCC, Clang and native AArch64. Do not add them to the M0 qemu-user-safe set unless they are explicitly proven safe there.
+M2 process-sensitive tests must run on GCC, Clang and native AArch64. Do not add them to the M0 qemu-user-safe set unless they are explicitly proven safe there.

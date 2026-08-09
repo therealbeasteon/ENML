@@ -27,6 +27,11 @@ inline constexpr std::uint32_t key_version_mismatch = 17U;
 inline constexpr std::uint32_t key_id_mismatch = 18U;
 inline constexpr std::uint32_t too_large = 19U;
 inline constexpr std::uint32_t version_limit = 20U;
+inline constexpr std::uint32_t invalid_state_directory = 21U;
+inline constexpr std::uint32_t malformed_registry_snapshot = 22U;
+inline constexpr std::uint32_t unsupported_registry_snapshot = 23U;
+inline constexpr std::uint32_t registry_snapshot_inconsistent = 24U;
+inline constexpr std::uint32_t registry_snapshot_too_large = 25U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error key_error(std::uint32_t code) noexcept {

@@ -91,36 +91,70 @@ The current Storage Service is synchronous/single-threaded, so per-operation byt
 
 See `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`.
 
-## M2.4 — Key Service foundation and storage-key separation
+## M2.4 — typed Key Service + authenticated encryption
 
-Status: in progress on `m2-4-key-service-foundation`.
+Status: complete and merged.
 
-Implemented in the current branch:
+Implemented:
 
-- additive `ErrorDomain::key` for stable key-service errors
-- opaque 128-bit logical `KeyId`; key ids are locators, never authority
-- explicit key purpose and server-held rights metadata
-- `KeyProvider` contract returns opaque provider references and has no raw long-lived key-export API
+- additive stable `ErrorDomain::key`
+- opaque 128-bit logical `KeyId`; ids are locators, never authority
+- `KeyProvider` abstraction with opaque provider references and no public raw long-lived key export
 - fixed-capacity `KeyRegistry` keyed by trusted `PrincipalId + UserId`
-- cross-owner describe/provider/destroy denial
-- destroyed records remain tombstones so a logical key id is not silently reused
-- provider failure does not publish a partial registry record
 - typed `KeyClient` and move-only `KeyObjectHandle`
-- bounded `KeyService` main/object endpoints on stable service ids
-- create/open owner identity derives only from `RequestContext.peer`
-- possession-based object endpoint for management authority; public KeyId alone is insufficient
-- destroying a key invalidates every already-minted object endpoint for that key
-- fork/inherited-main-channel adversarial test uses per-message `SCM_CREDENTIALS` to prove a second principal cannot open the first principal's key
-- dedicated GCC, Clang and native AArch64 key gates
+- bounded `KeyService` main/object endpoints with create/open/destroy/encrypt/decrypt operations
+- exact trusted `PeerIdentity` revalidation on every object request, including inherited-fd rejection
+- explicit AES-256-GCM-v1 crypto profile for the current service slice
+- explicit bounded `EKEY` envelope with authenticated canonical header plus caller AAD
+- wrong owner, wrong rights, wrong key/version, malformed envelope, wrong AAD, tag/ciphertext tamper and destroyed-key rejection
+- OpenSSL-backed provider exists only as a host/CI test provider, not a production hardware root
+- GCC, Clang and native AArch64 Key Service gates
 
-Not implemented yet and therefore not claimed:
+The service never accepts caller-supplied owner identity and never sends raw long-lived key bytes through public IPC.
 
-- production `system.keys` executable/provider
-- encryption/decryption operations
-- a frozen AEAD crypto profile
-- key-registry/provider persistence across service or device restart
-- rotation with retained old versions for existing ciphertext
-- hardware-backed TPM/TEE/HSM sealing
-- boot measurement/attestation/recovery policy
+## M2.5 — logical key rotation and retained versions
 
-See `docs/M2_4_KEY_SERVICE_FOUNDATION.md`.
+Status: complete and merged.
+
+Implemented:
+
+- explicit `rotate` right and typed `KeyObjectHandle::rotate()`
+- up to eight retained provider-key versions per logical `KeyId`
+- monotonic current version
+- new encryption restricted to the current version
+- historical ciphertext decryption through retained older versions
+- stale object descriptor convergence to the current version on subsequent use
+- key-wide destruction erases every retained provider version and revokes every live object endpoint
+- no silent KeyId reuse and no implicit historical-version retirement
+- bounded `version_limit` failure instead of unbounded retention
+- cross-process tests proving v1 ciphertext survives v2 rotation and both versions remain decryptable
+- GCC, Clang and native AArch64 validation plus unchanged M0/M1/M2 Storage gates
+
+## M2.6 — durable provider-wrapped key persistence
+
+Status: implemented on PR #19; final merge gate in progress.
+
+Implemented:
+
+- `PersistentKeyProvider` internal durability contract for opaque sealed/wrapped provider objects
+- no serialized process-local `ProviderKeyReference` and no raw long-lived key bytes in registry state
+- CI OpenSSL provider wraps test keys with authenticated AES-256-GCM under an explicitly test-only wrapping root
+- provider blobs authenticate a canonical `KBD1` binding containing KeyId, full PrincipalId, full 64-bit UserId, purpose, rights and specific retained version
+- bounded explicit little-endian `KRG1` Key Registry snapshot
+- maximum 128 logical keys, eight retained versions per live key and 256-byte provider blobs
+- already-authorized state-directory handle rather than caller-controlled absolute state path
+- `O_NOFOLLOW`/`O_EXCL` temporary publication with stale-temp cleanup
+- temp write -> fsync -> atomic rename -> directory fsync publication
+- create/rotate candidate rollback before replacement and replacement-aware handling of a late directory-fsync error
+- logical destroy/tombstone publication before best-effort physical provider-object deletion
+- destroyed KeyIds persist across restart and cannot be silently reused
+- provider restart test with binding/tamper/truncation rejection
+- registry restart test with >32-bit UserId, v1/v2 historical decrypt, v3 post-restart rotation, tombstone recovery, 0600 snapshot mode and temp-name symlink non-following
+- end-to-end cross-process Key Service restart test using a fresh provider and fresh `PersistentKeyRegistry`
+- dedicated design contract in `docs/M2_6_KEY_PERSISTENCE.md`
+
+M2.6 deliberately does not claim production TPM/TEE/HSM protection, measured boot, attestation, recovery policy or filesystem rollback resistance. Those require a hardware/root-security integration contract rather than pretending the CI wrapping key is production security.
+
+## Next: M2.7 — key hierarchy and root-provider security contract
+
+The next slice should bind durable system/profile/application key lifecycles to trusted principals and define the production root-provider/rollback interface without hard-coding one vendor TEE. It should remain narrow: no raw key export, no caller-selected owner, and no claim of hardware-backed security until a real platform provider exists.

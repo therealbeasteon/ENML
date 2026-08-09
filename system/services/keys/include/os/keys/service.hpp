@@ -92,7 +92,7 @@ public:
     KeyService(
         os::ipc::Channel& endpoint,
         os::ipc::PeerIdentityResolver& identity_resolver,
-        KeyRegistry& registry,
+        KeyStore& registry,
         KeyIdSource& id_source) noexcept
         : endpoint_(&endpoint),
           identity_resolver_(&identity_resolver),
@@ -115,7 +115,7 @@ private:
 
     os::ipc::Channel* endpoint_ {nullptr};
     os::ipc::PeerIdentityResolver* identity_resolver_ {nullptr};
-    KeyRegistry* registry_ {nullptr};
+    KeyStore* registry_ {nullptr};
     KeyIdSource* id_source_ {nullptr};
     std::array<ObjectSlot, max_key_objects> objects_ {};
     std::array<std::byte, max_ciphertext_envelope_bytes> operation_buffer_ {};
