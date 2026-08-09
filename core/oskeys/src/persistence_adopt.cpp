@@ -27,9 +27,6 @@ PersistentKeyRegistry::adopt_generated(
     auto persisted = persist_candidate(candidate, replaced);
     if (!persisted) {
         if (replaced) {
-            // The replacement snapshot already names this provider object. Keep
-            // memory consistent with visible durable state and report only the
-            // late durability error (for example, directory fsync failure).
             registry_ = candidate;
         } else {
             os::core::discard_result(provider_->destroy(provider_key));
@@ -39,6 +36,37 @@ PersistentKeyRegistry::adopt_generated(
 
     registry_ = candidate;
     return adopted.value();
+}
+
+os::core::Result<KeyDescriptor>
+PersistentKeyRegistry::rotate_adopt_generated(
+    KeyOwner caller,
+    KeyId id,
+    ProviderKeyReference provider_key) noexcept {
+    if (provider_ == nullptr || !provider_key.valid()) {
+        return key_error(errors::provider_failure);
+    }
+
+    KeyRegistry candidate = registry_;
+    auto rotated = candidate.rotate_adopt_generated(caller, id, provider_key);
+    if (!rotated) {
+        os::core::discard_result(provider_->destroy(provider_key));
+        return rotated.error();
+    }
+
+    bool replaced = false;
+    auto persisted = persist_candidate(candidate, replaced);
+    if (!persisted) {
+        if (replaced) {
+            registry_ = candidate;
+        } else {
+            os::core::discard_result(provider_->destroy(provider_key));
+        }
+        return persisted.error();
+    }
+
+    registry_ = candidate;
+    return rotated.value();
 }
 
 } // namespace os::keys
