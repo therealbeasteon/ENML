@@ -22,6 +22,11 @@ namespace {
         error.code == os::core::errors::security::unknown_process;
 }
 
+[[nodiscard]] constexpr bool stale_process(const os::core::Error& error) noexcept {
+    return error.domain == os::core::ErrorDomain::security &&
+        error.code == os::core::errors::security::stale_process;
+}
+
 } // namespace
 
 ServiceBroker::~ServiceBroker() {
@@ -193,6 +198,23 @@ ServiceBroker::attach_process(
             failed = true;
             break;
         }
+
+        // The broker owns publication lifetime for entries in ProcessSlot. Do
+        // not silently adopt an identity that some other trusted subsystem
+        // already published directly to this Supervisor, because detach would
+        // otherwise revoke authority the broker never owned.
+        auto preexisting = service.supervisor->lookup_process(native_pid);
+        if (preexisting) {
+            publish_failure = broker_error(broker_errors::service_conflict);
+            failed = true;
+            break;
+        }
+        if (!unknown_process(preexisting.error()) && !stale_process(preexisting.error())) {
+            publish_failure = preexisting.error();
+            failed = true;
+            break;
+        }
+
         auto published = service.supervisor->register_process(native_pid, principal, user);
         if (!published) {
             publish_failure = published.error();
@@ -259,7 +281,8 @@ ServiceBroker::connect(
 
     auto authoritative = authority_->lookup(process_id);
     if (!authoritative) return authoritative.error();
-    if (authoritative.value().peer != process->record.peer) {
+    if (authoritative.value().peer != process->record.peer ||
+        authoritative.value().kernel != process->record.kernel) {
         return security_error(os::core::errors::security::credential_mismatch);
     }
 
