@@ -118,10 +118,11 @@ void remove_principal_files(const char* path) {
 } // namespace
 
 int main(int argc, char** argv) {
-    assert(argc == 4);
+    assert(argc == 5);
     const char* echo_path = argv[1];
     const auto executable_v1 = split_executable(argv[2]);
     const auto executable_v2 = split_executable(argv[3]);
+    const auto executable_v3 = split_executable(argv[4]);
 
     constexpr os::supervisor::ServiceDescriptorV1 echo_descriptor{
         .service_id = os::core::ServiceId{0x0000F001U},
@@ -158,6 +159,7 @@ int main(int argc, char** argv) {
     const auto application = make_application();
     const auto generation1 = make_generation(application, 1U, 0x21U);
     const auto generation2 = make_generation(application, 2U, 0x22U);
+    const auto generation3 = make_generation(application, 3U, 0x23U);
     assert(packages.stage_generation(generation1));
     assert(packages.activate(application, generation1.generation));
     assert(packages.stage_generation(generation2));
@@ -215,30 +217,35 @@ int main(int argc, char** argv) {
     // stable principal while each process and application instance is fresh.
     auto first = manager.launch(application.package_id, user42);
     auto second = manager.launch(application.package_id, user42);
-    assert(first && second);
+    auto other_user = manager.launch(application.package_id, user43);
+    assert(first && second && other_user);
     assert(first.value().generation == generation1.generation);
     assert(second.value().generation == generation1.generation);
+    assert(other_user.value().generation == generation1.generation);
     assert(first.value().identity.principal == second.value().identity.principal);
+    assert(other_user.value().identity.principal != first.value().identity.principal);
     assert(first.value().identity.principal.high == os::app::application_principal_high_v1);
     assert(first.value().identity.user == user42);
+    assert(other_user.value().identity.user == user43);
     assert(first.value().identity.process != second.value().identity.process);
     assert(first.value().instance != second.value().instance);
 
-    auto other_user = manager.launch(application.package_id, user43);
-    assert(other_user);
-    assert(other_user.value().generation == generation1.generation);
-    assert(other_user.value().identity.user == user43);
-    assert(other_user.value().identity.principal != first.value().identity.principal);
+    auto generation1_pins = manager.generation_pin_count(application, generation1.generation);
+    assert(generation1_pins && generation1_pins.value() == 3U);
 
     assert(packages.activate(application, generation2.generation));
 
-    // Activation is prospective. Existing generation-1 processes stay bound
-    // while future launches resolve generation 2 and retain the user's stable
-    // application principal.
-    auto still_first = manager.instance(first.value().instance);
-    assert(still_first);
-    assert(still_first.value().generation == generation1.generation);
-    assert(::kill(still_first.value().native_pid, 0) == 0);
+    // Active code cannot be garbage-collected even before it has a live
+    // instance, because it is still the target for future launches.
+    auto retire_active = manager.retire_launch_target(application, generation2.generation);
+    assert(!retire_active);
+    assert(retire_active.error().code == os::app::manager_errors::generation_active);
+
+    // Existing generation-1 processes pin the old immutable code after the
+    // update switches future launches to generation 2.
+    auto retire_pinned = manager.retire_launch_target(application, generation1.generation);
+    assert(!retire_pinned);
+    assert(retire_pinned.error().code == os::app::manager_errors::generation_in_use);
 
     auto third = manager.launch(application.package_id, user42);
     assert(third);
@@ -247,9 +254,25 @@ int main(int argc, char** argv) {
     assert(third.value().identity.principal == first.value().identity.principal);
     assert(third.value().identity.process != first.value().identity.process);
 
+    auto generation2_pins = manager.generation_pin_count(application, generation2.generation);
+    assert(generation2_pins && generation2_pins.value() == 1U);
+
+    // Reaping two of three old-generation instances still leaves the old code
+    // pinned by the remaining user-43 process.
+    assert(manager.terminate(first.value().instance, SIGTERM));
+    assert(manager.terminate(second.value().instance, SIGTERM));
+    assert(wait_until_gone(manager, first.value().instance));
+    assert(wait_until_gone(manager, second.value().instance));
+    generation1_pins = manager.generation_pin_count(application, generation1.generation);
+    assert(generation1_pins && generation1_pins.value() == 1U);
+    retire_pinned = manager.retire_launch_target(application, generation1.generation);
+    assert(!retire_pinned);
+    assert(retire_pinned.error().code == os::app::manager_errors::generation_in_use);
+
     auto persisted_principal = principals.lookup(application, user42);
     assert(persisted_principal);
-    assert(persisted_principal.value().principal == first.value().identity.principal);
+    const auto user42_principal = persisted_principal.value().principal;
+    assert(user42_principal == first.value().identity.principal);
 
     auto unknown_id = pkg::PackageId::parse("com.emnl.notinstalled");
     assert(unknown_id);
@@ -258,18 +281,73 @@ int main(int argc, char** argv) {
     assert(unknown_launch.error().domain == os::core::ErrorDomain::package);
     assert(unknown_launch.error().code == pkg::errors::unknown_package);
 
-    assert(manager.terminate(first.value().instance, SIGTERM));
-    assert(wait_until_gone(manager, first.value().instance));
-    auto revoked = supervisor.lookup_process(first.value().native_pid);
-    assert(!revoked);
-    assert(revoked.error().domain == os::core::ErrorDomain::security);
+    // Uninstall commits the no-active-generation state before process teardown,
+    // revokes supervisor identities immediately, and then asks every remaining
+    // instance of the application to terminate. Principal/data profile state is
+    // intentionally retained for an authorized same-signer reinstall.
+    assert(manager.uninstall_application(application));
+    auto no_active = packages.active(application);
+    assert(!no_active);
+    assert(no_active.error().code == pkg::errors::no_active_generation);
 
-    assert(manager.terminate(second.value().instance, SIGTERM));
-    assert(manager.terminate(other_user.value().instance, SIGTERM));
-    assert(manager.terminate(third.value().instance, SIGTERM));
-    assert(wait_until_gone(manager, second.value().instance));
+    auto revoked_old = supervisor.lookup_process(other_user.value().native_pid);
+    auto revoked_new = supervisor.lookup_process(third.value().native_pid);
+    assert(!revoked_old && !revoked_new);
+    assert(revoked_old.error().domain == os::core::ErrorDomain::security);
+    assert(revoked_new.error().domain == os::core::ErrorDomain::security);
+
+    auto launch_after_uninstall = manager.launch(application.package_id, user42);
+    assert(!launch_after_uninstall);
+    assert(launch_after_uninstall.error().domain == os::core::ErrorDomain::package);
+    assert(launch_after_uninstall.error().code == pkg::errors::no_active_generation);
+
     assert(wait_until_gone(manager, other_user.value().instance));
     assert(wait_until_gone(manager, third.value().instance));
+    generation1_pins = manager.generation_pin_count(application, generation1.generation);
+    generation2_pins = manager.generation_pin_count(application, generation2.generation);
+    assert(generation1_pins && generation1_pins.value() == 0U);
+    assert(generation2_pins && generation2_pins.value() == 0U);
+
+    // Only after revocation/reaping may Package Service release old executable
+    // objects and physically remove immutable generation directories.
+    assert(manager.retire_launch_target(application, generation1.generation));
+    assert(manager.retire_launch_target(application, generation2.generation));
+
+    auto retired_again = manager.retire_launch_target(application, generation1.generation);
+    assert(!retired_again);
+    assert(retired_again.error().code == os::app::manager_errors::target_not_found);
+
+    persisted_principal = principals.lookup(application, user42);
+    assert(persisted_principal);
+    assert(persisted_principal.value().principal == user42_principal);
+
+    // Same-signer reinstall/update continues the package generation sequence,
+    // reuses the durable per-user application principal and retained data
+    // profile, but creates a fresh process and instance identity.
+    assert(packages.stage_generation(generation3));
+    assert(manager.register_launch_target(os::app::LaunchTargetRegistration{
+        .package = generation3,
+        .generation_directory = open_directory(executable_v3.directory),
+        .entry_point = parse_manifest_path(executable_v3.name),
+        .readiness_timeout_ms = 1000U,
+    }));
+    assert(packages.activate(application, generation3.generation));
+
+    auto reinstalled = manager.launch(application.package_id, user42);
+    assert(reinstalled);
+    assert(reinstalled.value().generation == generation3.generation);
+    assert(reinstalled.value().identity.principal == user42_principal);
+    assert(reinstalled.value().identity.process != third.value().identity.process);
+    assert(reinstalled.value().instance != third.value().instance);
+
+    // A second uninstall remains safe/idempotent with respect to durable
+    // package ownership and does not destroy the retained principal mapping.
+    assert(manager.uninstall_application(application));
+    assert(wait_until_gone(manager, reinstalled.value().instance));
+    assert(manager.retire_launch_target(application, generation3.generation));
+    persisted_principal = principals.lookup(application, user42);
+    assert(persisted_principal);
+    assert(persisted_principal.value().principal == user42_principal);
 
     assert(::unlink((std::string(package_path) + "/bad-app").c_str()) == 0);
     remove_registry_files(package_path);

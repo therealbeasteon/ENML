@@ -46,6 +46,11 @@ public:
         const ApplicationIdentity& application,
         PackageGenerationId generation) noexcept;
 
+    // Clears future launch resolution while retaining signer ownership and
+    // historical generation metadata. User data/principals are not touched.
+    [[nodiscard]] os::core::Result<void>
+    uninstall(const ApplicationIdentity& application) noexcept;
+
     [[nodiscard]] os::core::Result<PackageGenerationRecord>
     active(const ApplicationIdentity& application) const noexcept {
         return registry_.active(application);

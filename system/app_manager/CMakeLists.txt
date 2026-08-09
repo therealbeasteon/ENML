@@ -1,5 +1,6 @@
 add_library(emnl_app_manager STATIC
     src/manager_linux.cpp
+    src/lifecycle.cpp
 )
 
 add_library(emnl::app_manager ALIAS emnl_app_manager)
