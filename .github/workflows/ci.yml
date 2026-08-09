@@ -4,6 +4,17 @@ on:
   push:
   pull_request:
 
+# M0 is the core/runtime gate. Package/App Manager tests belong to M1 and
+# Storage tests belong to M2. Keeping those suites separate prevents a later
+# milestone regression from making the foundational M0 signal look broken.
+#
+# Until every test has an explicit CTest milestone label, the M0 jobs exclude
+# the stable M1/M2 name prefixes below. The M1 and M2 workflows remain the
+# authoritative gates for those subsystems.
+
+env:
+  M0_LATER_MILESTONE_TESTS: '^(package_|application_|storage_|supervisor_app_manager_launch_test$)'
+
 jobs:
   debug:
     runs-on: ubuntu-24.04
@@ -13,8 +24,10 @@ jobs:
         run: cmake --preset host-debug
       - name: Build
         run: cmake --build --preset host-debug --parallel 2
-      - name: Test
-        run: ctest --preset host-debug --output-on-failure
+      - name: Test M0 only
+        run: >-
+          ctest --preset host-debug --output-on-failure
+          -E "$M0_LATER_MILESTONE_TESTS"
 
   sanitizers:
     runs-on: ubuntu-24.04
@@ -24,8 +37,10 @@ jobs:
         run: cmake --preset host-asan
       - name: Build
         run: cmake --build --preset host-asan --parallel 2
-      - name: Test
-        run: ctest --preset host-asan --output-on-failure
+      - name: Test M0 only
+        run: >-
+          ctest --preset host-asan --output-on-failure
+          -E "$M0_LATER_MILESTONE_TESTS"
 
   clang-debug:
     runs-on: ubuntu-24.04
@@ -38,8 +53,10 @@ jobs:
           -DCMAKE_CXX_COMPILER=clang++
       - name: Build
         run: cmake --build build/host-clang --parallel 2
-      - name: Test
-        run: ctest --test-dir build/host-clang --output-on-failure
+      - name: Test M0 only
+        run: >-
+          ctest --test-dir build/host-clang --output-on-failure
+          -E "$M0_LATER_MILESTONE_TESTS"
 
   fuzz-smoke:
     runs-on: ubuntu-24.04
@@ -58,8 +75,6 @@ jobs:
         run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/osidlc_compiler_fuzz -runs=1000
       - name: RPC error envelope smoke
         run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/rpc_error_fuzz -runs=1000
-      - name: Package manifest analyzer smoke
-        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/package_manifest_fuzz -runs=5000
 
   arm64-native:
     runs-on: ubuntu-24.04-arm
@@ -72,10 +87,12 @@ jobs:
           test "$(uname -m)" = "aarch64"
       - name: Configure
         run: cmake --preset host-debug
-      - name: Build complete M0 userspace natively on AArch64
+      - name: Build repository natively on AArch64
         run: cmake --build --preset host-debug --parallel 2
-      - name: Test complete M0 userspace natively on AArch64
-        run: ctest --preset host-debug --output-on-failure
+      - name: Test M0 natively on AArch64
+        run: >-
+          ctest --preset host-debug --output-on-failure
+          -E "$M0_LATER_MILESTONE_TESTS"
 
   arm64-cross:
     runs-on: ubuntu-24.04
@@ -94,7 +111,7 @@ jobs:
           ./build/host-tools/tools/osidlc/osidlc --version
       - name: Configure AArch64 cross build
         run: cmake --preset arm64-debug
-      - name: Cross-build complete M0 userspace
+      - name: Cross-build complete userspace
         shell: bash
         run: |
           set +e
@@ -108,7 +125,7 @@ jobs:
             exit "$status"
           fi
           cat cross-build.log
-      - name: Run QEMU-user-safe AArch64 tests
+      - name: Run QEMU-user-safe M0 AArch64 tests
         run: >-
           ctest --preset arm64-debug --output-on-failure
-          -E 'supervisor_|sandbox_landlock_test'
+          -E '^(package_|application_|storage_|supervisor_|sandbox_landlock_test)'
