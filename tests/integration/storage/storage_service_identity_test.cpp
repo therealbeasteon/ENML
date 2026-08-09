@@ -128,12 +128,13 @@ int main() {
     os::ipc::ClientConnection connection{channels[0]};
     os::storage::StorageClient client{connection};
     std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
-    auto root_handle = client.open_private_root(scratch);
-    assert(root_handle);
-    assert(root_handle.value().rights() == os::storage::directory_rights::all);
+    {
+        auto root_handle_result = client.open_private_root(scratch);
+        assert(root_handle_result);
+        auto root_handle = std::move(root_handle_result).value();
+        assert(root_handle.rights() == os::storage::directory_rights::all);
+    }
 
-    root_handle = os::core::Result<os::storage::DirectoryObjectHandle>{
-        os::storage::DirectoryObjectHandle{}};
     channels[0].close();
 
     int server_status = 0;
