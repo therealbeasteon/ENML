@@ -24,9 +24,16 @@ struct SharedBufferLease final {
 
 class SharedBufferPool final {
 public:
-    SharedBufferPool() noexcept = default;
+    explicit SharedBufferPool(std::uint64_t service_generation = 1U) noexcept
+        : object_generation_(valid_display_generation(service_generation)
+              ? static_cast<std::uint32_t>(service_generation)
+              : 0U) {}
+
     SharedBufferPool(const SharedBufferPool&) = delete;
     SharedBufferPool& operator=(const SharedBufferPool&) = delete;
+
+    [[nodiscard]] bool valid() const noexcept { return object_generation_ != 0U; }
+    [[nodiscard]] std::uint32_t object_generation() const noexcept { return object_generation_; }
 
     [[nodiscard]] os::core::Result<SharedBufferLease> allocate(
         os::core::PeerIdentity owner,
@@ -70,7 +77,8 @@ private:
     void erase(Entry& entry) noexcept;
 
     std::array<Entry, max_shared_buffers> entries_ {};
-    std::uint64_t next_buffer_id_ {1U};
+    std::uint32_t object_generation_ {1U};
+    std::uint32_t next_buffer_serial_ {1U};
     std::size_t buffer_count_ {0U};
     std::uint64_t byte_count_ {0U};
 };
