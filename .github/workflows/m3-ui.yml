@@ -2,6 +2,7 @@ name: M3 Semantic UI
 
 on:
   push:
+    branches: [main]
   pull_request:
 
 concurrency:
