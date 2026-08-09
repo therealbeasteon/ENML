@@ -185,7 +185,7 @@ M2.7 defines a security contract, not a fake hardware implementation. The host O
 
 ## M2.8 — supervised Key Service product integration
 
-Status: implementation complete on the M2.8 branch; merge is gated on final branch-wide CI.
+Status: complete and merged.
 
 Implemented:
 
@@ -204,16 +204,60 @@ Implemented:
 - supervised restart gate proving old KeyObject endpoints remain stale, process identity is republished separately from key policy, durable KeyId/v1/v2 ciphertext survive, and rotation continues after restart
 - App Manager integration gate proving automatic Key-policy replay after `system.keys` generation change and uninstall/reinstall authority semantics
 - Key Service polls only live public/object descriptors rather than passing its entire 64-slot policy capacity to `poll(2)`, preserving the sandbox `RLIMIT_NOFILE` and keeping kernel work proportional to active capabilities
-- GCC, Clang, ASan/UBSan and native AArch64 Key product gates in the M2 workflow
+- GCC, Clang, ASan/UBSan and native AArch64 Key product gates
 
 See `docs/M2_8_KEY_SERVICE_PRODUCT_INTEGRATION.md`.
 
-M2.8 does not claim that launched applications already receive a Key Service endpoint. The current Supervisor is still a single-service prototype with per-instance logical ProcessId allocation. Registering one app independently with Storage and Key supervisors would create conflicting identities, so that problem is deliberately deferred instead of faked.
-
 Production TPM/TEE/HSM/secure-element roots, verified-boot/attestation coupling and crash-consistent hardware monotonic anti-rollback remain later security/BSP work.
 
-## Next: M2.9 — identity-preserving multi-service connection broker
+## M2.9 — identity-preserving multi-service broker
 
-The next slice should introduce one boot-scoped process identity authority and a narrow service-directory/connection-broker path so one launched process keeps the same `PeerIdentity` while receiving authorized Storage, Key and later platform-service connections.
+Status: complete and merged.
 
-M2.9 must not solve this by independently allocating a different logical `ProcessId` in each single-service Supervisor. The broker should preserve the existing kernel-credential evidence, trusted process registry, typed service-channel and stale-generation semantics while keeping service discovery/routing authority out of application request payloads.
+Implemented:
+
+- one fixed-capacity pidfd-backed boot-scoped `ProcessAuthority` shared by participating Supervisors
+- one live native execution maps to one logical `PeerIdentity` across Storage, Keys and later platform services
+- bounded trusted `ServiceBroker` with eight registered system services and 64 attached processes
+- exact ServiceId/Supervisor/shared-authority validation at trusted broker construction
+- transactional multi-service process attachment with rollback and explicit ownership of broker publications
+- service-local identity publication using duplicated pidfds; numeric Linux PID reuse cannot revive old authority
+- application bootstrap v2 with explicit little-endian typed `(ServiceId, endpoint)` transfer over `SCM_RIGHTS`
+- App Manager broker-mode launch that publishes Storage/Key policy, attaches one child identity to both services and transfers both current-generation endpoints
+- old service-generation endpoints remain permanently stale while explicit broker reacquisition returns a fresh endpoint under the same `PeerIdentity`
+- real sandboxed application gate performing Storage I/O and Key Service AEAD under exactly the same trusted identity
+- GCC, Clang, ASan/UBSan and native AArch64 broker/product validation
+
+See `docs/M2_9_SERVICE_BROKER.md`.
+
+M2.9 is deliberately a narrow trusted broker, not a public general-purpose service bus.
+
+## M2.10 — runtime platform-service session
+
+Status: implementation complete; merge is gated on final branch-wide CI.
+
+Implemented:
+
+- the private bootstrap-v2 channel remains alive after READY as a long-lived application runtime-service session
+- application-side move-only `PlatformServiceSession` / `PlatformServiceEndpoint`
+- fixed private `Acquire(ServiceId, known_generation)` wire contract with explicit little-endian serialization and one successful endpoint handle
+- bootstrap ServiceIds remain the application-visible allow-list; runtime acquisition cannot discover or expand to arbitrary system services
+- App Manager validates per-message `SCM_CREDENTIALS` against the broker-owned boot-scoped process record before returning any endpoint
+- `ServiceBroker::connect_current()` returns the trusted current Supervisor generation plus a distinct current-generation channel
+- `known_generation` is observation metadata only; callers cannot select an old or fabricated service generation
+- old main/object capabilities remain stale after service death and are never mutated or rebound behind the caller
+- App Manager reconciles generation-local Storage/Key policy before servicing reacquisition
+- explicit one-shot `not_running` during restart; callers may retry without hidden reconnect threads or background queues
+- at most four runtime-session packets are serviced per application per App Manager `maintain()` iteration
+- uninstall closes the runtime session before broker identity revocation and process teardown
+- end-to-end gate kills `system.keys`, reopens the same durable KeyId and decrypts pre-crash ciphertext through a fresh endpoint, then kills `system.storage` and reacquires a fresh private-root capability
+- the integration gate proves the application's `PeerIdentity` remains unchanged in both Supervisors, the broker and `ProcessAuthority` across both restarts
+- GCC, Clang, ASan/UBSan and native AArch64 runtime-session gates
+
+See `docs/M2_10_RUNTIME_SERVICE_SESSION.md`.
+
+## Next track — display/compositor/UI foundation
+
+M2 closes the private storage, cryptographic service and identity-preserving multi-service runtime-connectivity substrate. The next product track should begin the display/compositor/UI foundation: semantic surfaces, compositor ownership, input routing, frame scheduling and the trusted shell/system-UI boundary.
+
+Production hardware-backed key roots, verified-boot/attestation coupling and hardware monotonic anti-rollback remain later security/BSP work; the host OpenSSL provider must not be presented as those mechanisms.

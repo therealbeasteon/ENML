@@ -19,14 +19,15 @@ jobs:
           sudo apt-get install -y libssl-dev
       - name: Configure
         run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
-      - name: Build broker gates
+      - name: Build broker and runtime gates
         run: >-
           cmake --build --preset host-debug
           --target supervisor_shared_identity_test service_broker_test application_bootstrap_v2_test
-          app_manager_multi_service_broker_test
+          application_service_session_test app_manager_multi_service_broker_test
+          app_manager_runtime_service_session_test
           --parallel 2
-      - name: Test broker gates
-        run: ctest --preset host-debug --output-on-failure -L '^m2-broker$'
+      - name: Test broker and runtime gates
+        run: ctest --preset host-debug --output-on-failure -L '^(m2-broker|m2-runtime)$'
 
   broker-sanitizers:
     runs-on: ubuntu-24.04
@@ -38,14 +39,15 @@ jobs:
           sudo apt-get install -y libssl-dev
       - name: Configure ASan and UBSan
         run: cmake --preset host-asan -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
-      - name: Build broker gates with sanitizers
+      - name: Build broker and runtime gates with sanitizers
         run: >-
           cmake --build --preset host-asan
           --target supervisor_shared_identity_test service_broker_test application_bootstrap_v2_test
-          app_manager_multi_service_broker_test
+          application_service_session_test app_manager_multi_service_broker_test
+          app_manager_runtime_service_session_test
           --parallel 2
-      - name: Test broker gates with sanitizers
-        run: ctest --preset host-asan --output-on-failure -L '^m2-broker$'
+      - name: Test broker and runtime gates with sanitizers
+        run: ctest --preset host-asan --output-on-failure -L '^(m2-broker|m2-runtime)$'
 
   broker-clang:
     runs-on: ubuntu-24.04
@@ -61,14 +63,15 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
           -DCMAKE_CXX_COMPILER=clang++
-      - name: Build broker gates
+      - name: Build broker and runtime gates
         run: >-
           cmake --build build/m2-broker-clang
           --target supervisor_shared_identity_test service_broker_test application_bootstrap_v2_test
-          app_manager_multi_service_broker_test
+          application_service_session_test app_manager_multi_service_broker_test
+          app_manager_runtime_service_session_test
           --parallel 2
-      - name: Test broker gates
-        run: ctest --test-dir build/m2-broker-clang --output-on-failure -L '^m2-broker$'
+      - name: Test broker and runtime gates
+        run: ctest --test-dir build/m2-broker-clang --output-on-failure -L '^(m2-broker|m2-runtime)$'
 
   broker-arm64-native:
     runs-on: ubuntu-24.04-arm
@@ -82,11 +85,12 @@ jobs:
           sudo apt-get install -y libssl-dev
       - name: Configure
         run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
-      - name: Build broker gates natively
+      - name: Build broker and runtime gates natively
         run: >-
           cmake --build --preset host-debug
           --target supervisor_shared_identity_test service_broker_test application_bootstrap_v2_test
-          app_manager_multi_service_broker_test
+          application_service_session_test app_manager_multi_service_broker_test
+          app_manager_runtime_service_session_test
           --parallel 2
-      - name: Test broker gates natively
-        run: ctest --preset host-debug --output-on-failure -L '^m2-broker$'
+      - name: Test broker and runtime gates natively
+        run: ctest --preset host-debug --output-on-failure -L '^(m2-broker|m2-runtime)$'

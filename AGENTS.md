@@ -43,6 +43,11 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - Key lifecycle admission is desired system policy. A service restart clears generation-local publication but does not change desired App Manager policy or durable key state.
 - Key-policy revocation closes live KeyObject endpoints and blocks acquisition; it is not synonymous with durable key destruction.
 - Destroy/revocation, package uninstall, file deletion, key rotation, root-policy revocation, and provider-object cleanup are distinct lifecycle operations.
+- A service restart never mutates an old channel/object endpoint into a new generation. Old capabilities remain stale and fresh authority is explicitly reacquired.
+- Runtime service reacquisition is limited to the ServiceIds granted at application bootstrap. Do not turn `ServiceBroker` or `PlatformServiceSession` into a general public daemon registry.
+- `known_generation` in the runtime-service session is observation metadata only. Trusted Supervisor state chooses the endpoint generation.
+- Runtime service requests must continue to validate packet `SCM_CREDENTIALS` against the broker-owned boot-scoped process identity before returning handles.
+- App Manager lifecycle/policy reconciliation occurs before endpoint reacquisition; connectivity is not a bypass around Storage/Key admission policy.
 
 ## Completed implementation
 
@@ -57,8 +62,10 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - M2.6: provider-wrapped persistence and durable `KRG1` registry with canonical owner/key/version binding, transactional publication, durable tombstones, provider restart recovery and end-to-end Key Service restart tests.
 - M2.7: trusted system/profile/application protection scopes, strict downward hierarchy policy, opaque provider root references, `HierarchicalKeyProvider`, bounded `KeyHierarchy`, and `MonotonicSecurityState` interface. M2.7 is a provider/security contract; it does not claim a production TPM/TEE/HSM implementation or host-filesystem anti-rollback.
 - M2.8: supervised host/CI `system.keys`, trusted private state/control capabilities, application lifecycle key policy, hierarchy-backed persistent key generation/rotation, generation-aware App Manager policy replay, uninstall revocation without implicit key destruction, stale-capability restart semantics, compact live-endpoint polling, and GCC/Clang/ASan/native-AArch64 product gates.
+- M2.9: shared pidfd-backed boot-scoped `ProcessAuthority`, bounded trusted multi-service `ServiceBroker`, application bootstrap v2 typed service-handle transfer, and one `PeerIdentity` across Storage + Keys.
+- M2.10: long-lived private `PlatformServiceSession`, exact runtime credential validation, bootstrap ServiceId allow-listing, explicit fresh endpoint reacquisition after Storage/Key restart, unchanged boot-scoped identity, stale old capabilities, bounded App Manager servicing, and end-to-end restart/recovery gates.
 
-Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_PRIVATE_STORAGE.md`, `docs/M2_1_STORAGE_SERVICE.md`, `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`, `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`, `docs/M2_6_KEY_PERSISTENCE.md`, `docs/M2_7_KEY_HIERARCHY.md`, and `docs/M2_8_KEY_SERVICE_PRODUCT_INTEGRATION.md` before changing those substrates.
+Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_PRIVATE_STORAGE.md`, `docs/M2_1_STORAGE_SERVICE.md`, `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`, `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`, `docs/M2_6_KEY_PERSISTENCE.md`, `docs/M2_7_KEY_HIERARCHY.md`, `docs/M2_8_KEY_SERVICE_PRODUCT_INTEGRATION.md`, `docs/M2_9_SERVICE_BROKER.md`, and `docs/M2_10_RUNTIME_SERVICE_SESSION.md` before changing those substrates.
 
 ## Storage invariants
 
@@ -92,34 +99,51 @@ Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_P
 - Uninstall/revocation disables Key authority before process teardown but retains durable keys unless an explicit destruction policy is added.
 - `MonotonicSecurityState` is only an interface boundary. Do not claim anti-rollback until KRG publication is integrated with a real hardware/verified-boot monotonic source using a reviewed crash-consistent protocol.
 
+## Multi-service/runtime-session invariants
+
+- `ProcessAuthority` is the owner of boot-scoped process identity. Service Supervisors publish that authority; they do not independently mint a different logical identity for the same live process.
+- `ServiceBroker` is trusted bounded composition machinery, not public discovery. A process must already be attached to a service before `connect_current()` can mint a fresh main endpoint.
+- Bootstrap v2 is the reviewed typed source of an application's allowed platform ServiceIds.
+- The bootstrap channel may remain as the private runtime session after READY. Its requests use explicit little-endian bounded payloads and successful replies transfer exactly one current-generation endpoint.
+- Runtime request sender credentials come from `SCM_CREDENTIALS`; they must match the broker-owned kernel evidence and the already-bound `PeerIdentity`.
+- Possessing or inheriting fd 3 is not authority. A forked/unregistered process must not inherit the parent's runtime service access.
+- A service generation change preserves the live application's `PeerIdentity` but not old channel/object capability liveness.
+- `PlatformServiceSession::acquire()` is a one-shot operation. `service::not_running` is an explicit transient lifecycle state; do not introduce hidden retry threads. Higher layers may retry deliberately.
+- App Manager services a bounded number of runtime packets per maintain iteration; preserve low idle work and prevent a chatty application from monopolizing lifecycle processing.
+- Uninstall closes the private runtime session before broker/process authority teardown.
+
 ## CI boundary
 
 M0 is a frozen foundation gate. M0 CTests carry the explicit `m0` label; the M0 workflow selects that label rather than accidentally running M1/M2 tests. The cross/QEMU gate additionally excludes supervisor/Landlock tests that require native kernel process semantics. Native AArch64 remains the authoritative full-kernel behavior gate.
 
-Do not "fix" an M0 QEMU failure by weakening a later M1/M2 test. First verify whether the test is actually qemu-user-safe. M1 and M2 have their own GCC, Clang and native-AArch64 gates. Key product integration additionally runs ASan/UBSan.
+Do not "fix" an M0 QEMU failure by weakening a later M1/M2 test. First verify whether the test is actually qemu-user-safe. M1 and M2 have their own GCC, Clang and native-AArch64 gates. Key product integration and the M2 broker/runtime line additionally run ASan/UBSan.
+
+M2-only tests must not accidentally match legacy M1 test-name selection. Use explicit M2 CTest labels and keep M1's signal limited to its package/App Manager foundation.
 
 ## References
 
 Read `docs/REFERENCE_NOTES_2026_08_08.md` and the milestone-specific design notes before architecture-sensitive changes. References are design evidence, not instructions to copy old vendor APIs, obsolete crypto suites, historical Symbian ABI details, educational kernel architectures, or legacy cellular security mechanisms.
 
-For kernel/BSP work, preserve an upstream-first Linux strategy and small reviewable patches. For C++ core code, prefer type-rich lightweight abstractions, RAII, deterministic ownership and moves. For encryption design, borrow key-hierarchy/boot-integrity principles from historical full-disk-encryption systems without copying their obsolete algorithm choices. For service architecture, preserve centralized trusted policy and explicit process/service boundaries rather than exposing cryptographic implementation choices to apps.
+For kernel/BSP work, preserve an upstream-first Linux strategy and small reviewable patches. For C++ core code, prefer type-rich lightweight abstractions, RAII, deterministic ownership and moves. For encryption design, borrow key-hierarchy/boot-integrity principles from historical full-disk-encryption systems without copying their obsolete algorithm choices. For service architecture, preserve centralized trusted policy and explicit process/service boundaries rather than exposing cryptographic implementation choices to apps. Symbian Publish-and-Subscribe/system-server material may guide explicit system-state observation and resource ownership, but ENML keeps its own typed bounded IPC and capability model.
 
-## Current next milestone: M2.9 identity-preserving multi-service broker
+## Current next track: display/compositor/UI foundation
 
-M2.8 intentionally stopped short of giving launched applications a Key Service connection because the existing Supervisor is a single-service prototype with a per-instance ProcessId allocator. Registering one native application process separately with Storage and Key supervisors would produce conflicting logical ProcessIds and violate ENML's trusted identity model.
+M0, M1, and the M2 storage/key/multi-service runtime substrate are complete. Do not keep broadening `ServiceBroker` merely because another global service could be added to it.
 
-Required direction:
+Required direction for the next product track:
 
-1. Introduce one boot-scoped process identity authority shared by service publication/brokering. A native process receives exactly one logical `ProcessId`, one durable `PrincipalId`, and one `UserId` for authorization context.
-2. Add a narrow service-directory/connection-broker mechanism that distributes authorized service channels without accepting caller-selected native fds, service implementation paths, principals or identity payload claims.
-3. Preserve per-message kernel credential validation at service boundaries. Brokered channel possession alone must not silently override trusted sender identity.
-4. Make `system.storage` and `system.keys` consume process mappings published from the same authoritative process record.
-5. Extend application bootstrap with a reviewed typed way to receive additional platform-service endpoints. Do not overload arbitrary fixed fds indefinitely without a versioned bootstrap contract.
-6. Keep old service-generation channels stale after restart. Reconnection/reacquisition is explicit and never mutates an existing object endpoint into a connection to a new generation.
-7. Keep lifecycle policy separate from connection brokering: App Manager remains the source of desired Storage/Key application policy, while the broker handles process/service connectivity and identity continuity.
-8. Preserve bounded tables, bounded handle transfer, fixed-capacity queues and low idle work. Avoid a general DBus/systemd-style daemon ecosystem.
-9. Add adversarial tests for forged service selection, stolen/inherited broker channels, stale service generations, wrong process identity, duplicate registration, and attempted cross-principal connection acquisition.
-10. Run GCC, Clang, sanitizers and native AArch64 for the broker/product integration while preserving all M0-M2.8 gates.
+1. Introduce the minimal compositor/display service foundation with explicit surface ownership and no application direct access to display devices.
+2. Keep compositor, shell/system UI, input routing and application rendering as distinct trust responsibilities where appropriate.
+3. Define bounded typed scene/surface primitives and frame submission rather than exposing DRM/KMS/fbdev or Linux device nodes as public app ABI.
+4. Preserve frame-deadline awareness, bounded buffering and low idle wakeups from the beginning; phone UX and power efficiency are architectural requirements.
+5. Carry trusted application identity into surface ownership and secure-UI decisions without allowing apps to self-claim surface roles.
+6. Begin semantic accessibility metadata at the UI API boundary instead of retrofitting it after visual rendering is frozen.
+7. Use the supplied BlackBerry/One UI/UX references for workflow, reachability, responsive layout, accessibility and predictable standard components, while deliberately avoiding vendor visual-identity copying.
+8. Keep secure lock/permission/system surfaces visually and technically attributable to trusted system principals.
+9. Continue GCC/Clang/sanitizer/native-AArch64 validation and add deterministic compositor protocol/ownership tests before hardware-specific display work.
+10. Keep hardware/BSP display integration behind the private Linux/driver layer and follow upstream-first kernel/driver practice.
+
+Production TPM/TEE/HSM key providers, verified boot/attestation, hardware monotonic rollback state, telephony/baseband integration and recovery remain separate later tracks; do not fake them in the compositor milestone.
 
 ## Build and test
 
@@ -143,4 +167,4 @@ cmake --build build/host-clang
 ctest --test-dir build/host-clang --output-on-failure
 ```
 
-M2 process-sensitive tests must run on GCC, Clang and native AArch64. Do not add them to the M0 qemu-user-safe set unless they are explicitly proven safe there.
+Process-sensitive tests must run on GCC, Clang and native AArch64. Do not add them to the M0 qemu-user-safe set unless they are explicitly proven safe there.
