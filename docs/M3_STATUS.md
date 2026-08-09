@@ -85,6 +85,10 @@ Implemented in the current branch:
 - deterministic fixed-pool collection recycler retaining overlapping item slots and reusing the lowest free slots
 - strong 64-bit `CollectionItemKey` identity separate from mutable collection index
 - keyed recycler binding that preserves a materialized semantic slot across insertion/reordering when the logical item key remains stable
+- strong `CollectionRevision` plus bounded `CollectionDataSnapshot` for one logical data-source generation
+- revision-scoped collection data-source seam: snapshot capture plus stable-key lookup for only the current captured revision
+- stale collection-revision rejection so one materialization pass cannot mix keys from two source states
+- zero/duplicate-key and malformed-source rejection before recycler binding
 - immutable renderer snapshot with revision tracking
 - bounded renderer dirty/removal delta and full-resync fallback on bookkeeping overflow
 - semantic design token table independent of concrete vendor colors/assets
@@ -106,26 +110,27 @@ Implemented in the current branch:
 - platform-owned semantic font-family roles and bounded fallback chains without font paths or vendor family names in UI ABI
 - renderer-private bounded shaped-text contract: at most 160 glyph records, 32 font/direction runs and 16 lines per semantic text value
 - shaped-output validation against UTF-8 cluster boundaries, semantic fallback families, run direction, line partitioning and logical geometry bounds
+- renderer-owned `TextShaperBackend` seam with validated `shape_text()` handoff and explicit unavailable/failed/malformed backend errors
 - text measurement derived from validated shaped glyph advances rather than UTF-8 byte/code-point counts
 - text scaling from 100% through 300% and minimum logical touch-target policy
 - large-text tests proving row reflow and reduced visible collection window size
 - phone/tablet recomposition tests preserving semantic node identity
 - adversarial unit tests for malformed UTF-8, oversized/forged labels, stale node IDs, depth/child bounds, role/state/action misuse, focus transfer and accessibility projection
 - responsive layout tests for phone/tablet-like viewports, safe insets, policy changes and invalid viewport/policy inputs
-- collection-window/recycler tests for overscroll, deep scrolling, slot retention/reuse, stable-key mutation, duplicate/zero-key rejection, window limits and out-of-window access
+- collection-window/recycler/source tests for overscroll, deep scrolling, slot retention/reuse, stable-key mutation, revision advance/stale-snapshot rejection, duplicate/zero-key rejection, window limits and out-of-window access
 - renderer snapshot/delta and resolved-command tests including quality/accessibility/capability fallback
-- shaped-text tests including multi-line measurement, non-monotonic RTL cluster order, invalid UTF-8 cluster boundaries, fallback-family rejection and extent limits
+- shaped-text tests including backend validation, multi-line measurement, non-monotonic RTL cluster order, invalid UTF-8 cluster boundaries, fallback-family rejection and extent limits
 - dedicated GCC, Clang, ASan/UBSan and native AArch64 semantic-UI gates
 
-The earlier deterministic renderer-command/font-fallback baseline passed GCC, Clang, ASan/UBSan and native AArch64. The current head adds stable collection keys, shaped-output validation/measurement and renderer capability fallbacks; those additions must pass the same four-way M3 UI gate before they are treated as validated.
+The renderer-command, semantic font fallback, bounded shaping contract/backend seam, stable-key recycler and renderer capability work through commit `f4d30bd54b2494aabc92f687814be3ccb86a64e2` passed GCC, Clang, ASan/UBSan and native AArch64. The current head extends collections with revisioned data-source snapshots and stale-snapshot rejection; it must pass the same four-way M3 UI gate before that extension is treated as validated.
 
 See `docs/M3_2_SEMANTIC_UI_FOUNDATION.md`, `docs/M3_2_ENML_VISUAL_LANGUAGE.md`, `docs/REFERENCE_ANDROID_UI_DESIGN.md`, and `docs/REFERENCE_NOTES_2026_08_09_UI.md`.
 
 Remaining M3.2 work:
 
-- actual renderer-owned shaping/font-provider integration using platform-owned font assets; the bounded shaped-output contract now exists, but ENML does not yet ship a production shaper
+- actual renderer-owned shaping/font-provider integration using platform-owned font assets; the bounded shaper seam exists, but ENML does not yet ship a production shaper
 - line breaking, bidi paragraph resolution and real measurement/reflow integration above the validated shaping contract
-- collection data-source/mutation protocol above the now-stable item-key/recycler identity contract
+- collection item-content publication and mutation/change notification above the revisioned snapshot/key contract
 - bounded opaque-first 2D material rasterization before live translucency/blur
 - public app-facing semantic UI API/OSIDL after the in-process contracts stabilize
 - platform accessibility service/bridge above semantic snapshots
