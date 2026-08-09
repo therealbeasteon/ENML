@@ -2,12 +2,12 @@
 
 ## M3.0 — display/compositor ownership foundation
 
-Status: implementation complete on the M3.0 branch; merge is gated on final branch-wide CI.
+Status: complete and merged.
 
 Implemented:
 
 - additive stable `ErrorDomain::display`
-- new no-exceptions/no-RTTI `core/osdisplay` library
+- no-exceptions/no-RTTI `core/osdisplay` library
 - strong 64-bit `SurfaceId`
 - bounded display size, safe insets, refresh timing and compositor scheduling margin
 - four trusted surface roles: application, popup, system chrome, secure system
@@ -33,17 +33,48 @@ See `docs/M3_0_DISPLAY_COMPOSITOR_FOUNDATION.md`.
 
 M3.0 deliberately does not expose DRM/KMS/fbdev/device nodes, raw global z values, GPU APIs, or pixel-buffer descriptors as public application ABI.
 
-## Next: M3.1 — typed shared buffers + supervised compositor service
+## M3.1 — typed shared buffers + supervised compositor service
+
+Status: implementation complete on PR #25; merge is gated on the final branch head remaining green.
+
+Implemented:
+
+- strong generation-scoped `BufferId` and `SurfaceId` namespaces
+- generation bits derive from trusted Supervisor bootstrap state, never from application payloads
+- stale semantic display IDs cannot alias a replacement compositor generation
+- fixed 48-buffer global table and eight-buffer per-principal limit
+- 24 MiB per-buffer, 48 MiB per-principal and 128 MiB global byte ceilings
+- Linux memfd backing with CLOEXEC, exact size and grow/shrink/write seal policy
+- move-only `SharedBufferLease` ownership
+- exact `PeerIdentity` buffer ownership and process revocation
+- frame submissions bind compositor-owned surface authority to semantic `BufferId`
+- buffer release/revocation invalidates scene entries still presenting that buffer
+- real supervised `system.compositor` service
+- trusted identity publication through the existing pidfd-backed `IdentityRegistry`
+- per-message `SCM_CREDENTIALS` validation before public compositor operations
+- typed create-surface, allocate-buffer and frame-submit service operations
+- exact Supervisor generation placed into `BootstrapRecordV1.boot_generation`
+- restart integration proving old service channels stay dead, fresh endpoint reacquisition works, live application `PeerIdentity` remains unchanged, and old SurfaceId/BufferId values do not collide with new-generation objects
+- M3 display CI builds/runs focused gates on GCC, Clang, ASan/UBSan and native AArch64
+
+See `docs/M3_1_SHARED_BUFFER_COMPOSITOR_SERVICE.md` and the M3.1 PR.
+
+## Next: M3.2 — bounded semantic UI tree + accessibility foundation
 
 The next slice should:
 
-- add bounded move-only shared pixel-buffer capabilities with explicit format/stride/size metadata;
-- keep allocation/import authority inside the compositor/backend rather than letting apps choose DRM/KMS objects;
-- enforce per-principal and global buffer-byte budgets;
-- make submitted frame slots refer to compositor-authorized buffer capabilities rather than metadata-only slots;
-- add a real supervised `system.compositor` service using the existing `ProcessAuthority` / `ServiceBroker` identity model;
-- derive every public surface operation from trusted `RequestContext.peer`;
-- preserve secure-system role assignment as private trusted policy, not an app request claim;
-- prove stale buffer/surface endpoints after compositor restart and fresh reacquisition through the M2.10 runtime-service session;
-- keep frame work bounded and avoid hidden background renderer threads until the backend requires reviewed concurrency;
-- validate under GCC, Clang, sanitizers and native AArch64 before hardware-specific DRM/KMS work.
+- add a bounded hierarchical semantic UI tree above compositor surfaces and pixel buffers;
+- define a small initial standard-role vocabulary (container, text, image, button, toggle, text field, list/collection item) without freezing vendor visual identity;
+- carry explicit enabled/focused/selected/checked/pressed/visible state and typed actions separately from pixels;
+- define logical/density-independent layout units from trusted display metrics and safe insets;
+- support simple responsive recomposition, including one-pane vs two-pane list/detail structure from the same semantic content;
+- introduce theme/design-system tokens separately from tree structure so typography/spacing/color/shape can evolve without changing semantic ABI;
+- bound tree depth, node count, children per node, text/resource metadata and traversal work;
+- add a platform-owned accessibility projection from semantic nodes rather than attempting to infer accessibility from compositor pixels;
+- introduce deterministic focus/event dispatch semantics without opening direct input-device authority to applications;
+- establish collection virtualization/recycling rules so large lists do not require unbounded live render nodes;
+- prohibit blocking storage/network/media work from layout/render/event-dispatch hot paths;
+- keep compositor, input router, semantic UI framework and shell/system UI as distinct responsibilities;
+- validate with GCC, Clang, sanitizers and native AArch64 before adding complex animation or hardware graphics backends.
+
+Reference guidance for M3.2 is recorded in `docs/REFERENCE_NOTES_2026_08_09_UI.md` and `docs/REFERENCE_ANDROID_UI_DESIGN.md`. Android-specific Activities/Fragments/XML/resource conventions are examples only and are not ENML ABI.
