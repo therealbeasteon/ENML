@@ -3,6 +3,7 @@ add_library(emnl_key_service STATIC
     src/service.cpp
     src/policy.cpp
     src/control.cpp
+    src/product_store.cpp
 )
 
 add_library(emnl::key_service ALIAS emnl_key_service)
