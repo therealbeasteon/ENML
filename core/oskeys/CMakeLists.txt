@@ -1,5 +1,6 @@
 add_library(oskeys STATIC
     src/registry.cpp
+    src/random_id_linux.cpp
 )
 
 add_library(emnl::oskeys ALIAS oskeys)
