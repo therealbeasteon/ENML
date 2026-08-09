@@ -206,10 +206,10 @@ os::core::Result<RenderCommandBuffer> build_render_commands(
         auto contour_result = resolve_contour(node.spec.bounds, visual.token.curve);
         if (!contour_result) return contour_result.error();
 
-        auto typography_result = typography_metrics(
+        auto text_style_result = resolve_text_style(
             visual.token.typography,
             options.text_scale_percent);
-        if (!typography_result) return typography_result.error();
+        if (!text_style_result) return text_style_result.error();
 
         SemanticText visual_text {};
         if (node.spec.role == UiRole::text) visual_text = node.spec.label;
@@ -224,7 +224,8 @@ os::core::Result<RenderCommandBuffer> build_render_commands(
             .content = content_kind(node.spec.role),
             .visual = visual,
             .contour = contour_result.value(),
-            .typography = typography_result.value(),
+            .typography = text_style_result.value().metrics,
+            .font_fallbacks = text_style_result.value().fallback,
             .visual_text = visual_text,
             .focus_visible = node.spec.state.focused,
         };
