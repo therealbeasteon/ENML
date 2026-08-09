@@ -7,6 +7,7 @@ add_library(osui STATIC
     src/text.cpp
     src/renderer.cpp
     src/raster.cpp
+    src/motion.cpp
 )
 add_library(emnl::osui ALIAS osui)
 
