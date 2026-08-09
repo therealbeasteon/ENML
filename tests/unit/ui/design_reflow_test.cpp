@@ -28,9 +28,58 @@ int main() {
     assert(primary.value().foreground == os::ui::ColorRole::on_accent);
     assert(primary.value().background == os::ui::ColorRole::accent);
     assert(primary.value().typography == os::ui::TypographyRole::label);
+    assert(primary.value().material == os::ui::OpticalMaterialRole::opaque);
+    assert(primary.value().depth == os::ui::DepthRole::raised);
+    assert(primary.value().curve == os::ui::CurveRole::continuous);
+    assert(primary.value().motion == os::ui::MotionRole::responsive);
 
     assert(os::ui::style_token_valid(os::ui::StyleTokenId{}));
+    assert(os::ui::style_token_valid(os::ui::style_tokens::translucent_panel));
+    assert(os::ui::style_token_valid(os::ui::style_tokens::hero_surface));
     assert(!os::ui::style_token_valid(os::ui::StyleTokenId{500U}));
+
+    auto optical = os::ui::resolve_visual_style(os::ui::style_tokens::translucent_panel);
+    assert(optical);
+    assert(optical.value().token.material == os::ui::OpticalMaterialRole::crystal);
+    assert(optical.value().material.opacity_percent < 100U);
+    assert(optical.value().material.backdrop_blur_q6 > 0U);
+    assert(optical.value().material.live_backdrop_allowed);
+    assert(optical.value().curve.asymmetric_contour_allowed);
+    assert(optical.value().curve.smoothing_percent > 50U);
+    assert(optical.value().motion.duration_ms > 0U);
+    assert(optical.value().motion.spatial_motion_allowed);
+
+    auto reduced = os::ui::resolve_visual_style(
+        os::ui::style_tokens::translucent_panel,
+        os::ui::VisualPreferences{
+            .reduce_transparency = true,
+            .reduce_motion = true,
+        });
+    assert(reduced);
+    assert(reduced.value().material.opacity_percent == 100U);
+    assert(reduced.value().material.backdrop_blur_q6 == 0U);
+    assert(!reduced.value().material.live_backdrop_allowed);
+    assert(reduced.value().motion.duration_ms == 80U);
+    assert(reduced.value().motion.curve == os::ui::MotionCurve::ease_out);
+    assert(!reduced.value().motion.spatial_motion_allowed);
+
+    auto contrast = os::ui::resolve_visual_style(
+        os::ui::style_tokens::hero_surface,
+        os::ui::VisualPreferences{.high_contrast = true});
+    assert(contrast);
+    assert(contrast.value().material.opacity_percent == 100U);
+    assert(contrast.value().token.material_tint == os::ui::ColorRole::transparent);
+
+    auto hero_depth = os::ui::depth_metrics(os::ui::DepthRole::hero);
+    auto floating_depth = os::ui::depth_metrics(os::ui::DepthRole::floating);
+    assert(hero_depth && floating_depth);
+    assert(hero_depth.value().offset_q6 > floating_depth.value().offset_q6);
+    assert(hero_depth.value().blur_q6 > floating_depth.value().blur_q6);
+
+    auto invalid_material = os::ui::material_metrics(
+        static_cast<os::ui::OpticalMaterialRole>(255U));
+    assert(!invalid_material);
+    expect_ui_error(invalid_material.error(), os::ui::errors::invalid_style);
 
     auto normal = os::ui::typography_metrics(os::ui::TypographyRole::body, 100U);
     auto large = os::ui::typography_metrics(os::ui::TypographyRole::body, 200U);
