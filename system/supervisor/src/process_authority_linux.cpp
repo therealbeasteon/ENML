@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <cstdio>
 #include <limits>
+#include <utility>
 
 #include <fcntl.h>
 #include <poll.h>
@@ -160,7 +161,7 @@ ProcessAuthority::acquire(
 
     auto pidfd_result = open_pidfd(native_pid);
     if (!pidfd_result) return pidfd_result.error();
-    auto pidfd = static_cast<os::core::NativeHandle&&>(pidfd_result).value();
+    auto pidfd = std::move(pidfd_result).value();
 
     auto credentials = credentials_for_pid(native_pid);
     if (!credentials) return credentials.error();
@@ -187,7 +188,7 @@ ProcessAuthority::acquire(
         .occupied = true,
         .references = 1U,
         .record = record,
-        .pidfd = static_cast<os::core::NativeHandle&&>(pidfd),
+        .pidfd = std::move(pidfd),
     };
     return record;
 }
