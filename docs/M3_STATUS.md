@@ -31,11 +31,9 @@ Implemented:
 
 See `docs/M3_0_DISPLAY_COMPOSITOR_FOUNDATION.md`.
 
-M3.0 deliberately does not expose DRM/KMS/fbdev/device nodes, raw global z values, GPU APIs, or pixel-buffer descriptors as public application ABI.
-
 ## M3.1 — typed shared buffers + supervised compositor service
 
-Status: implementation complete on PR #25; merge is gated on the final branch head remaining green.
+Status: complete and merged in PR #25.
 
 Implemented:
 
@@ -57,24 +55,46 @@ Implemented:
 - restart integration proving old service channels stay dead, fresh endpoint reacquisition works, live application `PeerIdentity` remains unchanged, and old SurfaceId/BufferId values do not collide with new-generation objects
 - M3 display CI builds/runs focused gates on GCC, Clang, ASan/UBSan and native AArch64
 
-See `docs/M3_1_SHARED_BUFFER_COMPOSITOR_SERVICE.md` and the M3.1 PR.
+See `docs/M3_1_SHARED_BUFFER_COMPOSITOR_SERVICE.md`.
 
-## Next: M3.2 — bounded semantic UI tree + accessibility foundation
+## M3.2 — bounded semantic UI tree + accessibility foundation
 
-The next slice should:
+Status: implementation in progress on `m3-2-semantic-ui-foundation`.
 
-- add a bounded hierarchical semantic UI tree above compositor surfaces and pixel buffers;
-- define a small initial standard-role vocabulary (container, text, image, button, toggle, text field, list/collection item) without freezing vendor visual identity;
-- carry explicit enabled/focused/selected/checked/pressed/visible state and typed actions separately from pixels;
-- define logical/density-independent layout units from trusted display metrics and safe insets;
-- support simple responsive recomposition, including one-pane vs two-pane list/detail structure from the same semantic content;
-- introduce theme/design-system tokens separately from tree structure so typography/spacing/color/shape can evolve without changing semantic ABI;
-- bound tree depth, node count, children per node, text/resource metadata and traversal work;
-- add a platform-owned accessibility projection from semantic nodes rather than attempting to infer accessibility from compositor pixels;
-- introduce deterministic focus/event dispatch semantics without opening direct input-device authority to applications;
-- establish collection virtualization/recycling rules so large lists do not require unbounded live render nodes;
-- prohibit blocking storage/network/media work from layout/render/event-dispatch hot paths;
-- keep compositor, input router, semantic UI framework and shell/system UI as distinct responsibilities;
-- validate with GCC, Clang, sanitizers and native AArch64 before adding complex animation or hardware graphics backends.
+Initial implementation now includes:
 
-Reference guidance for M3.2 is recorded in `docs/REFERENCE_NOTES_2026_08_09_UI.md` and `docs/REFERENCE_ANDROID_UI_DESIGN.md`. Android-specific Activities/Fragments/XML/resource conventions are examples only and are not ENML ABI.
+- additive `ErrorDomain::ui`
+- new no-exceptions/no-RTTI `core/osui` library
+- strong `UiNodeId` and separate `StyleTokenId`
+- fixed 256-node semantic tree
+- 32 direct children per node and depth limit 16
+- fixed 160-byte validated UTF-8 semantic labels
+- monotonic node IDs with no stale-ID reuse inside a live tree
+- roles for root/container/text/image/button/toggle/text-field/list/list-item
+- explicit visible/enabled/focused/selected/checked/pressed state
+- typed activate/focus/toggle/set-text/select actions with role validation
+- one focused semantic node at a time
+- effective ancestor visibility checks for focus/actions/accessibility
+- fixed-capacity accessibility projection from semantic nodes rather than pixels
+- decorative accessibility-hidden grouping with descendant re-parenting
+- fixed-point density-independent logical geometry (Q6: 64 units per logical dp)
+- safe-inset-aware responsive single-pane/dual-pane list-detail layout
+- explicit configurable responsive policy rather than device-class probing
+- independent style-token references so semantic structure does not freeze one visual theme
+- adversarial unit tests for malformed UTF-8, oversized/forged labels, stale node IDs, depth/child bounds, role/state/action misuse, focus transfer and accessibility projection
+- responsive layout tests for phone/tablet-like viewports, safe insets, policy changes and invalid viewport/policy inputs
+
+See `docs/M3_2_SEMANTIC_UI_FOUNDATION.md`, `docs/REFERENCE_ANDROID_UI_DESIGN.md`, and `docs/REFERENCE_NOTES_2026_08_09_UI.md`.
+
+Remaining M3.2 work after this foundation:
+
+- bounded collection virtualization/recycling rather than materializing unbounded list children;
+- renderer-facing immutable semantic snapshot and dirty/invalidation model;
+- initial design-system token table for typography/spacing/color/shape without vendor visual identity;
+- public app-facing semantic UI API/OSIDL after the in-process contracts stabilize;
+- platform accessibility service/bridge above the semantic snapshot;
+- deterministic input/focus routing integration without exposing `/dev/input` or compositor internals to apps;
+- tests for large-text/reflow and one-pane/two-pane recomposition using the same semantic content;
+- GCC, Clang, ASan/UBSan and native AArch64 gates before declaring M3.2 complete.
+
+Hardware DRM/KMS/GPU backend work, rich motion/animation, shell visual identity and telephony UI remain later slices.
