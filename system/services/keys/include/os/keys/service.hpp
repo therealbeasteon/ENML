@@ -8,6 +8,7 @@
 #include <os/core/span.hpp>
 #include <os/ipc/channel.hpp>
 #include <os/ipc/rpc.hpp>
+#include <os/keys/ciphertext.hpp>
 #include <os/keys/id_source.hpp>
 #include <os/keys/key.hpp>
 #include <os/keys/registry.hpp>
@@ -19,6 +20,8 @@ inline constexpr os::core::ServiceId key_object_service_id{0x0000F031U};
 inline constexpr std::uint32_t key_create_operation = 1U;
 inline constexpr std::uint32_t key_open_operation = 2U;
 inline constexpr std::uint32_t key_object_destroy_operation = 1U;
+inline constexpr std::uint32_t key_object_encrypt_operation = 2U;
+inline constexpr std::uint32_t key_object_decrypt_operation = 3U;
 inline constexpr std::size_t max_key_objects = 64U;
 
 class KeyObjectHandle final {
@@ -35,6 +38,20 @@ public:
 
     [[nodiscard]] bool valid() const noexcept { return channel_.valid() && descriptor_.valid(); }
     [[nodiscard]] const KeyDescriptor& descriptor() const noexcept { return descriptor_; }
+
+    [[nodiscard]] os::core::Result<std::size_t>
+    encrypt(
+        os::core::ByteSpan plaintext,
+        os::core::ByteSpan aad,
+        os::core::MutableByteSpan envelope_output,
+        os::core::MutableByteSpan scratch) noexcept;
+
+    [[nodiscard]] os::core::Result<std::size_t>
+    decrypt(
+        os::core::ByteSpan envelope,
+        os::core::ByteSpan aad,
+        os::core::MutableByteSpan plaintext_output,
+        os::core::MutableByteSpan scratch) noexcept;
 
     [[nodiscard]] os::core::Result<void>
     destroy(os::core::MutableByteSpan scratch) noexcept;
@@ -86,6 +103,7 @@ public:
 private:
     struct ObjectSlot final {
         bool occupied {false};
+        os::core::PeerIdentity peer {};
         KeyOwner owner {};
         KeyDescriptor descriptor {};
         os::ipc::Channel endpoint {};
@@ -96,6 +114,7 @@ private:
     KeyRegistry* registry_ {nullptr};
     KeyIdSource* id_source_ {nullptr};
     std::array<ObjectSlot, max_key_objects> objects_ {};
+    std::array<std::byte, max_ciphertext_envelope_bytes> operation_buffer_ {};
 
     [[nodiscard]] os::core::Result<void>
     dispatch_main(os::core::MutableByteSpan receive_buffer) noexcept;

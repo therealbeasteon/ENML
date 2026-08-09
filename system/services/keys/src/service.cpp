@@ -1,5 +1,6 @@
 #include <os/keys/service.hpp>
 
+#include <algorithm>
 #include <array>
 #include <cerrno>
 #include <cstddef>
@@ -89,19 +90,6 @@ take_single_endpoint(os::ipc::InboundMessage& message) noexcept {
     return os::ipc::Channel::adopt(std::move(native).value());
 }
 
-[[nodiscard]] bool valid_object_request(const os::ipc::InboundMessage& message) noexcept {
-    const auto& header = message.header();
-    return has_flag(header.flags, os::ipc::WireFlag::request) &&
-        !has_flag(header.flags, os::ipc::WireFlag::response) &&
-        !has_flag(header.flags, os::ipc::WireFlag::event) &&
-        !has_flag(header.flags, os::ipc::WireFlag::error) &&
-        !has_flag(header.flags, os::ipc::WireFlag::oneway) &&
-        !has_flag(header.flags, os::ipc::WireFlag::cancellable) &&
-        header.service_id == key_object_service_id &&
-        header.request_id.value() != 0U &&
-        header.handle_count == 0U;
-}
-
 [[nodiscard]] os::core::Result<os::ipc::InboundMessage>
 object_call(
     os::ipc::Channel& channel,
@@ -157,6 +145,36 @@ object_call(
     return response;
 }
 
+struct CryptoRequestView final {
+    os::core::ByteSpan aad {};
+    os::core::ByteSpan data {};
+};
+
+[[nodiscard]] os::core::Result<CryptoRequestView>
+decode_crypto_request(
+    os::core::ByteSpan payload,
+    std::size_t maximum_data_size) noexcept {
+    os::ipc::Decoder decoder{payload};
+    auto aad_size = decoder.read_u32_le();
+    if (!aad_size) return aad_size.error();
+    auto data_size = decoder.read_u32_le();
+    if (!data_size) return data_size.error();
+
+    const auto aad_count = static_cast<std::size_t>(aad_size.value());
+    const auto data_count = static_cast<std::size_t>(data_size.value());
+    if (aad_count > max_key_aad_bytes || data_count > maximum_data_size) {
+        return key_error(errors::too_large);
+    }
+
+    auto aad = decoder.read_raw(aad_count);
+    if (!aad) return aad.error();
+    auto data = decoder.read_raw(data_count);
+    if (!data) return data.error();
+    auto end = decoder.require_end();
+    if (!end) return ipc_error(os::ipc::errors::protocol_violation);
+    return CryptoRequestView{aad.value(), data.value()};
+}
+
 [[nodiscard]] KeyOwner owner_from_context(const os::ipc::RequestContext& context) noexcept {
     return KeyOwner{
         .principal = context.peer.principal,
@@ -171,6 +189,111 @@ KeyObjectHandle::adopt(os::ipc::Channel channel, KeyDescriptor descriptor) noexc
     if (!channel.valid()) return ipc_error(os::ipc::errors::invalid_channel);
     if (!descriptor.valid()) return key_error(errors::invalid_key);
     return KeyObjectHandle{std::move(channel), descriptor};
+}
+
+os::core::Result<std::size_t>
+KeyObjectHandle::encrypt(
+    os::core::ByteSpan plaintext,
+    os::core::ByteSpan aad,
+    os::core::MutableByteSpan envelope_output,
+    os::core::MutableByteSpan scratch) noexcept {
+    if ((descriptor_.rights & key_rights::encrypt) == 0U) {
+        return key_error(errors::access_denied);
+    }
+    if (plaintext.size() > max_key_plaintext_bytes || aad.size() > max_key_aad_bytes) {
+        return key_error(errors::too_large);
+    }
+    const std::size_t expected_size = ciphertext_fixed_overhead + plaintext.size();
+    if (envelope_output.size() < expected_size) {
+        return key_error(errors::output_too_small);
+    }
+    auto scratch_result = validate_scratch(scratch);
+    if (!scratch_result) return scratch_result.error();
+
+    os::ipc::Encoder encoder{scratch.first(os::ipc::max_inline_payload_size)};
+    auto encoded = encoder.write_u32_le(static_cast<std::uint32_t>(aad.size()));
+    if (!encoded) return encoded.error();
+    encoded = encoder.write_u32_le(static_cast<std::uint32_t>(plaintext.size()));
+    if (!encoded) return encoded.error();
+    encoded = encoder.write_raw(aad);
+    if (!encoded) return encoded.error();
+    encoded = encoder.write_raw(plaintext);
+    if (!encoded) return encoded.error();
+
+    auto call = object_call(
+        channel_,
+        next_request_id_,
+        key_object_encrypt_operation,
+        encoder.written(),
+        scratch);
+    if (!call) return call.error();
+    auto response = std::move(call).value();
+    if (response.handle_count() != 0U || response.payload().size() != expected_size) {
+        return ipc_error(os::ipc::errors::protocol_violation);
+    }
+
+    auto parsed = parse_ciphertext_envelope_v1(response.payload());
+    if (!parsed) return parsed.error();
+    if (parsed.value().header.key_id != descriptor_.id) {
+        return key_error(errors::key_id_mismatch);
+    }
+    if (parsed.value().header.key_version != descriptor_.version) {
+        return key_error(errors::key_version_mismatch);
+    }
+    std::copy(response.payload().begin(), response.payload().end(), envelope_output.begin());
+    return response.payload().size();
+}
+
+os::core::Result<std::size_t>
+KeyObjectHandle::decrypt(
+    os::core::ByteSpan envelope,
+    os::core::ByteSpan aad,
+    os::core::MutableByteSpan plaintext_output,
+    os::core::MutableByteSpan scratch) noexcept {
+    if ((descriptor_.rights & key_rights::decrypt) == 0U) {
+        return key_error(errors::access_denied);
+    }
+    if (aad.size() > max_key_aad_bytes || envelope.size() > max_ciphertext_envelope_bytes) {
+        return key_error(errors::too_large);
+    }
+    auto parsed = parse_ciphertext_envelope_v1(envelope);
+    if (!parsed) return parsed.error();
+    if (parsed.value().header.key_id != descriptor_.id) {
+        return key_error(errors::key_id_mismatch);
+    }
+    if (parsed.value().header.key_version != descriptor_.version) {
+        return key_error(errors::key_version_mismatch);
+    }
+    if (plaintext_output.size() < parsed.value().ciphertext.size()) {
+        return key_error(errors::output_too_small);
+    }
+    auto scratch_result = validate_scratch(scratch);
+    if (!scratch_result) return scratch_result.error();
+
+    os::ipc::Encoder encoder{scratch.first(os::ipc::max_inline_payload_size)};
+    auto encoded = encoder.write_u32_le(static_cast<std::uint32_t>(aad.size()));
+    if (!encoded) return encoded.error();
+    encoded = encoder.write_u32_le(static_cast<std::uint32_t>(envelope.size()));
+    if (!encoded) return encoded.error();
+    encoded = encoder.write_raw(aad);
+    if (!encoded) return encoded.error();
+    encoded = encoder.write_raw(envelope);
+    if (!encoded) return encoded.error();
+
+    auto call = object_call(
+        channel_,
+        next_request_id_,
+        key_object_decrypt_operation,
+        encoder.written(),
+        scratch);
+    if (!call) return call.error();
+    auto response = std::move(call).value();
+    if (response.handle_count() != 0U ||
+        response.payload().size() != parsed.value().ciphertext.size()) {
+        return ipc_error(os::ipc::errors::protocol_violation);
+    }
+    std::copy(response.payload().begin(), response.payload().end(), plaintext_output.begin());
+    return response.payload().size();
 }
 
 os::core::Result<void>
@@ -389,6 +512,7 @@ KeyService::dispatch_main(os::core::MutableByteSpan receive_buffer) noexcept {
 
     auto& slot = objects_[slot_index.value()];
     slot.occupied = true;
+    slot.peer = context.value().peer;
     slot.owner = owner;
     slot.descriptor = descriptor;
     slot.endpoint = std::move(pair[0]);
@@ -428,14 +552,166 @@ KeyService::dispatch_object(std::size_t index, os::core::MutableByteSpan receive
         return received.error();
     }
     auto message = std::move(received).value();
-    if (!valid_object_request(message)) {
+    auto context = os::ipc::validate_rpc_request(
+        message, key_object_service_id, *identity_resolver_);
+    if (!context) {
+        return os::ipc::send_rpc_error(slot.endpoint, message.header(), context.error());
+    }
+    if (context.value().peer != slot.peer) {
         return os::ipc::send_rpc_error(
+            slot.endpoint, message.header(), key_error(errors::access_denied));
+    }
+
+    switch (message.header().operation_id) {
+    case key_object_destroy_operation: {
+        if (!message.payload().empty()) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint,
+                message.header(),
+                ipc_error(os::ipc::errors::protocol_violation));
+        }
+        if ((slot.descriptor.rights & key_rights::destroy) == 0U) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), key_error(errors::access_denied));
+        }
+
+        const KeyId id = slot.descriptor.id;
+        auto destroyed = registry_->destroy(slot.owner, id);
+        if (!destroyed) {
+            return os::ipc::send_rpc_error(slot.endpoint, message.header(), destroyed.error());
+        }
+
+        auto sent = os::ipc::send_rpc_response(slot.endpoint, message.header(), {});
+        clear_slots_for(id);
+        return sent;
+    }
+
+    case key_object_encrypt_operation: {
+        if ((slot.descriptor.rights & key_rights::encrypt) == 0U) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), key_error(errors::access_denied));
+        }
+        auto request = decode_crypto_request(message.payload(), max_key_plaintext_bytes);
+        if (!request) {
+            return os::ipc::send_rpc_error(slot.endpoint, message.header(), request.error());
+        }
+
+        const CiphertextHeaderV1 header{
+            .profile = CryptoProfileId::aes_256_gcm_v1,
+            .key_id = slot.descriptor.id,
+            .key_version = slot.descriptor.version,
+            .ciphertext_size = static_cast<std::uint32_t>(request.value().data.size()),
+        };
+        os::core::MutableByteSpan output{operation_buffer_.data(), operation_buffer_.size()};
+        auto encoded_header = encode_ciphertext_header_v1(header, output);
+        if (!encoded_header) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), encoded_header.error());
+        }
+
+        AeadNonce nonce{};
+        AeadTag tag{};
+        auto sealed = registry_->seal(
+            slot.owner,
+            slot.descriptor.id,
+            slot.descriptor.version,
+            header.profile,
+            output.first(ciphertext_header_bytes),
+            request.value().aad,
+            request.value().data,
+            output.subspan(ciphertext_fixed_overhead, request.value().data.size()),
+            nonce,
+            tag);
+        if (!sealed) {
+            return os::ipc::send_rpc_error(slot.endpoint, message.header(), sealed.error());
+        }
+        if (sealed.value() != request.value().data.size()) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), key_error(errors::provider_failure));
+        }
+
+        std::copy(
+            nonce.bytes.begin(),
+            nonce.bytes.end(),
+            output.subspan(ciphertext_header_bytes, aead_nonce_bytes).begin());
+        std::copy(
+            tag.bytes.begin(),
+            tag.bytes.end(),
+            output.subspan(ciphertext_header_bytes + aead_nonce_bytes, aead_tag_bytes).begin());
+
+        const std::size_t response_size = ciphertext_fixed_overhead + sealed.value();
+        auto sent = os::ipc::send_rpc_response(
             slot.endpoint,
             message.header(),
-            ipc_error(os::ipc::errors::protocol_violation));
+            output.first(response_size));
+        std::fill(
+            operation_buffer_.begin(),
+            operation_buffer_.begin() + static_cast<std::ptrdiff_t>(response_size),
+            std::byte{0});
+        return sent;
     }
-    if (message.header().operation_id != key_object_destroy_operation ||
-        !message.payload().empty()) {
+
+    case key_object_decrypt_operation: {
+        if ((slot.descriptor.rights & key_rights::decrypt) == 0U) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), key_error(errors::access_denied));
+        }
+        auto request = decode_crypto_request(message.payload(), max_ciphertext_envelope_bytes);
+        if (!request) {
+            return os::ipc::send_rpc_error(slot.endpoint, message.header(), request.error());
+        }
+        auto parsed = parse_ciphertext_envelope_v1(request.value().data);
+        if (!parsed) {
+            return os::ipc::send_rpc_error(slot.endpoint, message.header(), parsed.error());
+        }
+        if (parsed.value().header.key_id != slot.descriptor.id) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), key_error(errors::key_id_mismatch));
+        }
+        if (parsed.value().header.key_version != slot.descriptor.version) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), key_error(errors::key_version_mismatch));
+        }
+
+        AeadNonce nonce{};
+        AeadTag tag{};
+        std::copy(parsed.value().nonce.begin(), parsed.value().nonce.end(), nonce.bytes.begin());
+        std::copy(parsed.value().tag.begin(), parsed.value().tag.end(), tag.bytes.begin());
+
+        os::core::MutableByteSpan output{operation_buffer_.data(), operation_buffer_.size()};
+        auto opened = registry_->open(
+            slot.owner,
+            slot.descriptor.id,
+            slot.descriptor.version,
+            parsed.value().header.profile,
+            parsed.value().authenticated_header,
+            request.value().aad,
+            nonce,
+            tag,
+            parsed.value().ciphertext,
+            output.first(max_key_plaintext_bytes));
+        if (!opened) {
+            std::fill(operation_buffer_.begin(), operation_buffer_.end(), std::byte{0});
+            return os::ipc::send_rpc_error(slot.endpoint, message.header(), opened.error());
+        }
+        if (opened.value() != parsed.value().ciphertext.size()) {
+            std::fill(operation_buffer_.begin(), operation_buffer_.end(), std::byte{0});
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), key_error(errors::provider_failure));
+        }
+
+        auto sent = os::ipc::send_rpc_response(
+            slot.endpoint,
+            message.header(),
+            output.first(opened.value()));
+        std::fill(
+            operation_buffer_.begin(),
+            operation_buffer_.begin() + static_cast<std::ptrdiff_t>(opened.value()),
+            std::byte{0});
+        return sent;
+    }
+
+    default:
         return os::ipc::send_rpc_error(
             slot.endpoint,
             message.header(),
@@ -443,20 +719,6 @@ KeyService::dispatch_object(std::size_t index, os::core::MutableByteSpan receive
                 os::core::ErrorDomain::service,
                 os::core::errors::service::unknown_operation));
     }
-    if ((slot.descriptor.rights & key_rights::destroy) == 0U) {
-        return os::ipc::send_rpc_error(
-            slot.endpoint, message.header(), key_error(errors::access_denied));
-    }
-
-    const KeyId id = slot.descriptor.id;
-    auto destroyed = registry_->destroy(slot.owner, id);
-    if (!destroyed) {
-        return os::ipc::send_rpc_error(slot.endpoint, message.header(), destroyed.error());
-    }
-
-    auto sent = os::ipc::send_rpc_response(slot.endpoint, message.header(), {});
-    clear_slots_for(id);
-    return sent;
 }
 
 } // namespace os::keys

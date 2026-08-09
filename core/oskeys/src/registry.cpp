@@ -19,6 +19,29 @@ const KeyRecord* KeyRegistry::find(KeyId id) const noexcept {
     return nullptr;
 }
 
+os::core::Result<const KeyRecord*>
+KeyRegistry::authorize(
+    KeyOwner caller,
+    KeyId id,
+    std::uint32_t key_version,
+    RightsMask required_right) const noexcept {
+    if (!id.valid() || key_version == 0U) return key_error(errors::invalid_key);
+    if (!valid_rights(required_right)) return key_error(errors::invalid_rights);
+
+    const auto* record = find(id);
+    if (record == nullptr) return key_error(errors::not_found);
+    if (record->owner != caller) return key_error(errors::access_denied);
+    if (record->destroyed) return key_error(errors::destroyed);
+    if (record->descriptor.version != key_version) {
+        return key_error(errors::key_version_mismatch);
+    }
+    if ((record->descriptor.rights & required_right) != required_right) {
+        return key_error(errors::access_denied);
+    }
+    if (!record->provider_key.valid()) return key_error(errors::provider_failure);
+    return record;
+}
+
 os::core::Result<KeyDescriptor>
 KeyRegistry::create(
     KeyOwner owner,
@@ -95,6 +118,56 @@ KeyRegistry::provider_reference(
     }
     if (!record->provider_key.valid()) return key_error(errors::provider_failure);
     return record->provider_key;
+}
+
+os::core::Result<std::size_t>
+KeyRegistry::seal(
+    KeyOwner caller,
+    KeyId id,
+    std::uint32_t key_version,
+    CryptoProfileId profile,
+    os::core::ByteSpan envelope_aad,
+    os::core::ByteSpan caller_aad,
+    os::core::ByteSpan plaintext,
+    os::core::MutableByteSpan ciphertext,
+    AeadNonce& nonce,
+    AeadTag& tag) noexcept {
+    auto authorized = authorize(caller, id, key_version, key_rights::encrypt);
+    if (!authorized) return authorized.error();
+    return provider_->seal(
+        authorized.value()->provider_key,
+        profile,
+        envelope_aad,
+        caller_aad,
+        plaintext,
+        ciphertext,
+        nonce,
+        tag);
+}
+
+os::core::Result<std::size_t>
+KeyRegistry::open(
+    KeyOwner caller,
+    KeyId id,
+    std::uint32_t key_version,
+    CryptoProfileId profile,
+    os::core::ByteSpan envelope_aad,
+    os::core::ByteSpan caller_aad,
+    const AeadNonce& nonce,
+    const AeadTag& tag,
+    os::core::ByteSpan ciphertext,
+    os::core::MutableByteSpan plaintext) noexcept {
+    auto authorized = authorize(caller, id, key_version, key_rights::decrypt);
+    if (!authorized) return authorized.error();
+    return provider_->open(
+        authorized.value()->provider_key,
+        profile,
+        envelope_aad,
+        caller_aad,
+        nonce,
+        tag,
+        ciphertext,
+        plaintext);
 }
 
 os::core::Result<void>

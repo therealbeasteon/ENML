@@ -2,8 +2,11 @@
 
 #include <array>
 #include <cstddef>
+#include <cstdint>
 
 #include <os/core/result.hpp>
+#include <os/core/span.hpp>
+#include <os/keys/crypto.hpp>
 #include <os/keys/key.hpp>
 #include <os/keys/provider.hpp>
 
@@ -40,6 +43,32 @@ public:
     [[nodiscard]] os::core::Result<ProviderKeyReference>
     provider_reference(KeyOwner caller, KeyId id, RightsMask required_right) const noexcept;
 
+    [[nodiscard]] os::core::Result<std::size_t>
+    seal(
+        KeyOwner caller,
+        KeyId id,
+        std::uint32_t key_version,
+        CryptoProfileId profile,
+        os::core::ByteSpan envelope_aad,
+        os::core::ByteSpan caller_aad,
+        os::core::ByteSpan plaintext,
+        os::core::MutableByteSpan ciphertext,
+        AeadNonce& nonce,
+        AeadTag& tag) noexcept;
+
+    [[nodiscard]] os::core::Result<std::size_t>
+    open(
+        KeyOwner caller,
+        KeyId id,
+        std::uint32_t key_version,
+        CryptoProfileId profile,
+        os::core::ByteSpan envelope_aad,
+        os::core::ByteSpan caller_aad,
+        const AeadNonce& nonce,
+        const AeadTag& tag,
+        os::core::ByteSpan ciphertext,
+        os::core::MutableByteSpan plaintext) noexcept;
+
     [[nodiscard]] os::core::Result<void>
     destroy(KeyOwner caller, KeyId id) noexcept;
 
@@ -49,6 +78,13 @@ public:
 private:
     [[nodiscard]] KeyRecord* find(KeyId id) noexcept;
     [[nodiscard]] const KeyRecord* find(KeyId id) const noexcept;
+
+    [[nodiscard]] os::core::Result<const KeyRecord*>
+    authorize(
+        KeyOwner caller,
+        KeyId id,
+        std::uint32_t key_version,
+        RightsMask required_right) const noexcept;
 
     KeyProvider* provider_ {nullptr};
     std::array<KeyRecord, max_key_records> records_ {};
