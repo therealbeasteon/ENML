@@ -31,6 +31,8 @@ inline constexpr std::uint32_t invalid_render_snapshot = 21U;
 inline constexpr std::uint32_t invalid_render_options = 22U;
 inline constexpr std::uint32_t invalid_text_shape = 23U;
 inline constexpr std::uint32_t text_shape_limit = 24U;
+inline constexpr std::uint32_t text_shaper_unavailable = 25U;
+inline constexpr std::uint32_t text_shaper_failed = 26U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
