@@ -1,0 +1,59 @@
+name: M2 Service Broker
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  broker-gcc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build shared identity gate
+        run: cmake --build --preset host-debug --target supervisor_shared_identity_test --parallel 2
+      - name: Test shared identity gate
+        run: ctest --preset host-debug --output-on-failure -L '^m2-broker$'
+
+  broker-sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure ASan and UBSan
+        run: cmake --preset host-asan
+      - name: Build shared identity gate with sanitizers
+        run: cmake --build --preset host-asan --target supervisor_shared_identity_test --parallel 2
+      - name: Test shared identity gate with sanitizers
+        run: ctest --preset host-asan --output-on-failure -L '^m2-broker$'
+
+  broker-clang:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >-
+          cmake -S . -B build/m2-broker-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Build shared identity gate
+        run: cmake --build build/m2-broker-clang --target supervisor_shared_identity_test --parallel 2
+      - name: Test shared identity gate
+        run: ctest --test-dir build/m2-broker-clang --output-on-failure -L '^m2-broker$'
+
+  broker-arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm AArch64
+        run: test "$(uname -m)" = "aarch64"
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build shared identity gate natively
+        run: cmake --build --preset host-debug --target supervisor_shared_identity_test --parallel 2
+      - name: Test shared identity gate natively
+        run: ctest --preset host-debug --output-on-failure -L '^m2-broker$'
