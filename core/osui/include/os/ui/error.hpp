@@ -1,0 +1,32 @@
+#pragma once
+
+#include <cstdint>
+
+#include <os/core/error.hpp>
+
+namespace os::ui {
+
+namespace errors {
+inline constexpr std::uint32_t invalid_tree = 1U;
+inline constexpr std::uint32_t invalid_node = 2U;
+inline constexpr std::uint32_t node_limit = 3U;
+inline constexpr std::uint32_t child_limit = 4U;
+inline constexpr std::uint32_t depth_limit = 5U;
+inline constexpr std::uint32_t invalid_parent = 6U;
+inline constexpr std::uint32_t invalid_role = 7U;
+inline constexpr std::uint32_t invalid_bounds = 8U;
+inline constexpr std::uint32_t invalid_text = 9U;
+inline constexpr std::uint32_t text_too_long = 10U;
+inline constexpr std::uint32_t invalid_state = 11U;
+inline constexpr std::uint32_t invalid_action = 12U;
+inline constexpr std::uint32_t root_immutable = 13U;
+inline constexpr std::uint32_t no_focus = 14U;
+inline constexpr std::uint32_t invalid_viewport = 15U;
+inline constexpr std::uint32_t id_exhausted = 16U;
+}
+
+[[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
+    return os::core::make_error(os::core::ErrorDomain::ui, code);
+}
+
+} // namespace os::ui
