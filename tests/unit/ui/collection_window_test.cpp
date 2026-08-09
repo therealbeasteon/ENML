@@ -32,6 +32,24 @@ void expect_ui_error(const os::core::Error& error, std::uint32_t code) {
     return false;
 }
 
+[[nodiscard]] std::uint16_t slot_for_key(
+    const os::ui::CollectionRecyclePlan& plan,
+    os::ui::CollectionItemKey key) {
+    for (std::uint16_t index = 0U; index < plan.count; ++index) {
+        if (plan.bindings[index].item_key == key) return plan.bindings[index].slot;
+    }
+    return os::ui::max_materialized_collection_items;
+}
+
+[[nodiscard]] bool retained_key(
+    const os::ui::CollectionRecyclePlan& plan,
+    os::ui::CollectionItemKey key) {
+    for (std::uint16_t index = 0U; index < plan.count; ++index) {
+        if (plan.bindings[index].item_key == key) return plan.bindings[index].retained;
+    }
+    return false;
+}
+
 } // namespace
 
 int main() {
@@ -104,6 +122,69 @@ int main() {
         assert(slot_for(first_plan.value(), item) == slot_for(second_plan.value(), item));
     }
     assert(recycler.active_count() == one_row_down.value().count);
+
+    recycler.reset();
+    assert(recycler.active_count() == 0U);
+
+    // Stable keys preserve the materialized semantic slot when a logical item
+    // moves to a new index after insertion/reordering.
+    auto keyed_window = os::ui::plan_collection_window(os::ui::CollectionWindowRequest{
+        .item_count = 4U,
+        .item_extent_q6 = os::ui::logical_from_dp(56U),
+        .viewport_extent_q6 = os::ui::logical_from_dp(224U),
+        .overscan_items = 0U,
+    });
+    assert(keyed_window);
+    assert(keyed_window.value().count == 4U);
+
+    const os::ui::CollectionItemKey key_a{101U};
+    const os::ui::CollectionItemKey key_b{102U};
+    const os::ui::CollectionItemKey key_c{103U};
+    const os::ui::CollectionItemKey key_d{104U};
+    const os::ui::CollectionItemKey key_new{999U};
+
+    os::ui::CollectionRecycleRequest keyed_first{};
+    keyed_first.window = keyed_window.value();
+    keyed_first.key_count = 4U;
+    keyed_first.item_keys[0] = key_a;
+    keyed_first.item_keys[1] = key_b;
+    keyed_first.item_keys[2] = key_c;
+    keyed_first.item_keys[3] = key_d;
+    auto keyed_first_plan = recycler.bind(keyed_first);
+    assert(keyed_first_plan);
+
+    os::ui::CollectionRecycleRequest keyed_after_insert{};
+    keyed_after_insert.window = keyed_window.value();
+    keyed_after_insert.key_count = 4U;
+    keyed_after_insert.item_keys[0] = key_new;
+    keyed_after_insert.item_keys[1] = key_a;
+    keyed_after_insert.item_keys[2] = key_b;
+    keyed_after_insert.item_keys[3] = key_c;
+    auto keyed_second_plan = recycler.bind(keyed_after_insert);
+    assert(keyed_second_plan);
+    assert(retained_key(keyed_second_plan.value(), key_a));
+    assert(retained_key(keyed_second_plan.value(), key_b));
+    assert(retained_key(keyed_second_plan.value(), key_c));
+    assert(!retained_key(keyed_second_plan.value(), key_new));
+    assert(slot_for_key(keyed_first_plan.value(), key_a) ==
+        slot_for_key(keyed_second_plan.value(), key_a));
+    assert(slot_for_key(keyed_first_plan.value(), key_b) ==
+        slot_for_key(keyed_second_plan.value(), key_b));
+    assert(slot_for_key(keyed_first_plan.value(), key_c) ==
+        slot_for_key(keyed_second_plan.value(), key_c));
+    assert(keyed_second_plan.value().bindings[1].item_index == 1U);
+
+    auto duplicate_keys = keyed_after_insert;
+    duplicate_keys.item_keys[3] = key_b;
+    auto duplicate_plan = recycler.bind(duplicate_keys);
+    assert(!duplicate_plan);
+    expect_ui_error(duplicate_plan.error(), os::ui::errors::invalid_collection);
+
+    auto zero_key = keyed_after_insert;
+    zero_key.item_keys[0] = {};
+    auto zero_key_plan = recycler.bind(zero_key);
+    assert(!zero_key_plan);
+    expect_ui_error(zero_key_plan.error(), os::ui::errors::invalid_collection);
 
     recycler.reset();
     assert(recycler.active_count() == 0U);
