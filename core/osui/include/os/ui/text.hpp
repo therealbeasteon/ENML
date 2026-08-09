@@ -87,6 +87,21 @@ struct TextMeasurement final {
     std::uint16_t line_count {0U};
 };
 
+// Renderer-owned shaping backend seam. The callback may wrap HarfBuzz or a
+// future platform shaper and may use platform-owned font assets internally.
+// It is deliberately a small no-allocation ABI: application code never sees
+// the callback, font handles, font paths or backend implementation details.
+using ShapeTextBackendFn = bool (*)(
+    void* context,
+    const SemanticText& source,
+    const ResolvedTextStyle& style,
+    ShapedText& output) noexcept;
+
+struct TextShaperBackend final {
+    void* context {nullptr};
+    ShapeTextBackendFn shape {nullptr};
+};
+
 [[nodiscard]] os::core::Result<FontFallbackChain> font_fallback_chain(
     TypographyRole role) noexcept;
 
@@ -102,6 +117,14 @@ struct TextMeasurement final {
     const SemanticText& source,
     const ResolvedTextStyle& style,
     const ShapedText& shaped) noexcept;
+
+// Invokes a renderer-owned backend and validates its output before returning
+// it to layout/rendering code. Failed, absent or malformed backends cannot
+// smuggle unchecked glyph/run data into ENML's renderer pipeline.
+[[nodiscard]] os::core::Result<ShapedText> shape_text(
+    const SemanticText& source,
+    const ResolvedTextStyle& style,
+    TextShaperBackend backend) noexcept;
 
 // Measurement is derived from validated shaped advances, never from byte or
 // code-point counts. This keeps large-text reflow honest once real platform
