@@ -44,6 +44,7 @@ add_subdirectory(interfaces/echo)
 add_subdirectory(interfaces/storage)
 add_subdirectory(system/services/echo)
 add_subdirectory(system/services/storage)
+add_subdirectory(system/services/keys)
 add_subdirectory(system/supervisor)
 add_subdirectory(system/app_manager)
 
