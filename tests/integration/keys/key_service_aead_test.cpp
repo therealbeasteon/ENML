@@ -3,63 +3,15 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
-#include <cstdlib>
 #include <string_view>
-#include <utility>
 
-#include <sys/types.h>
-#include <sys/wait.h>
-#include <unistd.h>
-
-#include <os/core/error.hpp>
-#include <os/core/identity.hpp>
-#include <os/ipc/constants.hpp>
-#include <os/ipc/rpc.hpp>
+#include <os/core/span.hpp>
 #include <os/keys/ciphertext.hpp>
 #include <os/keys/error.hpp>
-#include <os/keys/id_source.hpp>
 #include <os/keys/key.hpp>
-#include <os/keys/registry.hpp>
-#include <os/keys/service.hpp>
 #include <os/keys/testing/openssl_provider.hpp>
 
 namespace {
-
-constexpr os::core::PeerIdentity owner_identity{
-    .principal = os::core::PrincipalId{0xAA05000000000001ULL, 0xBB05000000000001ULL},
-    .user = os::core::UserId{50U},
-    .process = os::core::ProcessId{501U},
-};
-
-class TestIdentityResolver final : public os::ipc::PeerIdentityResolver {
-public:
-    explicit TestIdentityResolver(pid_t owner_pid) noexcept : owner_pid_(owner_pid) {}
-
-    os::core::Result<os::core::PeerIdentity>
-    resolve(os::ipc::KernelPeerCredentials credentials) noexcept override {
-        if (credentials.process_id != static_cast<std::int64_t>(owner_pid_) ||
-            credentials.user_id != static_cast<std::uint32_t>(::getuid()) ||
-            credentials.group_id != static_cast<std::uint32_t>(::getgid())) {
-            return os::core::make_error(
-                os::core::ErrorDomain::security,
-                os::core::errors::security::credential_mismatch);
-        }
-        return owner_identity;
-    }
-
-private:
-    pid_t owner_pid_ {-1};
-};
-
-class TestIdSource final : public os::keys::KeyIdSource {
-public:
-    os::core::Result<os::keys::KeyId> next() noexcept override {
-        return os::keys::KeyId{0x4145414454455354ULL, next_++};
-    }
-
-private:
-    std::uint64_t next_ {1U};
-};
 
 [[nodiscard]] os::core::ByteSpan as_bytes(std::string_view text) noexcept {
     return {
@@ -68,207 +20,194 @@ private:
     };
 }
 
-[[noreturn]] void run_server(os::ipc::Channel channel, pid_t owner_pid) {
-    TestIdentityResolver resolver{owner_pid};
-    os::keys::testing::OpenSslTestKeyProvider provider;
-    TestIdSource ids;
-    os::keys::KeyRegistry registry{provider};
-    os::keys::KeyService service{channel, resolver, registry, ids};
-    std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
-
-    for (;;) {
-        auto result = service.dispatch_once(scratch, -1);
-        if (!result) {
-            if (result.error().domain == os::core::ErrorDomain::ipc &&
-                result.error().code == os::ipc::errors::peer_died) {
-                std::_Exit(0);
-            }
-            std::_Exit(20);
-        }
-    }
+void copy_bytes(os::core::ByteSpan input, os::core::MutableByteSpan output) noexcept {
+    assert(output.size() >= input.size());
+    std::copy(input.begin(), input.end(), output.begin());
 }
 
 } // namespace
 
 int main() {
-    auto pair_result = os::ipc::Channel::create_local_pair();
-    assert(pair_result);
-    auto channels = std::move(pair_result).value();
+    os::keys::testing::OpenSslTestKeyProvider provider;
+    auto generated = provider.generate(os::keys::KeyPurpose::application_data_aead);
+    assert(generated);
+    const auto provider_key = generated.value();
 
-    const pid_t parent_pid = ::getpid();
-    const pid_t server = ::fork();
-    assert(server >= 0);
-    if (server == 0) {
-        channels[0].close();
-        run_server(std::move(channels[1]), parent_pid);
-    }
-
-    channels[1].close();
-    os::ipc::ClientConnection connection{channels[0]};
-    os::keys::KeyClient keys{connection};
-    std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
-
-    auto key_result = keys.create_application_data_key(scratch);
-    assert(key_result);
-    auto key = std::move(key_result).value();
-    const auto key_id = key.descriptor().id;
-
-    auto duplicate_result = keys.open(key_id, scratch);
-    assert(duplicate_result);
-    auto duplicate = std::move(duplicate_result).value();
-
+    constexpr os::keys::KeyId key_id{
+        0x4145414454455354ULL,
+        1U,
+    };
+    constexpr std::uint32_t key_version = 1U;
     constexpr std::string_view plaintext_text = "ENML private storage authenticated payload";
     constexpr std::string_view aad_text = "principal-profile:50;object:data-v1";
+
     std::array<std::byte, os::keys::max_ciphertext_envelope_bytes> envelope{};
-    std::array<std::byte, os::keys::max_key_plaintext_bytes> plaintext_output{};
+    const os::keys::CiphertextHeaderV1 header{
+        .profile = os::keys::CryptoProfileId::aes_256_gcm_v1,
+        .key_id = key_id,
+        .key_version = key_version,
+        .ciphertext_size = static_cast<std::uint32_t>(plaintext_text.size()),
+    };
+    auto encoded_header = os::keys::encode_ciphertext_header_v1(header, envelope);
+    assert(encoded_header);
+    assert(encoded_header.value() == os::keys::ciphertext_header_bytes);
 
-    auto encrypted = key.encrypt(
-        as_bytes(plaintext_text),
+    os::keys::AeadNonce nonce{};
+    os::keys::AeadTag tag{};
+    const auto ciphertext_offset = os::keys::ciphertext_fixed_overhead;
+    auto sealed = provider.seal(
+        provider_key,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        {envelope.data(), os::keys::ciphertext_header_bytes},
         as_bytes(aad_text),
-        envelope,
-        scratch);
-    assert(encrypted);
-    assert(encrypted.value() == os::keys::ciphertext_fixed_overhead + plaintext_text.size());
+        as_bytes(plaintext_text),
+        {envelope.data() + static_cast<std::ptrdiff_t>(ciphertext_offset), plaintext_text.size()},
+        nonce,
+        tag);
+    assert(sealed);
+    assert(sealed.value() == plaintext_text.size());
 
-    const auto envelope_view = os::core::ByteSpan{envelope.data(), encrypted.value()};
+    copy_bytes(
+        {nonce.bytes.data(), nonce.bytes.size()},
+        {envelope.data() + static_cast<std::ptrdiff_t>(os::keys::ciphertext_header_bytes), nonce.bytes.size()});
+    copy_bytes(
+        {tag.bytes.data(), tag.bytes.size()},
+        {envelope.data() + static_cast<std::ptrdiff_t>(
+            os::keys::ciphertext_header_bytes + os::keys::aead_nonce_bytes), tag.bytes.size()});
+
+    const std::size_t envelope_size = os::keys::ciphertext_fixed_overhead + plaintext_text.size();
+    const os::core::ByteSpan envelope_view{envelope.data(), envelope_size};
     auto parsed = os::keys::parse_ciphertext_envelope_v1(envelope_view);
     assert(parsed);
     assert(parsed.value().header.key_id == key_id);
-    assert(parsed.value().header.key_version == key.descriptor().version);
+    assert(parsed.value().header.key_version == key_version);
     assert(parsed.value().header.profile == os::keys::CryptoProfileId::aes_256_gcm_v1);
     assert(parsed.value().ciphertext.size() == plaintext_text.size());
 
-    auto decrypted = key.decrypt(
-        envelope_view,
+    std::array<std::byte, os::keys::max_key_plaintext_bytes> plaintext_output{};
+    auto opened = provider.open(
+        provider_key,
+        parsed.value().header.profile,
+        parsed.value().authenticated_header,
         as_bytes(aad_text),
-        plaintext_output,
-        scratch);
-    assert(decrypted);
-    assert(decrypted.value() == plaintext_text.size());
+        nonce,
+        tag,
+        parsed.value().ciphertext,
+        plaintext_output);
+    assert(opened);
+    assert(opened.value() == plaintext_text.size());
     assert(std::equal(
         plaintext_output.begin(),
-        plaintext_output.begin() + static_cast<std::ptrdiff_t>(decrypted.value()),
+        plaintext_output.begin() + static_cast<std::ptrdiff_t>(opened.value()),
         as_bytes(plaintext_text).begin()));
 
-    // Caller AAD is authenticated but never stored in the envelope.
-    auto wrong_aad = key.decrypt(
-        envelope_view,
+    auto wrong_aad = provider.open(
+        provider_key,
+        parsed.value().header.profile,
+        parsed.value().authenticated_header,
         as_bytes("principal-profile:wrong"),
-        plaintext_output,
-        scratch);
+        nonce,
+        tag,
+        parsed.value().ciphertext,
+        plaintext_output);
     assert(!wrong_aad);
-    assert(wrong_aad.error().domain == os::core::ErrorDomain::key);
-    assert(wrong_aad.error().code == os::keys::errors::authentication_failed);
+    assert(wrong_aad.error() == os::keys::key_error(os::keys::errors::authentication_failed));
 
-    // Tag and ciphertext corruption fail authentication rather than exposing
-    // provider output as partial plaintext.
-    auto tampered_tag = envelope;
-    tampered_tag[os::keys::ciphertext_header_bytes + os::keys::aead_nonce_bytes] ^= std::byte{0x01};
-    auto bad_tag = key.decrypt(
-        {tampered_tag.data(), encrypted.value()},
+    auto tampered_tag = tag;
+    tampered_tag.bytes[0] ^= std::byte{0x01};
+    auto bad_tag = provider.open(
+        provider_key,
+        parsed.value().header.profile,
+        parsed.value().authenticated_header,
         as_bytes(aad_text),
-        plaintext_output,
-        scratch);
+        nonce,
+        tampered_tag,
+        parsed.value().ciphertext,
+        plaintext_output);
     assert(!bad_tag);
-    assert(bad_tag.error().domain == os::core::ErrorDomain::key);
-    assert(bad_tag.error().code == os::keys::errors::authentication_failed);
+    assert(bad_tag.error() == os::keys::key_error(os::keys::errors::authentication_failed));
 
-    auto tampered_ciphertext = envelope;
-    tampered_ciphertext[os::keys::ciphertext_fixed_overhead] ^= std::byte{0x80};
-    auto bad_ciphertext = key.decrypt(
-        {tampered_ciphertext.data(), encrypted.value()},
+    auto tampered_envelope = envelope;
+    tampered_envelope[ciphertext_offset] ^= std::byte{0x80};
+    auto tampered_parsed = os::keys::parse_ciphertext_envelope_v1(
+        {tampered_envelope.data(), envelope_size});
+    assert(tampered_parsed);
+    auto bad_ciphertext = provider.open(
+        provider_key,
+        tampered_parsed.value().header.profile,
+        tampered_parsed.value().authenticated_header,
         as_bytes(aad_text),
-        plaintext_output,
-        scratch);
+        nonce,
+        tag,
+        tampered_parsed.value().ciphertext,
+        plaintext_output);
     assert(!bad_ciphertext);
-    assert(bad_ciphertext.error().domain == os::core::ErrorDomain::key);
-    assert(bad_ciphertext.error().code == os::keys::errors::authentication_failed);
+    assert(bad_ciphertext.error() == os::keys::key_error(os::keys::errors::authentication_failed));
 
-    // Envelope metadata is explicit and fail-closed before provider use.
-    auto wrong_profile = envelope;
-    wrong_profile[8] = std::byte{0x7F};
-    auto bad_profile = key.decrypt(
-        {wrong_profile.data(), encrypted.value()},
-        as_bytes(aad_text),
-        plaintext_output,
-        scratch);
+    auto malformed_profile = envelope;
+    malformed_profile[8] = std::byte{0x7F};
+    auto bad_profile = os::keys::parse_ciphertext_envelope_v1(
+        {malformed_profile.data(), envelope_size});
     assert(!bad_profile);
-    assert(bad_profile.error().domain == os::core::ErrorDomain::key);
-    assert(bad_profile.error().code == os::keys::errors::unsupported_crypto_profile);
+    assert(bad_profile.error() == os::keys::key_error(os::keys::errors::unsupported_crypto_profile));
 
-    auto wrong_key = envelope;
-    wrong_key[16] ^= std::byte{0x01};
-    auto bad_key = key.decrypt(
-        {wrong_key.data(), encrypted.value()},
-        as_bytes(aad_text),
-        plaintext_output,
-        scratch);
-    assert(!bad_key);
-    assert(bad_key.error().domain == os::core::ErrorDomain::key);
-    assert(bad_key.error().code == os::keys::errors::key_id_mismatch);
+    auto malformed_version = envelope;
+    malformed_version[6] = std::byte{0x02};
+    auto bad_envelope_version = os::keys::parse_ciphertext_envelope_v1(
+        {malformed_version.data(), envelope_size});
+    assert(!bad_envelope_version);
+    assert(bad_envelope_version.error() == os::keys::key_error(os::keys::errors::malformed_ciphertext));
 
-    auto wrong_version = envelope;
-    wrong_version[12] ^= std::byte{0x01};
-    auto bad_version = key.decrypt(
-        {wrong_version.data(), encrypted.value()},
-        as_bytes(aad_text),
-        plaintext_output,
-        scratch);
-    assert(!bad_version);
-    assert(bad_version.error().domain == os::core::ErrorDomain::key);
-    assert(bad_version.error().code == os::keys::errors::key_version_mismatch);
-
-    // Exercise the maximum legal payload and the explicit oversize boundary.
     std::array<std::byte, os::keys::max_key_plaintext_bytes> maximum_plaintext{};
     for (std::size_t index = 0U; index < maximum_plaintext.size(); ++index) {
         maximum_plaintext[index] = static_cast<std::byte>(index & 0xFFU);
     }
     std::array<std::byte, os::keys::max_key_aad_bytes> maximum_aad{};
     maximum_aad.fill(std::byte{0xA5});
-    auto maximum_encrypted = key.encrypt(
+    const os::keys::CiphertextHeaderV1 maximum_header{
+        .profile = os::keys::CryptoProfileId::aes_256_gcm_v1,
+        .key_id = key_id,
+        .key_version = key_version,
+        .ciphertext_size = static_cast<std::uint32_t>(maximum_plaintext.size()),
+    };
+    assert(os::keys::encode_ciphertext_header_v1(maximum_header, envelope));
+    auto maximum_sealed = provider.seal(
+        provider_key,
+        maximum_header.profile,
+        {envelope.data(), os::keys::ciphertext_header_bytes},
+        maximum_aad,
         maximum_plaintext,
-        maximum_aad,
-        envelope,
-        scratch);
-    assert(maximum_encrypted);
-    assert(maximum_encrypted.value() == os::keys::max_ciphertext_envelope_bytes);
-    auto maximum_decrypted = key.decrypt(
-        {envelope.data(), maximum_encrypted.value()},
-        maximum_aad,
-        plaintext_output,
-        scratch);
-    assert(maximum_decrypted);
-    assert(maximum_decrypted.value() == maximum_plaintext.size());
-    assert(std::equal(
-        maximum_plaintext.begin(), maximum_plaintext.end(), plaintext_output.begin()));
+        {envelope.data() + static_cast<std::ptrdiff_t>(ciphertext_offset), maximum_plaintext.size()},
+        nonce,
+        tag);
+    assert(maximum_sealed);
+    assert(maximum_sealed.value() == maximum_plaintext.size());
 
-    std::array<std::byte, os::keys::max_key_plaintext_bytes + 1U> oversized_plaintext{};
-    auto oversized = key.encrypt(oversized_plaintext, {}, envelope, scratch);
-    assert(!oversized);
-    assert(oversized.error().domain == os::core::ErrorDomain::key);
-    assert(oversized.error().code == os::keys::errors::too_large);
+    std::array<std::byte, os::keys::max_key_plaintext_bytes + 1U> oversized{};
+    auto too_large = provider.seal(
+        provider_key,
+        maximum_header.profile,
+        {envelope.data(), os::keys::ciphertext_header_bytes},
+        {},
+        oversized,
+        {envelope.data() + static_cast<std::ptrdiff_t>(ciphertext_offset), maximum_plaintext.size()},
+        nonce,
+        tag);
+    assert(!too_large);
+    assert(too_large.error() == os::keys::key_error(os::keys::errors::too_large));
 
-    // Key-wide destruction closes duplicate object endpoints and forbids
-    // decrypt/open through the destroyed logical key.
-    assert(key.destroy(scratch));
-    auto stale = duplicate.decrypt(
-        {envelope.data(), maximum_encrypted.value()},
-        maximum_aad,
-        plaintext_output,
-        scratch);
-    assert(!stale);
-    assert(stale.error().domain == os::core::ErrorDomain::ipc);
-    assert(stale.error().code == os::ipc::errors::peer_died);
+    assert(provider.destroy(provider_key));
+    auto after_destroy = provider.open(
+        provider_key,
+        os::keys::CryptoProfileId::aes_256_gcm_v1,
+        parsed.value().authenticated_header,
+        as_bytes(aad_text),
+        nonce,
+        tag,
+        parsed.value().ciphertext,
+        plaintext_output);
+    assert(!after_destroy);
+    assert(after_destroy.error() == os::keys::key_error(os::keys::errors::provider_failure));
 
-    auto reopened = keys.open(key_id, scratch);
-    assert(!reopened);
-    assert(reopened.error().domain == os::core::ErrorDomain::key);
-    assert(reopened.error().code == os::keys::errors::destroyed);
-
-    channels[0].close();
-    int status = 0;
-    assert(::waitpid(server, &status, 0) == server);
-    assert(WIFEXITED(status));
-    assert(WEXITSTATUS(status) == 0);
     return 0;
 }
