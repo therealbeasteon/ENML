@@ -3,6 +3,7 @@ add_library(oskeys STATIC
     src/random_id_linux.cpp
     src/ciphertext.cpp
     src/persistence_linux.cpp
+    src/persistence_adopt.cpp
     src/hierarchy.cpp
 )
 
