@@ -64,6 +64,7 @@ private:
     [[nodiscard]] const Slot* find(UiNodeId node) const noexcept;
     [[nodiscard]] std::size_t child_count(UiNodeId parent) const noexcept;
     [[nodiscard]] bool is_descendant_of(const Slot& candidate, UiNodeId ancestor) const noexcept;
+    [[nodiscard]] bool effectively_visible(const Slot& slot) const noexcept;
     [[nodiscard]] UiNodeId accessible_parent(UiNodeId node) const noexcept;
 
     [[nodiscard]] static bool role_can_have_children(UiRole role) noexcept;
