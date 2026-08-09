@@ -1,6 +1,7 @@
 add_library(emnl_app_manager STATIC
     src/manager_linux.cpp
     src/lifecycle.cpp
+    src/storage_integration.cpp
 )
 
 add_library(emnl::app_manager ALIAS emnl_app_manager)
@@ -16,6 +17,7 @@ target_link_libraries(emnl_app_manager
         emnl::ospkg
         emnl::supervisor
         emnl::ossandbox
+        emnl::storage_service
         emnl_warnings
 )
 

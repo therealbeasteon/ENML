@@ -71,6 +71,13 @@ public:
     [[nodiscard]] os::core::Result<void> maintain() noexcept;
     [[nodiscard]] os::core::Result<os::ipc::Channel> connect() noexcept;
 
+    // Trusted-system escape hatch for service-specific control extensions.
+    // This duplicates the supervisor side of the private bootstrap/control
+    // channel; applications must never receive it. M2 remains synchronous, so
+    // callers must not race control requests with Supervisor operations.
+    [[nodiscard]] os::core::Result<os::ipc::Channel>
+    connect_private_control() noexcept;
+
     // Registers an already-existing process under a supervisor-assigned
     // ProcessId. Re-registering the same live PID with the same principal/user
     // re-publishes the existing identity to a newly restarted service.

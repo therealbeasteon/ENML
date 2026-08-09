@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include <sys/types.h>
 
@@ -15,6 +16,7 @@
 #include <os/package/package.hpp>
 #include <os/package/persistence.hpp>
 #include <os/sandbox/sandbox.hpp>
+#include <os/storage/service.hpp>
 #include <os/supervisor/supervisor.hpp>
 
 namespace os::app {
@@ -53,7 +55,8 @@ struct LaunchTargetRegistration final {
 
 // Trusted per-user application policy. The private data directory is an
 // already-authorized handle. PrincipalId is deliberately absent: App Manager
-// resolves/allocates it from ApplicationPrincipalStore.
+// resolves/allocates it from ApplicationPrincipalStore and publishes the root
+// to Storage Service over its system-only control channel.
 struct ApplicationProfileRegistration final {
     os::package::ApplicationIdentity application {};
     os::core::UserId user {};
@@ -75,10 +78,11 @@ struct ApplicationInstanceInfo final {
     }
 };
 
-// M1.5 App Manager. Launch requests contain only PackageId plus trusted user
-// context. Active generation, executable object, per-user principal, private
-// data root, native credentials and sandbox policy all come from trusted state.
-// A live InstanceSlot is the authoritative generation pin.
+// M2.2 App Manager. Launch requests contain only PackageId plus trusted user
+// context. Active generation, executable object, per-user principal, native
+// credentials, sandbox policy and Storage root policy all come from trusted
+// state. Applications receive a Storage Service connection rather than their
+// private-data Linux directory descriptor.
 class ApplicationManager final {
 public:
     ApplicationManager(
@@ -99,16 +103,9 @@ public:
     [[nodiscard]] os::core::Result<ApplicationInstanceInfo>
     launch(const os::package::PackageId& package_id, os::core::UserId user) noexcept;
 
-    // Persistently removes future launch resolution first, then immediately
-    // revokes supervisor identity for running instances and requests process
-    // termination. Principal mappings and private-data profiles are retained.
     [[nodiscard]] os::core::Result<void>
     uninstall_application(const os::package::ApplicationIdentity& application) noexcept;
 
-    // Releases App Manager's retained executable object only when the
-    // generation is no longer active and no running instance pins it. A Package
-    // Service may delete the immutable generation directory only after this
-    // succeeds; package metadata remains as historical/tombstone state.
     [[nodiscard]] os::core::Result<void>
     retire_launch_target(
         const os::package::ApplicationIdentity& application,
@@ -139,6 +136,7 @@ private:
         bool occupied {false};
         os::package::ApplicationIdentity application {};
         os::core::UserId user {};
+        os::core::PrincipalId principal {};
         os::core::NativeHandle private_data_directory {};
         os::sandbox::SandboxPolicyV1 sandbox {};
     };
@@ -155,6 +153,14 @@ private:
     std::array<ApplicationProfile, m1_application_profile_capacity> profiles_ {};
     std::array<InstanceSlot, m1_application_instance_capacity> instances_ {};
     std::uint64_t next_instance_id_ {1U};
+
+    os::ipc::Channel storage_control_ {};
+    std::optional<os::storage::StorageControlClient> storage_control_client_ {};
+    std::uint64_t storage_service_generation_ {0U};
+
+    [[nodiscard]] os::core::Result<void> ensure_storage_control() noexcept;
+    [[nodiscard]] os::core::Result<void> publish_profile(ApplicationProfile& profile) noexcept;
+    [[nodiscard]] os::core::Result<void> republish_profiles_if_needed() noexcept;
 
     [[nodiscard]] LaunchTarget*
     find_target(const os::package::PackageGenerationRecord& package) noexcept;

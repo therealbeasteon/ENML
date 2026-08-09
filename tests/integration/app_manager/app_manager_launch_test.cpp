@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -18,6 +19,7 @@
 #include <os/core/native_handle.hpp>
 #include <os/package/analyzer.hpp>
 #include <os/package/persistence.hpp>
+#include <os/storage/service.hpp>
 #include <os/supervisor/supervisor.hpp>
 
 namespace pkg = os::package;
@@ -119,24 +121,37 @@ void remove_principal_files(const char* path) {
 
 int main(int argc, char** argv) {
     assert(argc == 5);
-    const char* echo_path = argv[1];
+    const char* storage_path = argv[1];
     const auto executable_v1 = split_executable(argv[2]);
     const auto executable_v2 = split_executable(argv[3]);
     const auto executable_v3 = split_executable(argv[4]);
 
-    constexpr os::supervisor::ServiceDescriptorV1 echo_descriptor{
-        .service_id = os::core::ServiceId{0x0000F001U},
-        .principal_id = os::core::PrincipalId{0x53595354454D0000ULL, 0x000000000000F001ULL},
+    constexpr os::sandbox::SandboxPolicyV1 storage_sandbox{
+        .enabled = true,
+        .require_no_new_privs = true,
+        .clear_capabilities = true,
+        .require_seccomp = true,
+        .require_landlock = false,
+        // Storage owns bounded root/object capabilities. Its descriptor budget
+        // must cover the fixed 64-root + 64-object tables and their backing
+        // directory/file descriptors without granting unbounded authority.
+        .max_open_files = 256U,
+        .max_processes = 8U,
+        .max_file_size_bytes = 1024U * 1024U,
+    };
+    constexpr os::supervisor::ServiceDescriptorV1 storage_descriptor{
+        .service_id = os::storage::storage_service_id,
+        .principal_id = os::core::PrincipalId{0x53595354454D0000ULL, 0x000000000000F020ULL},
         .user_id = os::core::UserId{0U},
-        .name = "system.echo",
+        .name = "system.storage",
         .restart_policy = os::supervisor::RestartPolicy::on_failure,
         .restart_delay_ms = 25U,
         .max_restarts_in_window = 3U,
         .restart_window_ms = 2000U,
         .readiness_timeout_ms = 1000U,
-        .sandbox = {},
+        .sandbox = storage_sandbox,
     };
-    os::supervisor::Supervisor supervisor({echo_descriptor, echo_path});
+    os::supervisor::Supervisor supervisor({storage_descriptor, storage_path});
     assert(supervisor.start());
 
     char package_template[] = "/tmp/emnl-app-packages-XXXXXX";
@@ -166,7 +181,6 @@ int main(int argc, char** argv) {
 
     os::app::ApplicationManager manager(packages, principals, supervisor);
 
-    // Final-component symlinks are never accepted as package executables.
     assert(::symlink(argv[2], (std::string(package_path) + "/bad-app").c_str()) == 0);
     auto symlink_target = manager.register_launch_target(os::app::LaunchTargetRegistration{
         .package = generation1,
@@ -193,28 +207,37 @@ int main(int argc, char** argv) {
     const os::core::UserId user42{42U};
     const os::core::UserId user43{43U};
     const os::core::UserId missing_user{44U};
-    assert(manager.register_application_profile(os::app::ApplicationProfileRegistration{
+    auto profile42 = manager.register_application_profile(os::app::ApplicationProfileRegistration{
         .application = application,
         .user = user42,
         .private_data_directory = open_directory(data42_path),
         .sandbox = {},
-    }));
-    assert(manager.register_application_profile(os::app::ApplicationProfileRegistration{
+    });
+    if (!profile42) {
+        std::fprintf(stderr, "profile42 error domain=%u code=%u\n",
+            static_cast<unsigned>(profile42.error().domain),
+            static_cast<unsigned>(profile42.error().code));
+    }
+    assert(profile42);
+    auto profile43 = manager.register_application_profile(os::app::ApplicationProfileRegistration{
         .application = application,
         .user = user43,
         .private_data_directory = open_directory(data43_path),
         .sandbox = {},
-    }));
+    });
+    if (!profile43) {
+        std::fprintf(stderr, "profile43 error domain=%u code=%u\n",
+            static_cast<unsigned>(profile43.error().domain),
+            static_cast<unsigned>(profile43.error().code));
+    }
+    assert(profile43);
 
-    // No profile means no launch and no accidental principal allocation.
     const auto before_missing = principals.record_count();
     auto missing_profile = manager.launch(application.package_id, missing_user);
     assert(!missing_profile);
     assert(missing_profile.error().code == os::app::manager_errors::profile_not_found);
     assert(principals.record_count() == before_missing);
 
-    // Generation 2 is staged but not active. Same application+user receives a
-    // stable principal while each process and application instance is fresh.
     auto first = manager.launch(application.package_id, user42);
     auto second = manager.launch(application.package_id, user42);
     auto other_user = manager.launch(application.package_id, user43);
@@ -235,14 +258,10 @@ int main(int argc, char** argv) {
 
     assert(packages.activate(application, generation2.generation));
 
-    // Active code cannot be garbage-collected even before it has a live
-    // instance, because it is still the target for future launches.
     auto retire_active = manager.retire_launch_target(application, generation2.generation);
     assert(!retire_active);
     assert(retire_active.error().code == os::app::manager_errors::generation_active);
 
-    // Existing generation-1 processes pin the old immutable code after the
-    // update switches future launches to generation 2.
     auto retire_pinned = manager.retire_launch_target(application, generation1.generation);
     assert(!retire_pinned);
     assert(retire_pinned.error().code == os::app::manager_errors::generation_in_use);
@@ -257,8 +276,6 @@ int main(int argc, char** argv) {
     auto generation2_pins = manager.generation_pin_count(application, generation2.generation);
     assert(generation2_pins && generation2_pins.value() == 1U);
 
-    // Reaping two of three old-generation instances still leaves the old code
-    // pinned by the remaining user-43 process.
     assert(manager.terminate(first.value().instance, SIGTERM));
     assert(manager.terminate(second.value().instance, SIGTERM));
     assert(wait_until_gone(manager, first.value().instance));
@@ -281,10 +298,6 @@ int main(int argc, char** argv) {
     assert(unknown_launch.error().domain == os::core::ErrorDomain::package);
     assert(unknown_launch.error().code == pkg::errors::unknown_package);
 
-    // Uninstall commits the no-active-generation state before process teardown,
-    // revokes supervisor identities immediately, and then asks every remaining
-    // instance of the application to terminate. Principal/data profile state is
-    // intentionally retained for an authorized same-signer reinstall.
     assert(manager.uninstall_application(application));
     auto no_active = packages.active(application);
     assert(!no_active);
@@ -308,8 +321,6 @@ int main(int argc, char** argv) {
     assert(generation1_pins && generation1_pins.value() == 0U);
     assert(generation2_pins && generation2_pins.value() == 0U);
 
-    // Only after revocation/reaping may Package Service release old executable
-    // objects and physically remove immutable generation directories.
     assert(manager.retire_launch_target(application, generation1.generation));
     assert(manager.retire_launch_target(application, generation2.generation));
 
@@ -321,9 +332,6 @@ int main(int argc, char** argv) {
     assert(persisted_principal);
     assert(persisted_principal.value().principal == user42_principal);
 
-    // Same-signer reinstall/update continues the package generation sequence,
-    // reuses the durable per-user application principal and retained data
-    // profile, but creates a fresh process and instance identity.
     assert(packages.stage_generation(generation3));
     assert(manager.register_launch_target(os::app::LaunchTargetRegistration{
         .package = generation3,
@@ -340,8 +348,6 @@ int main(int argc, char** argv) {
     assert(reinstalled.value().identity.process != third.value().identity.process);
     assert(reinstalled.value().instance != third.value().instance);
 
-    // A second uninstall remains safe/idempotent with respect to durable
-    // package ownership and does not destroy the retained principal mapping.
     assert(manager.uninstall_application(application));
     assert(wait_until_gone(manager, reinstalled.value().instance));
     assert(manager.retire_launch_target(application, generation3.generation));
@@ -350,6 +356,8 @@ int main(int argc, char** argv) {
     assert(persisted_principal.value().principal == user42_principal);
 
     assert(::unlink((std::string(package_path) + "/bad-app").c_str()) == 0);
+    static_cast<void>(::unlink((std::string(data42_path) + "/storage-probe.bin").c_str()));
+    static_cast<void>(::unlink((std::string(data43_path) + "/storage-probe.bin").c_str()));
     remove_registry_files(package_path);
     remove_principal_files(principal_path);
     assert(::rmdir(package_path) == 0);
