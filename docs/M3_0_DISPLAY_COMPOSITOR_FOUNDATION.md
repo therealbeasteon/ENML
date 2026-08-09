@@ -35,24 +35,27 @@ The compositor is fixed-capacity:
 
 - 64 global surfaces;
 - 8 surfaces per durable application principal;
+- one application root per live process in the M3.0 phone model;
 - no heap-backed surface registry.
 
-The per-principal budget prevents one application from consuming the complete global scene while still allowing distinct application principals to use their own quota.
+The per-principal budget prevents one application from consuming the complete global scene. The one-root rule also prevents a background process from promoting itself simply by minting another root window; future multi-window/root creation must be an explicit trusted-shell policy extension.
 
-## Surface roles and z authority
+## Surface roles and application-stack authority
 
-M3.0 defines four role bands:
+M3.0 defines four roles:
 
 1. `application`
 2. `popup`
 3. `system_chrome`
 4. `secure_system`
 
-Applications may create application surfaces and popups attached to an application surface owned by the exact same process identity. They cannot self-assign system-chrome or secure-system roles.
+Applications may create one application root and popups attached to that root when the parent is owned by the exact same process identity. They cannot self-assign system-chrome or secure-system roles.
 
 `system_chrome` is restricted to the configured trusted shell principal. `secure_system` is restricted to a distinct secure-UI principal. The compositor requires those principals to be nonzero and distinct.
 
-Global z authority is compositor-owned. Applications do not submit arbitrary global z values. Scene order is deterministic by role band and then creation serial. This ensures an application cannot place itself above trusted system or secure UI merely by choosing a larger integer.
+Global z authority is compositor-owned. Applications do not submit arbitrary global z values. Application roots and their popups form a stack group; a popup stays above its own root but below a higher application group. A background application's popup therefore cannot leap over the foreground application.
+
+`activate_application()` can promote an application+popup group only when called by the trusted shell principal. An application cannot activate itself. System chrome remains above application groups and secure-system UI remains above both.
 
 Destroying an application surface also destroys its directly-attached popup surfaces, preventing a popup from retaining stale visual/input meaning after its parent is gone.
 
@@ -95,14 +98,7 @@ This puts frame-deadline awareness into the architecture before rendering comple
 
 `secure_system` entries are marked `capture_allowed=false`. This is the first provenance hook for later screenshot/screen-recording policy; M3.0 does not yet implement a screenshot service.
 
-`hit_test()` walks the trusted scene from top to bottom and considers only surfaces that are:
-
-- visible;
-- input-enabled;
-- backed by a submitted frame;
-- geometrically containing the point.
-
-Because role z-order is compositor-owned, secure system UI naturally wins input routing over overlapping application content.
+`hit_test()` walks the trusted scene from top to bottom and considers only surfaces that are visible, input-enabled, backed by a submitted frame, and geometrically containing the point. Secure system UI therefore wins input routing over overlapping lower-trust content, and application popup routing follows the trusted application-stack order rather than a caller-selected z value.
 
 ## Reference guidance
 
@@ -126,17 +122,7 @@ The Linux references place hardware resource management and system calls below u
 
 ## Explicit non-goals
 
-M3.0 does not yet provide:
-
-- shared pixel-buffer or DMA-BUF capability transfer;
-- a supervised `system.compositor` executable or public OSIDL service;
-- DRM/KMS atomic modesetting;
-- GPU acceleration;
-- physical display hotplug/fold-state handling;
-- shell widgets/navigation visuals;
-- a full accessibility semantic tree;
-- screenshot/screen-recording service;
-- keyboard/touch device ingestion.
+M3.0 does not yet provide shared pixel-buffer or DMA-BUF capability transfer, a supervised `system.compositor` executable/public OSIDL service, DRM/KMS atomic modesetting, GPU acceleration, physical display hotplug/fold-state handling, shell widgets/navigation visuals, a full accessibility semantic tree, screenshot/screen-recording service, or keyboard/touch device ingestion.
 
 Those pieces build on the ownership rules frozen here rather than bypassing them.
 
@@ -146,12 +132,15 @@ Those pieces build on the ownership rules frozen here rather than bypassing them
 
 - invalid display/safe-inset policy is rejected;
 - apps cannot forge system or secure roles;
+- one application root exists per process at this stage;
 - popup parent ownership is exact-process-bound;
+- an app cannot self-promote its stack group;
+- a background popup stays below a higher application group;
+- trusted shell activation promotes the root+popup group together;
 - cross-principal/cross-process surface mutation is denied;
 - geometry, frame sequence, buffer-slot and damage bounds are enforced;
-- scene ordering is compositor-controlled;
 - secure surfaces are non-capturable and win overlapping hit tests;
-- geometry changes require a fresh frame before input routing;
+- geometry changes invalidate stale frame geometry;
 - process revocation removes the dead execution's surfaces;
 - a fresh `ProcessId` cannot inherit old surface authority;
 - per-principal surface quotas remain isolated;
