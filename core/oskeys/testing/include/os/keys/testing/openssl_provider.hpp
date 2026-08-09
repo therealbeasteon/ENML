@@ -52,11 +52,13 @@ public:
     persist_reference(
         ProviderKeyReference key,
         KeyPurpose purpose,
+        os::core::ByteSpan binding,
         os::core::MutableByteSpan output) noexcept override;
 
     [[nodiscard]] os::core::Result<ProviderKeyReference>
     restore_reference(
         KeyPurpose purpose,
+        os::core::ByteSpan binding,
         os::core::ByteSpan persistent_blob) noexcept override;
 
 private:
