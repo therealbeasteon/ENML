@@ -2,6 +2,8 @@ add_library(osui STATIC
     src/types.cpp
     src/tree.cpp
     src/layout.cpp
+    src/design.cpp
+    src/collection.cpp
 )
 add_library(emnl::osui ALIAS osui)
 
