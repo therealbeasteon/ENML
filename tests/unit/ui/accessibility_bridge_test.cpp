@@ -1,4 +1,5 @@
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 #include <string_view>
 
@@ -7,6 +8,19 @@
 #include <os/ui/error.hpp>
 
 namespace {
+
+constexpr os::core::PrincipalId application_principal{0x4150500000000101ULL, 1U};
+constexpr os::core::PrincipalId accessibility_principal{0x4143434553530101ULL, 1U};
+constexpr os::core::PeerIdentity application_peer{
+    application_principal,
+    os::core::UserId{7U},
+    os::core::ProcessId{101U},
+};
+constexpr os::core::PeerIdentity accessibility_peer{
+    accessibility_principal,
+    os::core::UserId{0U},
+    os::core::ProcessId{601U},
+};
 
 [[nodiscard]] os::ui::LogicalRect rect(
     std::uint32_t x,
@@ -73,6 +87,30 @@ int main() {
         });
     assert(toggle);
 
+    os::ui::AccessibilityBridgeAuthority authority{tree, accessibility_principal};
+    assert(authority.valid());
+    auto unauthorized_snapshot = authority.snapshot(application_peer);
+    assert(!unauthorized_snapshot);
+    expect_ui_error(
+        unauthorized_snapshot.error(),
+        os::ui::errors::accessibility_authority_denied);
+
+    auto authorized_snapshot = authority.snapshot(accessibility_peer);
+    assert(authorized_snapshot);
+    assert(authorized_snapshot.value().revision == tree.revision());
+
+    auto unauthorized_action = authority.dispatch(
+        application_peer,
+        {
+            .snapshot_revision = authorized_snapshot.value().revision,
+            .target = button.value().id,
+            .action = os::ui::UiAction::activate,
+        });
+    assert(!unauthorized_action);
+    expect_ui_error(
+        unauthorized_action.error(),
+        os::ui::errors::accessibility_authority_denied);
+
     auto snapshot = os::ui::accessibility_service_snapshot(tree);
     assert(snapshot);
     assert(snapshot.value().revision == tree.revision());
@@ -87,8 +125,8 @@ int main() {
     }
     assert(saw_button && saw_toggle);
 
-    auto focus = os::ui::dispatch_accessibility_action(
-        tree,
+    auto focus = authority.dispatch(
+        accessibility_peer,
         {
             .snapshot_revision = snapshot.value().revision,
             .target = button.value().id,
@@ -101,8 +139,8 @@ int main() {
 
     // Focus changed semantic state/revision. Replaying an action from the old
     // accessibility snapshot must not target the now-newer tree implicitly.
-    auto stale = os::ui::dispatch_accessibility_action(
-        tree,
+    auto stale = authority.dispatch(
+        accessibility_peer,
         {
             .snapshot_revision = snapshot.value().revision,
             .target = toggle.value().id,
@@ -111,10 +149,10 @@ int main() {
     assert(!stale);
     expect_ui_error(stale.error(), os::ui::errors::stale_accessibility_snapshot);
 
-    auto fresh = os::ui::accessibility_service_snapshot(tree);
+    auto fresh = authority.snapshot(accessibility_peer);
     assert(fresh);
-    auto toggle_event = os::ui::dispatch_accessibility_action(
-        tree,
+    auto toggle_event = authority.dispatch(
+        accessibility_peer,
         {
             .snapshot_revision = fresh.value().revision,
             .target = toggle.value().id,
@@ -160,6 +198,12 @@ int main() {
         });
     assert(!removed_target);
     expect_ui_error(removed_target.error(), os::ui::errors::invalid_node);
+
+    os::ui::AccessibilityBridgeAuthority invalid_authority{tree, {}};
+    assert(!invalid_authority.valid());
+    auto invalid_authority_snapshot = invalid_authority.snapshot(accessibility_peer);
+    assert(!invalid_authority_snapshot);
+    expect_ui_error(invalid_authority_snapshot.error(), os::ui::errors::invalid_tree);
 
     os::ui::SemanticTree invalid{os::ui::LogicalRect{}};
     auto invalid_snapshot = os::ui::accessibility_service_snapshot(invalid);
