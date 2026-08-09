@@ -64,4 +64,25 @@ os::core::Result<UiEvent> dispatch_accessibility_action(
     return tree.dispatch_action(request.target, request.action);
 }
 
+bool AccessibilityBridgeAuthority::caller_allowed(
+    os::core::PeerIdentity caller) const noexcept {
+    return valid() && os::core::valid_peer_identity(caller) &&
+        caller.principal == trusted_accessibility_principal_;
+}
+
+os::core::Result<AccessibilityServiceSnapshot> AccessibilityBridgeAuthority::snapshot(
+    os::core::PeerIdentity caller) const noexcept {
+    if (!valid()) return ui_error(errors::invalid_tree);
+    if (!caller_allowed(caller)) return ui_error(errors::accessibility_authority_denied);
+    return accessibility_service_snapshot(*tree_);
+}
+
+os::core::Result<UiEvent> AccessibilityBridgeAuthority::dispatch(
+    os::core::PeerIdentity caller,
+    AccessibilityActionRequest request) noexcept {
+    if (!valid()) return ui_error(errors::invalid_tree);
+    if (!caller_allowed(caller)) return ui_error(errors::accessibility_authority_denied);
+    return dispatch_accessibility_action(*tree_, request);
+}
+
 } // namespace os::ui
