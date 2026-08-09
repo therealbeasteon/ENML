@@ -1,5 +1,7 @@
 #pragma once
 
+#include <array>
+#include <cstddef>
 #include <cstdint>
 
 #include <os/core/result.hpp>
@@ -33,6 +35,38 @@ struct CollectionWindow final {
     [[nodiscard]] constexpr std::uint32_t end_index() const noexcept {
         return first_index + static_cast<std::uint32_t>(count);
     }
+};
+
+struct CollectionRecycleBinding final {
+    std::uint16_t slot {0U};
+    std::uint32_t item_index {0U};
+    bool retained {false};
+};
+
+struct CollectionRecyclePlan final {
+    std::array<CollectionRecycleBinding, max_materialized_collection_items> bindings {};
+    std::uint16_t count {0U};
+};
+
+// Maps virtual item indices onto a stable, fixed pool of materialized semantic
+// child slots. Overlapping items retain their slot across window changes; new
+// items deterministically take the lowest free slot. A UI layer can associate
+// one UiNodeId with each recycler slot and update its semantic content instead
+// of creating unbounded list children while scrolling.
+class CollectionRecycler final {
+public:
+    [[nodiscard]] os::core::Result<CollectionRecyclePlan> bind(
+        const CollectionWindow& window) noexcept;
+    void reset() noexcept;
+    [[nodiscard]] std::size_t active_count() const noexcept;
+
+private:
+    struct Slot final {
+        bool occupied {false};
+        std::uint32_t item_index {0U};
+    };
+
+    std::array<Slot, max_materialized_collection_items> slots_ {};
 };
 
 [[nodiscard]] os::core::Result<CollectionWindow> plan_collection_window(
