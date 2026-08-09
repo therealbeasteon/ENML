@@ -25,87 +25,63 @@ EMNL aims for appliance-like phone behavior, small trusted components, strong pr
 - A staged package generation is not active merely because it exists. Activation affects future launches only; a running process stays bound to the generation that created it.
 - Per-user application PrincipalIds are durable identities. Do not recycle them casually on update/uninstall/reinstall.
 - Uninstall is not synonymous with data/key destruction. Package launch state, process authority, immutable code retention, application principal history, private data, backup state, and future cryptographic keys are separate resources.
-- Public app storage APIs must not expose Linux fd numbers or Linux paths as stable application ABI even when the implementation uses descriptor-rooted caging internally.
+- Public app storage APIs must not expose Linux fd numbers or absolute Linux paths as stable application ABI.
+- Storage traversal must remain rooted in trusted object authority; do not reintroduce `open()` on caller-controlled absolute paths.
 
-## Current implementation status
+## Completed implementation
 
-Completed and merged:
+M0.0-M0.10 are complete: build/oscore, bounded OSIP codec/Channel, OSIDL, typed Echo, supervisor lifecycle, trusted identity, Linux sandbox, adversarial/resource gate, and ARM64 native/cross validation.
 
-- M0.0 repository/build
-- M0.1 `liboscore`
-- M0.2 bounded wire codec
-- M0.3 Linux `SOCK_SEQPACKET` Channel + `SCM_RIGHTS` + `SCM_CREDENTIALS`
-- M0.4 minimal `osidlc`
-- M0.5 typed Echo RPC
-- M0.6 `os-supervisor` lifecycle/readiness/restart
-- M0.7 trusted `PeerIdentity` resolution with pidfd stale-PID defense
-- M0.8 initial Linux service sandbox baseline
-- M0.9 adversarial/fault/resource certification gate
-- M0.10 ARM64 native/cross-build validation
-- M1.0 package identity, signer continuity, immutable monotonic generations
-- M1.1 bounded hostile package-manifest analyzer + fuzzing
-- M1.2 durable package staging + atomic activation
-- M1.3 trusted App Manager generation-bound launch
-- M1.4 durable per-user application principals and private-data sandbox
+M1.0-M1.5 are complete and merged: signer-bound package identity, hostile manifest analysis, durable staging/activation, trusted generation-bound App Manager launch, durable per-user app principals/private-data sandbox, and update/uninstall/revocation/generation-retention semantics.
 
-Current branch milestone:
+Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, and `docs/M1_5_UPDATE_UNINSTALL.md` before changing those substrates.
 
-- M1.5 update/uninstall/revocation and generation retention
+## Current branch milestone: M2.0 private storage foundation
 
-## M1.5 invariants
+M2.0 introduces an internal storage runtime beneath the future Storage Service.
 
-`PackageRegistry::uninstall()` removes only the active-generation selection. It retains signer-bound PackageId ownership and historical generation metadata. Reinstall/update under the same signer must continue monotonically; a different signer must still collide.
+`RelativePath` is a fixed-capacity UTF-8 byte path. It rejects absolute paths, leading/trailing/double separators, `.`/`..`, embedded NUL, backslash, malformed UTF-8, overlong total paths and overlong segments. Do not loosen these rules to mirror Linux pathname syntax.
 
-A live `ApplicationManager::InstanceSlot` is the authoritative generation pin. `retire_launch_target()` may release the retained executable object only when the generation is not active and no live instance uses it. Package Service may physically remove immutable code only after that succeeds.
+`PrivateRoot` is created only from an already-authorized directory handle. It never accepts a Linux path and never exposes its native descriptor. `Directory` and `File` are move-only typed objects.
 
-`uninstall_application()` commits the durable no-active-generation state first, then revokes each running process from the supervisor identity registry before requesting termination. A slow-to-exit process therefore cannot keep normal supervisor-mediated service authorization merely because `waitpid()` has not completed.
+All descendant resolution is descriptor-relative and segment-by-segment with `O_NOFOLLOW`. Intermediate objects must be real directories. Final `File` objects must be regular files; FIFOs/sockets/devices/directories are rejected. A child `Directory` is a naturally reduced namespace authority.
 
-Uninstall does not delete `ApplicationPrincipalStore` mappings or trusted per-user private-data profiles. Same-signer reinstall for the same user keeps the durable application PrincipalId/data profile but receives a fresh logical ProcessId and ApplicationInstanceId.
+`File` supports bounded positional read/write, size and sync with stable `ErrorDomain::storage` errors. Access rights are recorded at open and checked before I/O; never trust a later caller-supplied rights mask.
 
-See `docs/M1_5_UPDATE_UNINSTALL.md` for the detailed lifecycle contract.
+`atomic_replace()` is a bounded same-directory temp/write/fsync/rename/parent-fsync primitive. The payload is borrowed and capped at 1 MiB for M2.0. Temporary names are not secrets; `O_EXCL` and bounded collision handling are the safety mechanism.
 
-## M0/M1 sandbox baseline inherited by applications
+See `docs/M2_0_PRIVATE_STORAGE.md` and `docs/M2_STATUS.md`.
 
-- fixed environment (`PATH`, `LANG` only)
-- deny-by-default descriptor inheritance
-- `PR_SET_NO_NEW_PRIVS`
-- empty effective/permitted/inheritable Linux capability sets
-- seccomp filter denying privilege/namespace/kernel-control syscalls
-- `RLIMIT_CORE=0`, bounded `RLIMIT_NOFILE`, `RLIMIT_NPROC`, and `RLIMIT_FSIZE`
-- parent-death `SIGKILL`
-- restrictive umask
-- descriptor-rooted Landlock profile when required/supported
-- exact executable launched from retained `O_PATH` object with `execveat(..., AT_EMPTY_PATH)`
-- authorized per-user private-data root retained internally as fd 5 during current bootstrap
+## Sandbox/application boundary inherited by storage
 
-The final native AArch64 M0 gate verified Landlock. Keep explicit skip behavior on kernels/runtimes that cannot install the requested policy; do not weaken policy to turn a skip into a pass.
+- app executable is selected from a trusted immutable generation and launched from a retained object with `execveat(..., AT_EMPTY_PATH)`;
+- fd inheritance is deny-by-default;
+- current internal app bootstrap uses fd 5 for the authorized private-data root;
+- Landlock grants the private-data root write/create/remove rights but no execute authority;
+- `no_new_privs`, cleared Linux capabilities, seccomp, bounded rlimits and parent-death policy remain layered beneath apps.
+
+M2.1 should replace direct bootstrap-root use with a real Storage Service/object-handle API. Do not make fd 5 part of public ABI.
 
 ## Reference notes
 
-Read `docs/REFERENCE_NOTES_2026_08_08.md` before security/mobile architecture work. The supplied source set reinforces:
+Read `docs/REFERENCE_NOTES_2026_08_08.md` before architecture-sensitive work. The source set reinforces process-granular trust/data caging and resource frugality (Symbian), hardware-rooted update/rollback security direction (Knox), modern-crypto caution (NIST/BitLocker), private Linux kernel mechanisms with upstream-first BSP work, hostile baseband/wireless inputs, continuously measured mobile performance, long-lived API discipline, responsive/accessibility-first UI design, and explicit threat modeling for duress/security UX.
 
-- process-granular trust, capabilities, client/server resource ownership, data caging, OS-managed software installation, and resource-frugal phone design from Symbian material;
-- hardware-rooted trust, defense-in-depth, rollback/tamper evidence, protected key material, and software-update lifecycle direction from Samsung Knox;
-- AES as a standardized primitive, not permission to invent a custom encryption mode, from NIST FIPS 197-upd1;
-- stable higher-level APIs over private kernel mechanisms from the operating-system texts;
-- continuous CPU/memory/network/battery/responsiveness measurement for mobile performance;
-- hostile wireless/protocol input handling and fuzzing for future Bluetooth/peripheral services.
+References are design evidence, not instructions to copy historical protocols, Android/Samsung vendor APIs, old crypto suites, Symbian ABI details, or educational from-scratch kernels.
 
-Do not implement crypto, attestation, Bluetooth, or vendor-specific Knox mechanisms merely because references describe them; introduce them only in the milestone that owns that subsystem.
+## Next after M2.0
 
-## Next after M1.5
+M2.1 should put a narrow Storage Service/OSIDL boundary in front of `osstorage` and introduce transferable typed object handles with explicit rights reduction.
 
-Begin the storage/data-caging implementation track. Preserve all package/application lifecycle invariants and build stable typed storage APIs over the existing authorized per-app data root.
+Key requirements:
 
-Priorities:
-
-- private app storage must be rooted by trusted application identity/user context, never caller-supplied absolute Linux paths;
-- introduce typed/move-only file and directory object handles with rights reduction;
-- path traversal must be root-confined and reject symlink/reparse escapes;
-- normal file API should use explicit bounded strings/spans/results and async-ready semantics without hiding unbounded worker pools;
-- atomic replacement must be a first-class primitive;
-- document/media access must later be brokered object authority, not global filesystem visibility;
-- storage/key service separation must be preserved; do not invent encryption construction before the crypto/key milestone.
+- derive the caller's private root from trusted `RequestContext` identity, never from caller-supplied PackageId/PrincipalId/uid/path/fd;
+- return typed file/directory object handles, not native fd values;
+- rights delegation may only reduce rights;
+- keep path strings bounded and relative to an already-authorized directory object;
+- preserve atomic replace as a semantic operation;
+- add quotas/accounting before unbounded app storage behavior;
+- keep Storage Service and future Key Service separate;
+- document/media sharing comes later through brokers/object grants, not global filesystem visibility.
 
 ## Build and test
 
@@ -129,4 +105,4 @@ cmake --build build/host-clang
 ctest --test-dir build/host-clang --output-on-failure
 ```
 
-Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, the current milestone document, and the reference notes before modifying architecture-sensitive code.
+For the focused M2.0 gate, run CTest tests matching `^storage_` on native x86-64 and native AArch64.
