@@ -38,9 +38,6 @@ public:
         SurfaceId surface,
         SurfaceVisibility visibility) noexcept;
 
-    // Window/application stack authority belongs to trusted system UI. A
-    // normal app can update its own pixels and visibility, but cannot promote
-    // its root/popup group above another application by choosing a z value.
     [[nodiscard]] os::core::Result<void> activate_application(
         os::core::PeerIdentity caller,
         SurfaceId application_surface) noexcept;
@@ -59,6 +56,10 @@ public:
         std::int32_t x,
         std::int32_t y) const noexcept;
 
+    // Buffer lifetime belongs to the shared-buffer pool/service. Releasing a
+    // buffer invalidates any scene entry still presenting that semantic id; a
+    // later frame must submit another live authorized buffer.
+    void invalidate_buffer(BufferId buffer) noexcept;
     void revoke_process(os::core::ProcessId process) noexcept;
 
     [[nodiscard]] std::size_t surface_count() const noexcept { return surface_count_; }
@@ -71,6 +72,7 @@ private:
         SurfaceDescriptor descriptor {};
         std::uint64_t creation_serial {0U};
         std::uint64_t stack_serial {0U};
+        BufferId buffer {};
         std::uint64_t frame_sequence {0U};
         std::uint8_t buffer_slot {0U};
         bool has_frame {false};
