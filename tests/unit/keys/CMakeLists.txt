@@ -11,3 +11,10 @@ target_compile_options(key_random_id_source_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
 add_test(NAME key_random_id_source_test COMMAND key_random_id_source_test)
+
+add_executable(key_hierarchy_test key_hierarchy_test.cpp)
+target_link_libraries(key_hierarchy_test PRIVATE emnl::oskeys emnl_warnings)
+target_compile_options(key_hierarchy_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME key_hierarchy_test COMMAND key_hierarchy_test)
