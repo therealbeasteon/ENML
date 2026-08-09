@@ -13,8 +13,11 @@ Implemented:
 - four trusted surface roles: application, popup, system chrome, secure system
 - exact `PeerIdentity` surface ownership
 - distinct trusted shell and secure-UI principals
-- compositor-owned global role/z ordering rather than caller-supplied z authority
+- one application root per live process in the initial phone model
 - popup attachment restricted to an exact-process-owned application parent
+- compositor-owned application stack groups; a popup cannot escape above its parent application group
+- trusted-shell-only `activate_application()`; applications cannot self-promote or submit arbitrary global z values
+- system chrome above app groups and secure-system UI above both
 - 64-surface global table and eight-surface per-principal budget
 - process-death surface revocation with no authority inheritance across fresh `ProcessId`
 - bounded three-slot frame metadata and eight damage rectangles
