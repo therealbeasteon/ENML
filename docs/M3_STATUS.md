@@ -83,6 +83,8 @@ Implemented in the current branch:
 - bounded collection virtualization planning for up to 1,000,000 logical items with materialization bounded by the semantic child budget
 - deep-list 64-bit scroll/content extent with viewport-relative materialized item coordinates
 - deterministic fixed-pool collection recycler retaining overlapping item slots and reusing the lowest free slots
+- strong 64-bit `CollectionItemKey` identity separate from mutable collection index
+- keyed recycler binding that preserves a materialized semantic slot across insertion/reordering when the logical item key remains stable
 - immutable renderer snapshot with revision tracking
 - bounded renderer dirty/removal delta and full-resync fallback on bookkeeping overflow
 - semantic design token table independent of concrete vendor colors/assets
@@ -95,36 +97,42 @@ Implemented in the current branch:
 - multiple semantic accent/tint roles without fixed RGB ABI
 - reduced-transparency, reduced-motion and high-contrast visual preference resolution
 - explicit economy/balanced/full optical quality tiers that reduce rendering cost without changing semantic hierarchy or authored contour identity
+- explicit renderer capability profile for alpha compositing, live backdrop filtering, spatial motion and bounded optical blur
+- capability fallback that keeps ENML material/contour identity while degrading unsupported translucency, backdrop work, depth blur and spatial motion
 - deterministic fixed-capacity `RenderCommandBuffer` lowering from validated renderer snapshots
 - renderer-snapshot validation including unique IDs, one root, parent/depth consistency and bounded cycle rejection
 - deterministic command ordering, effective ancestor visibility and semantic-only unstyled-node support
 - explicit separation between accessibility labels and visible renderer text content
 - platform-owned semantic font-family roles and bounded fallback chains without font paths or vendor family names in UI ABI
+- renderer-private bounded shaped-text contract: at most 160 glyph records, 32 font/direction runs and 16 lines per semantic text value
+- shaped-output validation against UTF-8 cluster boundaries, semantic fallback families, run direction, line partitioning and logical geometry bounds
+- text measurement derived from validated shaped glyph advances rather than UTF-8 byte/code-point counts
 - text scaling from 100% through 300% and minimum logical touch-target policy
 - large-text tests proving row reflow and reduced visible collection window size
 - phone/tablet recomposition tests preserving semantic node identity
 - adversarial unit tests for malformed UTF-8, oversized/forged labels, stale node IDs, depth/child bounds, role/state/action misuse, focus transfer and accessibility projection
 - responsive layout tests for phone/tablet-like viewports, safe insets, policy changes and invalid viewport/policy inputs
-- collection-window/recycler tests for overscroll, deep scrolling, slot retention/reuse, window limits and out-of-window access
-- renderer snapshot/delta and resolved-command tests
-- design/reflow tests including optical material and accessibility fallbacks
+- collection-window/recycler tests for overscroll, deep scrolling, slot retention/reuse, stable-key mutation, duplicate/zero-key rejection, window limits and out-of-window access
+- renderer snapshot/delta and resolved-command tests including quality/accessibility/capability fallback
+- shaped-text tests including multi-line measurement, non-monotonic RTL cluster order, invalid UTF-8 cluster boundaries, fallback-family rejection and extent limits
 - dedicated GCC, Clang, ASan/UBSan and native AArch64 semantic-UI gates
 
-The deterministic renderer-command baseline, including the new command test, passed GCC, Clang, ASan/UBSan and native AArch64 before the subsequent semantic font-fallback extension. The current head must pass those same gates before M3.2 advances further.
+The earlier deterministic renderer-command/font-fallback baseline passed GCC, Clang, ASan/UBSan and native AArch64. The current head adds stable collection keys, shaped-output validation/measurement and renderer capability fallbacks; those additions must pass the same four-way M3 UI gate before they are treated as validated.
 
 See `docs/M3_2_SEMANTIC_UI_FOUNDATION.md`, `docs/M3_2_ENML_VISUAL_LANGUAGE.md`, `docs/REFERENCE_ANDROID_UI_DESIGN.md`, and `docs/REFERENCE_NOTES_2026_08_09_UI.md`.
 
 Remaining M3.2 work:
 
-- bounded text shaping/font-provider integration and actual measurement/reflow using platform-owned font assets;
-- collection data-source/item-identity protocol above the existing bounded window/recycler slots;
-- bounded opaque-first 2D material rendering before live translucency/blur;
-- public app-facing semantic UI API/OSIDL after the in-process contracts stabilize;
-- platform accessibility service/bridge above semantic snapshots;
-- deterministic input/focus routing integration without exposing `/dev/input` or compositor internals to apps;
-- compositor-deadline-aware animation scheduling for the existing motion roles;
-- secure-system design attribution that application surfaces cannot request or counterfeit;
-- Figma design-system alignment using the same semantic token vocabulary;
-- usability/accessibility evaluation before freezing the visual language.
+- actual renderer-owned shaping/font-provider integration using platform-owned font assets; the bounded shaped-output contract now exists, but ENML does not yet ship a production shaper
+- line breaking, bidi paragraph resolution and real measurement/reflow integration above the validated shaping contract
+- collection data-source/mutation protocol above the now-stable item-key/recycler identity contract
+- bounded opaque-first 2D material rasterization before live translucency/blur
+- public app-facing semantic UI API/OSIDL after the in-process contracts stabilize
+- platform accessibility service/bridge above semantic snapshots
+- deterministic input/focus routing integration without exposing `/dev/input` or compositor internals to apps
+- compositor-deadline-aware animation scheduling for the existing motion roles
+- secure-system design attribution that application surfaces cannot request or counterfeit
+- Figma design-system alignment using the same semantic token vocabulary
+- usability/accessibility evaluation before freezing the visual language
 
 Hardware DRM/KMS/GPU backend work, production shader implementation, rich shell visual identity, telephony UI, verified boot and production hardware key providers remain later slices.
