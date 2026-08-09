@@ -15,8 +15,11 @@
 
 namespace os::storage {
 
-inline constexpr os::core::ServiceId storage_service_id{0x0000F010U};
-inline constexpr os::core::ServiceId storage_object_service_id{0x0000F011U};
+// F010 is reserved by the private application bootstrap protocol. Storage uses
+// its own stable service-id range so bootstrap and public service traffic can
+// never be confused even if they share the OSIP transport format.
+inline constexpr os::core::ServiceId storage_service_id{0x0000F020U};
+inline constexpr os::core::ServiceId storage_object_service_id{0x0000F021U};
 inline constexpr std::uint32_t storage_open_private_root_operation = 1U;
 
 inline constexpr std::size_t max_private_roots = 64U;
