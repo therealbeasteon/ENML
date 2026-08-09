@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cassert>
+#include <cstddef>
 #include <cstdint>
 
 #include <os/core/error.hpp>
@@ -48,6 +49,39 @@ void expect_ui_error(const os::core::Error& error, std::uint32_t code) {
         if (plan.bindings[index].item_key == key) return plan.bindings[index].retained;
     }
     return false;
+}
+
+struct TestCollectionSource final {
+    std::uint64_t revision {1U};
+    std::uint32_t item_count {0U};
+    std::array<os::ui::CollectionItemKey, 8U> keys {};
+};
+
+bool snapshot_source(
+    void* context,
+    os::ui::CollectionDataSnapshot& output) noexcept {
+    if (context == nullptr) return false;
+    const auto* source = static_cast<const TestCollectionSource*>(context);
+    output = os::ui::CollectionDataSnapshot{
+        .revision = os::ui::CollectionRevision{source->revision},
+        .item_count = source->item_count,
+    };
+    return true;
+}
+
+bool source_key_at(
+    void* context,
+    os::ui::CollectionRevision revision,
+    std::uint32_t item_index,
+    os::ui::CollectionItemKey& output) noexcept {
+    if (context == nullptr) return false;
+    const auto* source = static_cast<const TestCollectionSource*>(context);
+    if (revision.value() != source->revision || item_index >= source->item_count ||
+        item_index >= source->keys.size()) {
+        return false;
+    }
+    output = source->keys[item_index];
+    return true;
 }
 
 } // namespace
@@ -185,6 +219,114 @@ int main() {
     auto zero_key_plan = recycler.bind(zero_key);
     assert(!zero_key_plan);
     expect_ui_error(zero_key_plan.error(), os::ui::errors::invalid_collection);
+
+    recycler.reset();
+    assert(recycler.active_count() == 0U);
+
+    // A data-source materialization is revision-scoped. All key lookups must
+    // resolve against one captured logical collection state.
+    TestCollectionSource source{};
+    source.revision = 10U;
+    source.item_count = 4U;
+    source.keys[0] = key_a;
+    source.keys[1] = key_b;
+    source.keys[2] = key_c;
+    source.keys[3] = key_d;
+    const os::ui::CollectionDataSourceBackend backend{
+        .context = &source,
+        .snapshot = snapshot_source,
+        .item_key_at = source_key_at,
+    };
+
+    auto source_snapshot = os::ui::collection_data_snapshot(backend);
+    assert(source_snapshot);
+    assert(source_snapshot.value().revision == os::ui::CollectionRevision{10U});
+    assert(source_snapshot.value().item_count == 4U);
+
+    auto source_window = os::ui::plan_collection_window(os::ui::CollectionWindowRequest{
+        .item_count = source_snapshot.value().item_count,
+        .item_extent_q6 = os::ui::logical_from_dp(56U),
+        .viewport_extent_q6 = os::ui::logical_from_dp(224U),
+        .overscan_items = 0U,
+    });
+    assert(source_window);
+    auto source_request = os::ui::build_collection_recycle_request(
+        source_window.value(), source_snapshot.value(), backend);
+    assert(source_request);
+    auto source_first_plan = recycler.bind(source_request.value());
+    assert(source_first_plan);
+
+    // Insert a new logical item at the front and advance the source revision.
+    // Keys A/B/C move indices but retain their semantic recycler slots.
+    source.revision = 11U;
+    source.item_count = 5U;
+    source.keys[0] = key_new;
+    source.keys[1] = key_a;
+    source.keys[2] = key_b;
+    source.keys[3] = key_c;
+    source.keys[4] = key_d;
+
+    auto source_snapshot2 = os::ui::collection_data_snapshot(backend);
+    assert(source_snapshot2);
+    auto source_window2 = os::ui::plan_collection_window(os::ui::CollectionWindowRequest{
+        .item_count = source_snapshot2.value().item_count,
+        .item_extent_q6 = os::ui::logical_from_dp(56U),
+        .viewport_extent_q6 = os::ui::logical_from_dp(224U),
+        .overscan_items = 0U,
+    });
+    assert(source_window2);
+    auto source_request2 = os::ui::build_collection_recycle_request(
+        source_window2.value(), source_snapshot2.value(), backend);
+    assert(source_request2);
+    auto source_second_plan = recycler.bind(source_request2.value());
+    assert(source_second_plan);
+    assert(retained_key(source_second_plan.value(), key_a));
+    assert(retained_key(source_second_plan.value(), key_b));
+    assert(retained_key(source_second_plan.value(), key_c));
+    assert(slot_for_key(source_first_plan.value(), key_a) ==
+        slot_for_key(source_second_plan.value(), key_a));
+    assert(slot_for_key(source_first_plan.value(), key_b) ==
+        slot_for_key(source_second_plan.value(), key_b));
+    assert(slot_for_key(source_first_plan.value(), key_c) ==
+        slot_for_key(source_second_plan.value(), key_c));
+
+    // Reusing the old revision after mutation must fail instead of mixing keys
+    // from two logical states into one materialized semantic window.
+    auto stale_request = os::ui::build_collection_recycle_request(
+        source_window.value(), source_snapshot.value(), backend);
+    assert(!stale_request);
+    expect_ui_error(stale_request.error(), os::ui::errors::stale_collection_snapshot);
+
+    // A source returning duplicate or zero stable keys is malformed even if
+    // the callbacks themselves return success.
+    source.revision = 12U;
+    source.item_count = 4U;
+    source.keys[0] = key_a;
+    source.keys[1] = key_b;
+    source.keys[2] = key_b;
+    source.keys[3] = key_d;
+    auto malformed_snapshot = os::ui::collection_data_snapshot(backend);
+    assert(malformed_snapshot);
+    auto malformed_request = os::ui::build_collection_recycle_request(
+        keyed_window.value(), malformed_snapshot.value(), backend);
+    assert(!malformed_request);
+    expect_ui_error(malformed_request.error(), os::ui::errors::invalid_collection_source);
+
+    source.revision = 13U;
+    source.keys[2] = {};
+    auto zero_source_snapshot = os::ui::collection_data_snapshot(backend);
+    assert(zero_source_snapshot);
+    auto zero_source_request = os::ui::build_collection_recycle_request(
+        keyed_window.value(), zero_source_snapshot.value(), backend);
+    assert(!zero_source_request);
+    expect_ui_error(zero_source_request.error(), os::ui::errors::invalid_collection_source);
+
+    auto missing_backend_snapshot = os::ui::collection_data_snapshot(
+        os::ui::CollectionDataSourceBackend{});
+    assert(!missing_backend_snapshot);
+    expect_ui_error(
+        missing_backend_snapshot.error(),
+        os::ui::errors::invalid_collection_source);
 
     recycler.reset();
     assert(recycler.active_count() == 0U);
