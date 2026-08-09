@@ -28,7 +28,15 @@ application state/controller
         +--> visual accessibility preferences
         |
         v
- future concrete renderer
+ deterministic RenderCommandBuffer
+        |
+        +--> resolved contour intent
+        +--> resolved typography metrics
+        +--> resolved optical/depth/motion intent
+        +--> explicit quality-budget fallback
+        |
+        v
+ future concrete 2D/material/text renderer
         |
         v
  M3 compositor surfaces + BufferId
@@ -73,6 +81,25 @@ This is the foundation for a later platform accessibility service/bridge. Access
 `SemanticTree::renderer_snapshot()` returns an immutable, fixed-capacity semantic snapshot for a renderer-facing consumer. `take_renderer_delta()` provides bounded changed/removed node metadata plus a revision number.
 
 Dirty metadata is only an optimization hint. If removal bookkeeping overflows before a consumer drains it, `full_resync_required` is asserted and the complete renderer snapshot remains authoritative. A renderer must never infer missing semantic state from stale pixels.
+
+## Deterministic renderer command lowering
+
+`build_render_commands()` now lowers a validated `RendererSnapshot` into a fixed-capacity `RenderCommandBuffer`. This is still renderer intent rather than a paint/GPU ABI.
+
+The lowering contract:
+
+- validates the bounded snapshot, unique non-zero node IDs, one root, parent/depth relationships, valid UTF-8, bounds and style references;
+- rejects fabricated parent cycles or malformed renderer snapshots rather than trusting arbitrary descriptors;
+- computes effective visibility through the ancestor chain so hidden containers suppress descendant paint intent;
+- sorts commands deterministically by monotonic `UiNodeId` rather than depending on backing-slot order;
+- resolves `StyleTokenId` through visual preferences, contour geometry and scaled typography metrics;
+- emits at most one renderer command per styled semantic node, preserving the 256-node bound;
+- treats style ID zero as semantic-only/unstyled, so accessibility/interaction nodes can exist without requiring paint;
+- carries semantic role/state and focus visibility but no RGB values, glyph IDs, shader handles, textures, physical pixels or vendor graphics objects.
+
+Semantic labels are deliberately not assumed to be visible control text. Until the app-facing content contract distinguishes visual content from accessibility naming, only `UiRole::text` is copied into `RenderCommand::visual_text`. This prevents the renderer foundation from freezing an accessibility label into the visual-content ABI by accident.
+
+`VisualQualityTier` is also explicit. Full quality preserves the resolved optical intent. Balanced quality bounds expensive blur. Economy quality disables live backdrop work and reduces secondary optical blur/specular cost while preserving the same material family, contour, hierarchy and semantic state. Quality fallback therefore changes implementation cost, not ENML's identity.
 
 ## Logical geometry and reflow
 
@@ -123,29 +150,31 @@ The current token vocabulary includes:
 - authored curve roles: rectilinear, soft, continuous, swept and capsule;
 - motion roles: none, micro, responsive, transition and reveal;
 - material tint roles;
-- reduced-transparency, reduced-motion and high-contrast resolution.
+- reduced-transparency, reduced-motion and high-contrast resolution;
+- quality-budget lowering that preserves authored geometry and hierarchy.
 
 This is deliberately not a copy of Material Design, iOS, BlackBerry, Windows, One UI or another vendor system. See `docs/M3_2_ENML_VISUAL_LANGUAGE.md`.
 
-The concrete palette, path geometry, text shaping, shaders and animation engine remain renderer-owned implementation details rather than application ABI.
+The concrete palette, path tessellation, text shaping, shaders and animation engine remain renderer-owned implementation details rather than application ABI.
 
 ## Reference-driven decisions
 
 The supplied *Android UI Design* material is useful for enduring principles: reusable semantic controls, hierarchical but performance-conscious UI trees, logical/density-independent sizing, responsive recomposition, semantic events, separation of structure from theme, and list recycling. ENML does not copy Android Activities/Fragments/XML resources/listeners/Intent routing or visual identity.
 
-The supplied BlackBerry UI guidance is useful for task-focused organization, visible state, feedback, recoverability, progressive disclosure, accessibility and the general principle that material, lighting, texture and depth can contribute to perceived craftsmanship. ENML does not copy BlackBerry components, icons or historical themes.
+The supplied BlackBerry UI guidance is useful for task-focused organization, visible state, feedback, recoverability, progressive disclosure, readable scalable fonts, accessibility and the general principle that material, lighting, texture and depth can contribute to perceived craftsmanship. ENML does not copy BlackBerry components, icons or historical themes.
 
 The supplied Figma reference informs the design workflow and the construction vocabulary for opacity, gradients, curves, blur, shadows, components, prototyping and design/developer collaboration. Figma is a workflow tool, not the source of ENML visual identity.
 
 The supplied UX and natural-interface references reinforce desirability, aesthetics, timing, motion, discoverability, direct feedback and user testing. The recent mobile UI/UX review also reinforces micro-interactions, inclusive design, responsive composition and the requirement to balance richer visuals against performance and battery cost.
+
+Those references guide why the renderer carries semantic hierarchy, immediate feedback intent, scalable typography and graceful quality fallbacks. They do not define ENML's concrete silhouettes, palette, animation signature or optical implementation.
 
 ## Current limits / next work
 
 M3.2 does not yet include:
 
 - actual widget/pixel rendering;
-- deterministic renderer command buffer;
-- text shaping/font fallback stack;
+- glyph shaping or font fallback resolution;
 - scroll physics;
 - collection data-source/recycling protocol;
 - hardware input service/router;
@@ -156,4 +185,4 @@ M3.2 does not yet include:
 - path tessellation or GPU shader implementation;
 - animation scheduler tied to compositor frame deadlines.
 
-The next M3.2 work should stabilize the renderer-facing resolved-style contract and deterministic curve/path representation, then add text shaping/reflow before exposing a public app UI API/OSIDL. Hardware-specific graphics work remains behind the private renderer/display layer.
+The next M3.2 work should establish a bounded platform-owned font/fallback contract and text-layout/shaping boundary without baking font files or vendor typography into app ABI, then continue into collection recycling and concrete opaque-first material rendering. Hardware-specific graphics work remains behind the private renderer/display layer.
