@@ -193,7 +193,7 @@ int main() {
     assert(bad_key.error().code == os::keys::errors::key_id_mismatch);
 
     auto wrong_version = envelope;
-    wrong_version[12] ^= std::byte{0x01};
+    wrong_version[12] ^= std::byte{0x02};
     auto bad_version = duplicate.decrypt(
         {wrong_version.data(), encrypted.value()},
         as_bytes(aad_text),
