@@ -60,6 +60,7 @@ int main() {
         bootstrap_buffer,
         os::display::compositor_service_id);
     if (!bootstrap) return 12;
+    const std::uint64_t service_generation = bootstrap.value().record.boot_generation;
 
     os::service::IdentityRegistry identities;
     os::display::Compositor compositor{
@@ -73,14 +74,16 @@ int main() {
             .shell = shell_principal,
             .secure_ui = secure_ui_principal,
         },
+        service_generation,
     };
     if (!compositor.valid()) return 13;
 
-    os::display::SharedBufferPool buffers;
+    os::display::SharedBufferPool buffers{service_generation};
+    if (!buffers.valid()) return 14;
     os::display::CompositorService service{compositor, buffers, identities};
 
     auto ready = os::service::send_ready(control, bootstrap.value().request_header);
-    if (!ready) return 14;
+    if (!ready) return 15;
 
     std::array<std::byte, os::ipc::max_wire_packet_size> control_buffer{};
     std::array<std::byte, os::ipc::max_wire_packet_size> request_buffer{};
@@ -95,7 +98,7 @@ int main() {
         do {
             polled = ::poll(descriptors.data(), descriptors.size(), -1);
         } while (polled < 0 && errno == EINTR);
-        if (polled < 0) return 15;
+        if (polled < 0) return 16;
 
         if ((descriptors[0].revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 &&
             (descriptors[0].revents & POLLIN) == 0) {
@@ -109,7 +112,7 @@ int main() {
             if (!handled) {
                 if (peer_died(handled.error())) return 0;
                 report_fatal("control", handled.error());
-                return 16;
+                return 17;
             }
         }
 
@@ -124,7 +127,7 @@ int main() {
             if (!dispatched) {
                 if (peer_died(dispatched.error())) return 0;
                 report_fatal("public", dispatched.error());
-                return 17;
+                return 18;
             }
         }
     }
