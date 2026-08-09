@@ -70,19 +70,27 @@ bool AccessibilityBridgeAuthority::caller_allowed(
         caller.principal == trusted_accessibility_principal_;
 }
 
-os::core::Result<AccessibilityServiceSnapshot> AccessibilityBridgeAuthority::snapshot(
+os::core::Result<AccessibilitySessionSnapshot> AccessibilityBridgeAuthority::snapshot(
     os::core::PeerIdentity caller) const noexcept {
     if (!valid()) return ui_error(errors::invalid_tree);
     if (!caller_allowed(caller)) return ui_error(errors::accessibility_authority_denied);
-    return accessibility_service_snapshot(*tree_);
+    auto snapshot = accessibility_service_snapshot(*tree_);
+    if (!snapshot) return snapshot.error();
+    return AccessibilitySessionSnapshot{
+        .session = session_,
+        .snapshot = snapshot.value(),
+    };
 }
 
 os::core::Result<UiEvent> AccessibilityBridgeAuthority::dispatch(
     os::core::PeerIdentity caller,
-    AccessibilityActionRequest request) noexcept {
+    AccessibilitySessionActionRequest request) noexcept {
     if (!valid()) return ui_error(errors::invalid_tree);
     if (!caller_allowed(caller)) return ui_error(errors::accessibility_authority_denied);
-    return dispatch_accessibility_action(*tree_, request);
+    if (request.session != session_) {
+        return ui_error(errors::accessibility_session_mismatch);
+    }
+    return dispatch_accessibility_action(*tree_, request.request);
 }
 
 } // namespace os::ui
