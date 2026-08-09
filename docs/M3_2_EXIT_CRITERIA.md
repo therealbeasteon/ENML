@@ -30,7 +30,9 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 - physical-to-logical conversion is bounded and deterministic;
 - semantic hit testing matches visible ordering and does not click through disabled/non-actionable top overlays by default;
 - no application receives `/dev/input`, evdev structures or compositor-private scene state;
-- the future cross-process input transport has an authenticated trusted principal and cannot be redirected by an application-supplied target ID.
+- global-scene hit-test/validation RPC is authenticated with kernel packet credentials plus a supervisor-resolved trusted input principal;
+- ordinary application principals cannot use the privileged input operations even when they possess a compositor endpoint;
+- the remaining target-process event transport cannot be redirected by an application-supplied target ID and must preserve the compositor-issued owner/surface/frame identity through delivery.
 
 ### Rendering and visual identity
 
