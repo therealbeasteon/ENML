@@ -101,21 +101,36 @@ os::core::Result<void>
 send_rpc_response(
     Channel& channel,
     const WireHeaderV1& request_header,
-    os::core::ByteSpan response_payload) noexcept {
+    os::core::ByteSpan response_payload,
+    std::span<const os::core::NativeHandle> handles) noexcept {
     if (response_payload.size() > max_inline_payload_size) {
         return ipc_error(errors::oversized_message);
     }
+    if (handles.size() > max_handle_count ||
+        handles.size() > static_cast<std::size_t>(std::numeric_limits<std::uint16_t>::max())) {
+        return ipc_error(errors::handle_count_mismatch);
+    }
+    for (const auto& handle : handles) {
+        if (!handle.valid()) {
+            return ipc_error(errors::invalid_native_handle);
+        }
+    }
+
+    std::uint32_t flags = flag_value(WireFlag::response);
+    if (!handles.empty()) {
+        flags |= flag_value(WireFlag::has_handles);
+    }
 
     const WireHeaderV1 response_header{
-        .flags = flag_value(WireFlag::response),
+        .flags = flags,
         .service_id = request_header.service_id,
         .operation_id = request_header.operation_id,
         .request_id = request_header.request_id,
         .payload_size = static_cast<std::uint32_t>(response_payload.size()),
-        .handle_count = 0,
+        .handle_count = static_cast<std::uint16_t>(handles.size()),
         .payload_checksum = 0,
     };
-    return channel.send(response_header, response_payload);
+    return channel.send(response_header, response_payload, handles);
 }
 
 os::core::Result<void>

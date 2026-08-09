@@ -1,9 +1,11 @@
 #pragma once
 
 #include <cstdint>
+#include <span>
 
 #include <os/core/error.hpp>
 #include <os/core/identity.hpp>
+#include <os/core/native_handle.hpp>
 #include <os/core/result.hpp>
 #include <os/core/span.hpp>
 #include <os/core/strong_id.hpp>
@@ -47,11 +49,15 @@ private:
     std::uint64_t next_request_id_ {1};
 };
 
+// Responses may transfer a bounded set of already-authorized native transport
+// objects. The semantic type and rights of those objects belong to the
+// higher-level protocol; raw descriptors are never serialized into payloads.
 [[nodiscard]] os::core::Result<void>
 send_rpc_response(
     Channel& channel,
     const WireHeaderV1& request_header,
-    os::core::ByteSpan response_payload) noexcept;
+    os::core::ByteSpan response_payload,
+    std::span<const os::core::NativeHandle> handles = {}) noexcept;
 
 [[nodiscard]] os::core::Result<void>
 send_rpc_error(

@@ -13,7 +13,7 @@ EMNL aims for appliance-like phone behavior, small trusted components, strong pr
 - `PrincipalId`, `UserId`, and logical `ProcessId` are resolved from trusted system state; application payloads never establish them.
 - Caller identity must never be accepted from request payload fields.
 - Public IPC uses explicit little-endian serialization. Never send native C++ structs as wire data.
-- `WireHeaderV1` is a 40-byte logical format. Inline payload remains bounded to 64 KiB and transferred handles to 16 during M0.
+- `WireHeaderV1` is a 40-byte logical format. Inline payload remains bounded to 64 KiB and transferred handles to 16 during M0/M2.1.
 - Handles and native descriptors are move-only/RAII. Descriptor inheritance is deny-by-default.
 - No shell execution for services. No YAML/JSON/XML parser in the supervisor.
 - No universal "system UID" authority model.
@@ -27,6 +27,10 @@ EMNL aims for appliance-like phone behavior, small trusted components, strong pr
 - Uninstall is not synonymous with data/key destruction. Package launch state, process authority, immutable code retention, application principal history, private data, backup state, and future cryptographic keys are separate resources.
 - Public app storage APIs must not expose Linux fd numbers or absolute Linux paths as stable application ABI.
 - Storage traversal must remain rooted in trusted object authority; do not reintroduce `open()` on caller-controlled absolute paths.
+- Storage Service root selection is based on trusted `RequestContext.peer`, not PackageId/PrincipalId/user/native-fd claims in payloads.
+- Storage object rights are authoritative on the server. Client-side rights checks are ergonomic only and may never be the security boundary.
+- Object delegation may only reduce rights. Never widen a child capability because a caller supplied a larger mask.
+- RPC error responses never transfer handles. Successful handle-bearing responses must keep `HAS_HANDLES`, `handle_count`, and actual SCM_RIGHTS descriptors consistent.
 
 ## Completed implementation
 
@@ -34,54 +38,72 @@ M0.0-M0.10 are complete: build/oscore, bounded OSIP codec/Channel, OSIDL, typed 
 
 M1.0-M1.5 are complete and merged: signer-bound package identity, hostile manifest analysis, durable staging/activation, trusted generation-bound App Manager launch, durable per-user app principals/private-data sandbox, and update/uninstall/revocation/generation-retention semantics.
 
-Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, and `docs/M1_5_UPDATE_UNINSTALL.md` before changing those substrates.
+M2.0 is complete and merged: bounded descriptor-rooted private storage, `RelativePath`, typed move-only `File`/`Directory`, `O_NOFOLLOW` confinement, regular-file-only opens, stable storage errors, bounded positional I/O, and crash-resistant atomic replacement.
 
-## Current branch milestone: M2.0 private storage foundation
+Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M1_5_UPDATE_UNINSTALL.md`, `docs/M2_0_PRIVATE_STORAGE.md`, and `docs/M2_STATUS.md` before changing those substrates.
 
-M2.0 introduces an internal storage runtime beneath the future Storage Service.
+## Current branch milestone: M2.1 Storage Service + typed object capabilities
 
-`RelativePath` is a fixed-capacity UTF-8 byte path. It rejects absolute paths, leading/trailing/double separators, `.`/`..`, embedded NUL, backslash, malformed UTF-8, overlong total paths and overlong segments. Do not loosen these rules to mirror Linux pathname syntax.
+M2.1 puts a service/object-capability boundary in front of M2.0.
 
-`PrivateRoot` is created only from an already-authorized directory handle. It never accepts a Linux path and never exposes its native descriptor. `Directory` and `File` are move-only typed objects.
+The main Storage Service endpoint derives private-root authority from trusted `RequestContext.peer` and then looks up `(PrincipalId, UserId)` in trusted policy. `ProcessId` is not the ownership key, because process restarts must not create a new private-data domain.
 
-All descendant resolution is descriptor-relative and segment-by-segment with `O_NOFOLLOW`. Intermediate objects must be real directories. Final `File` objects must be regular files; FIFOs/sockets/devices/directories are rejected. A child `Directory` is a naturally reduced namespace authority.
+The request payload for opening private storage contains no package id, principal id, uid/gid, native PID, fd number, or Linux path.
 
-`File` supports bounded positional read/write, size and sync with stable `ErrorDomain::storage` errors. Access rights are recorded at open and checked before I/O; never trust a later caller-supplied rights mask.
+`Storage` uses service id `0x0000F020`; private object endpoints use `0x0000F021`. `0x0000F010` is already reserved by application bootstrap and must not be reused.
 
-`atomic_replace()` is a bounded same-directory temp/write/fsync/rename/parent-fsync primitive. The payload is borrowed and capped at 1 MiB for M2.0. Temporary names are not secrets; `O_EXCL` and bounded collision handling are the safety mechanism.
+Successful RPC responses may now transfer bounded SCM_RIGHTS handles. `InboundMessage::take_handle()` is infrastructure-only ownership transfer; application-facing APIs immediately wrap received endpoints in typed move-only objects.
 
-See `docs/M2_0_PRIVATE_STORAGE.md` and `docs/M2_STATUS.md`.
+`DirectoryObjectHandle` and `FileObjectHandle` are dedicated local object endpoints. They do not serialize a native descriptor value. Server-side object slots retain the authoritative semantic type and rights mask.
+
+Directory rights currently cover open/create/remove/atomic-replace operations. File rights currently cover read/write/stat/sync. A raw OSIP request that attempts to widen a child directory's rights must fail even if it bypasses the typed client API.
+
+Object endpoints are bearer capabilities: possession is authority. This differs from the main service connection, where the caller is authenticated per message. Deliberate future cross-process delegation must preserve server-side rights reduction.
+
+Synchronous M2.1 storage operations stay bounded inside the 64 KiB inline transport. Large streaming/shared-buffer I/O is not implemented by hiding an unbounded worker pool.
+
+See `docs/M2_1_STORAGE_SERVICE.md`.
+
+## M2.0 path/data-caging invariants still apply
+
+- `RelativePath` remains fixed-capacity UTF-8 and rejects absolute paths, empty segments, `.`/`..`, NUL, backslash, malformed UTF-8, and overlong forms.
+- `PrivateRoot` can only originate from an already-authorized directory handle.
+- All descendant traversal is descriptor-relative, segment-by-segment, and `O_NOFOLLOW`.
+- Final `File` objects must be regular files; FIFOs/sockets/devices/directories are rejected.
+- `atomic_replace()` remains bounded same-directory temp/write/fsync/rename/parent-fsync.
+- Do not add general hard-link or authority-expanding rename APIs casually.
 
 ## Sandbox/application boundary inherited by storage
 
 - app executable is selected from a trusted immutable generation and launched from a retained object with `execveat(..., AT_EMPTY_PATH)`;
 - fd inheritance is deny-by-default;
-- current internal app bootstrap uses fd 5 for the authorized private-data root;
+- current M1 application bootstrap still carries Linux-private fd 5 for the authorized private-data root;
+- fd 5 is not public ABI and must be removed from application use during the next product-integration cutover;
 - Landlock grants the private-data root write/create/remove rights but no execute authority;
 - `no_new_privs`, cleared Linux capabilities, seccomp, bounded rlimits and parent-death policy remain layered beneath apps.
 
-M2.1 should replace direct bootstrap-root use with a real Storage Service/object-handle API. Do not make fd 5 part of public ABI.
-
 ## Reference notes
 
-Read `docs/REFERENCE_NOTES_2026_08_08.md` before architecture-sensitive work. The source set reinforces process-granular trust/data caging and resource frugality (Symbian), hardware-rooted update/rollback security direction (Knox), modern-crypto caution (NIST/BitLocker), private Linux kernel mechanisms with upstream-first BSP work, hostile baseband/wireless inputs, continuously measured mobile performance, long-lived API discipline, responsive/accessibility-first UI design, and explicit threat modeling for duress/security UX.
+Read `docs/REFERENCE_NOTES_2026_08_08.md` before architecture-sensitive work. The supplied source set reinforces process-granular trust, client/server ownership, object/handle APIs, data-caging separation and resource frugality from Symbian; stable higher-level OS services over private system-call mechanisms from the general OS texts; hardware-rooted update/rollback security direction from Knox; modern-crypto caution from NIST/BitLocker; upstream-first ARM64/Linux BSP work; hostile baseband/wireless input handling; continuously measured mobile performance; long-lived API discipline; and responsive/accessibility-first phone UX.
 
 References are design evidence, not instructions to copy historical protocols, Android/Samsung vendor APIs, old crypto suites, Symbian ABI details, or educational from-scratch kernels.
 
-## Next after M2.0
+## Next after M2.1
 
-M2.1 should put a narrow Storage Service/OSIDL boundary in front of `osstorage` and introduce transferable typed object handles with explicit rights reduction.
+M2.2 is the product integration cutover.
 
-Key requirements:
+Required direction:
 
-- derive the caller's private root from trusted `RequestContext` identity, never from caller-supplied PackageId/PrincipalId/uid/path/fd;
-- return typed file/directory object handles, not native fd values;
-- rights delegation may only reduce rights;
-- keep path strings bounded and relative to an already-authorized directory object;
-- preserve atomic replace as a semantic operation;
-- add quotas/accounting before unbounded app storage behavior;
+- run Storage Service as a supervised system service with an explicit fd/memory/process budget;
+- introduce a trusted system-only private-root provider/control path from installed application profile state into Storage Service;
+- replace application use of the private-data directory bootstrap fd with a Storage Service connection or typed root capability;
+- keep `PrincipalId + UserId` as private-data identity and process generation separate;
+- add per-principal storage accounting and quota enforcement before storage behavior can become unbounded;
+- define what outstanding object capabilities do when Storage Service restarts;
 - keep Storage Service and future Key Service separate;
 - document/media sharing comes later through brokers/object grants, not global filesystem visibility.
+
+Do not jump to encryption, document sharing, media indexing, UI, telephony, or key-service work before the Storage Service integration/lifecycle boundary is settled.
 
 ## Build and test
 
@@ -105,4 +127,4 @@ cmake --build build/host-clang
 ctest --test-dir build/host-clang --output-on-failure
 ```
 
-For the focused M2.0 gate, run CTest tests matching `^storage_` on native x86-64 and native AArch64.
+For the focused M2.1 gate, build and run CTest tests matching `^storage_` on native x86-64 and native AArch64. The focused targets are `storage_private_storage_test`, `storage_service_integration_test`, and `storage_service_identity_test`.

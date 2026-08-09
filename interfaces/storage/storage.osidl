@@ -1,0 +1,19 @@
+package os.services.storage;
+
+struct OpenPrivateRootRequest {
+}
+
+struct OpenPrivateRootResponse {
+    u32 object_type = 1;
+    u32 rights = 2;
+}
+
+service Storage {
+    id 0x0000F020;
+    version 1;
+
+    operation OpenPrivateRoot = 1 {
+        request OpenPrivateRootRequest;
+        response OpenPrivateRootResponse;
+    }
+}

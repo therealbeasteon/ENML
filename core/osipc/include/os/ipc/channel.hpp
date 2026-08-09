@@ -104,6 +104,14 @@ public:
     // transport tests. It is not part of the application ABI.
     [[nodiscard]] int native_fd() const noexcept { return handle_.native(); }
 
+    // Transfers ownership of the transport endpoint itself. This is used by
+    // higher-level typed object-capability code to pass an opaque endpoint via
+    // SCM_RIGHTS. Application APIs must wrap the returned descriptor and must
+    // not expose it as a stable ABI value.
+    [[nodiscard]] os::core::NativeHandle take_native_handle_for_transfer() noexcept {
+        return os::core::NativeHandle{handle_.release_native()};
+    }
+
 private:
     os::core::NativeHandle handle_ {};
 

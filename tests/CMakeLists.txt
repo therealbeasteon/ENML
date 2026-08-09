@@ -9,6 +9,7 @@ add_subdirectory(integration/ipc)
 add_subdirectory(integration/rpc)
 add_subdirectory(integration/supervisor)
 add_subdirectory(integration/app_manager)
+add_subdirectory(integration/storage)
 add_subdirectory(integration/arm64)
 
 add_subdirectory(unit/osidlc)

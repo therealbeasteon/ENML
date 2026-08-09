@@ -2,7 +2,7 @@
 
 ## M2.0 — private storage foundation
 
-Current branch: `m2-0-private-storage`
+Status: complete and merged.
 
 Implemented:
 
@@ -24,6 +24,29 @@ Implemented:
 
 See `docs/M2_0_PRIVATE_STORAGE.md`.
 
+## M2.1 — Storage Service + typed object capabilities
+
+Current branch: `m2-1-storage-service-handles`
+
+Implemented:
+
+- Storage Service OSIDL contract with a distinct stable service id
+- trusted private-root selection from `RequestContext.peer`, keyed by durable `PrincipalId + UserId`
+- no caller-supplied package id, principal id, uid/gid, fd number or absolute path in root selection
+- successful RPC responses can transfer bounded handles through `SCM_RIGHTS`
+- move-only `DirectoryObjectHandle` and `FileObjectHandle` wrappers
+- dedicated object endpoints rather than serialized native descriptors
+- server-authoritative file and directory rights masks
+- monotonic child-directory rights reduction
+- raw rights-escalation rejection even when typed client prechecks are bypassed
+- bounded synchronous file I/O and atomic replacement over the existing 64 KiB OSIP transport
+- fixed-capacity root policy and live-object tables
+- object endpoint cleanup on peer death/hangup
+- inherited main-channel identity attack test using per-message `SCM_CREDENTIALS`
+- focused GCC, Clang and native AArch64 storage gates
+
+See `docs/M2_1_STORAGE_SERVICE.md`.
+
 ## Next
 
-M2.1: Storage Service + OSIDL/object-handle boundary. Derive private-root authority from trusted `RequestContext` identity, then return transferable typed file/directory objects with explicit rights reduction. Do not expose raw Linux paths, uid/gid, fd numbers, or caller-supplied PrincipalId as application authority.
+M2.2: product integration cutover. Run Storage Service as a supervised system service, introduce the trusted profile/root-provider control path, replace application use of the Linux-private fd-5 data root with a Storage Service connection/object capability, and add per-principal storage accounting/quota enforcement. Outstanding object-handle behavior across service restart must be explicit rather than accidental.
