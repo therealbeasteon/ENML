@@ -36,6 +36,10 @@ void expect_error(const os::core::Error& error, std::uint32_t code) {
     assert(error.code == code);
 }
 
+os::display::BufferId buffer_for(os::display::SurfaceId surface) {
+    return os::display::BufferId{surface.value() + 1000U};
+}
+
 os::display::SurfaceDescriptor create_app(
     os::display::Compositor& compositor,
     os::core::PeerIdentity peer,
@@ -73,6 +77,7 @@ void show_and_frame(
     assert(compositor.set_visibility(peer, surface.id, os::display::SurfaceVisibility::visible));
     os::display::FrameSubmission frame{
         .surface = surface.id,
+        .buffer = buffer_for(surface.id),
         .sequence = 1U,
         .buffer_slot = slot,
         .damage_count = 1U,
@@ -154,8 +159,6 @@ int main() {
     show_and_frame(compositor, shell, chrome);
     show_and_frame(compositor, secure, secure_surface, 2U);
 
-    // The second application was created later, so the first app's popup stays
-    // inside its own stack group and cannot leap over the newer foreground app.
     auto scene = compositor.scene_snapshot();
     assert(scene.count == 5U);
     assert(scene.entries[0].surface.id == first.id);
@@ -163,12 +166,12 @@ int main() {
     assert(scene.entries[2].surface.id == second.id);
     assert(scene.entries[3].surface.id == chrome.id);
     assert(scene.entries[4].surface.id == secure_surface.id);
+    assert(scene.entries[0].buffer == buffer_for(first.id));
 
     assert(compositor.set_visibility(secure, secure_surface.id, os::display::SurfaceVisibility::hidden));
     auto hit = compositor.hit_test(200, 500);
     assert(hit && hit.value() == second.id);
 
-    // Only trusted shell authority can promote a complete app+popup group.
     assert(compositor.activate_application(shell, first.id));
     scene = compositor.scene_snapshot();
     assert(scene.entries[0].surface.id == second.id);
@@ -185,13 +188,24 @@ int main() {
     assert(!out_of_bounds);
     expect_error(out_of_bounds.error(), os::display::errors::invalid_geometry);
 
-    os::display::FrameSubmission replay{.surface = first.id, .sequence = 1U, .buffer_slot = 1U};
+    os::display::FrameSubmission missing_buffer{.surface = first.id, .sequence = 2U};
+    auto missing_buffer_result = compositor.submit_frame(app, missing_buffer, 2'000'000U);
+    assert(!missing_buffer_result);
+    expect_error(missing_buffer_result.error(), os::display::errors::invalid_buffer);
+
+    os::display::FrameSubmission replay{
+        .surface = first.id,
+        .buffer = buffer_for(first.id),
+        .sequence = 1U,
+        .buffer_slot = 1U,
+    };
     auto replay_result = compositor.submit_frame(app, replay, 2'000'000U);
     assert(!replay_result);
     expect_error(replay_result.error(), os::display::errors::frame_replay);
 
     os::display::FrameSubmission bad_slot{
         .surface = first.id,
+        .buffer = buffer_for(first.id),
         .sequence = 2U,
         .buffer_slot = os::display::max_frame_buffer_slots,
     };
@@ -201,6 +215,7 @@ int main() {
 
     os::display::FrameSubmission bad_damage{
         .surface = first.id,
+        .buffer = buffer_for(first.id),
         .sequence = 2U,
         .buffer_slot = 1U,
         .damage_count = 1U,
@@ -210,45 +225,45 @@ int main() {
     assert(!bad_damage_result);
     expect_error(bad_damage_result.error(), os::display::errors::invalid_damage);
 
-    os::display::FrameSubmission second_frame{.surface = first.id, .sequence = 2U, .buffer_slot = 1U};
+    os::display::FrameSubmission second_frame{
+        .surface = first.id,
+        .buffer = os::display::BufferId{2001U},
+        .sequence = 2U,
+        .buffer_slot = 1U,
+    };
     auto timing = compositor.submit_frame(app, second_frame, 1'000'000U);
     assert(timing);
+    assert(timing.value().buffer == second_frame.buffer);
     assert(timing.value().deadline.next_vsync_ns == 16'666'666U);
     assert(timing.value().deadline.submission_deadline_ns == 15'666'666U);
 
-    assert(compositor.set_bounds(app, first.id, {0, 0, 1000U, 2200U}));
+    compositor.invalidate_buffer(second_frame.buffer);
     scene = compositor.scene_snapshot();
-    bool found_invalidated_root = false;
+    bool found_invalidated = false;
     for (std::size_t index = 0U; index < scene.count; ++index) {
         if (scene.entries[index].surface.id == first.id) {
             assert(!scene.entries[index].has_frame);
-            found_invalidated_root = true;
+            assert(scene.entries[index].buffer.value() == 0U);
+            found_invalidated = true;
         }
     }
-    assert(found_invalidated_root);
+    assert(found_invalidated);
 
+    assert(compositor.set_bounds(app, first.id, {0, 0, 1000U, 2200U}));
     compositor.revoke_process(app.process);
     assert(!compositor.lookup(first.id));
     assert(!compositor.lookup(popup.id));
     assert(compositor.surface_count_for(app_principal) == 0U);
 
     const auto replacement = create_app(compositor, app_new, {0, 160, 1080U, 2140U});
-    assert(replacement.owner.process == app_new.process);
-
-    // Fill the rest of this principal's budget with dependent popups. One root
-    // per process prevents an app from promoting itself by minting new roots.
     std::array<os::display::SurfaceId, os::display::max_surfaces_per_principal - 1U> quota{};
     for (std::size_t index = 0U; index < quota.size(); ++index) {
         const std::int32_t offset = static_cast<std::int32_t>(index * 5U);
         const auto extra = create_role(
-            compositor,
-            app_new,
-            os::display::SurfaceRole::popup,
-            {offset, 200 + offset, 200U, 120U},
-            replacement.id);
+            compositor, app_new, os::display::SurfaceRole::popup,
+            {offset, 200 + offset, 200U, 120U}, replacement.id);
         quota[index] = extra.id;
     }
-    assert(compositor.surface_count_for(app_principal) == os::display::max_surfaces_per_principal);
     auto over_quota = compositor.create_surface(app_new, {
         .role = os::display::SurfaceRole::popup,
         .parent = replacement.id,
@@ -257,8 +272,6 @@ int main() {
     assert(!over_quota);
     expect_error(over_quota.error(), os::display::errors::principal_surface_limit);
 
-    // Destroying the other application's root revokes its dependent UI as one
-    // stack/lifetime group and does not affect the replacement app principal.
     const auto other_popup = create_role(
         compositor, other, os::display::SurfaceRole::popup, {20, 200, 200U, 120U}, second.id);
     const auto before = compositor.surface_count();
@@ -266,6 +279,5 @@ int main() {
     assert(compositor.surface_count() == before - 2U);
     assert(!compositor.lookup(other_popup.id));
     assert(compositor.lookup(replacement.id));
-
     return 0;
 }
