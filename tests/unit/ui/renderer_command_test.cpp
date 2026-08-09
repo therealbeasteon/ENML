@@ -97,14 +97,20 @@ int main() {
         });
     assert(full);
     assert(full.value().revision == snapshot.revision);
-    assert(full.value().count == 3U); // unstyled semantic root emits no paint intent
+    assert(full.value().count == 4U); // root surface + panel + title + action
 
+    const auto* root_command = find_command(full.value(), tree.root());
     const auto* panel_command = find_command(full.value(), panel.value().id);
     const auto* title_command = find_command(full.value(), title.value().id);
     const auto* button_command = find_command(full.value(), button.value().id);
+    assert(root_command != nullptr);
     assert(panel_command != nullptr);
     assert(title_command != nullptr);
     assert(button_command != nullptr);
+
+    assert(root_command->role == os::ui::UiRole::root);
+    assert(root_command->visual.token.id == os::ui::style_tokens::surface);
+    assert(root_command->visual.token.material == os::ui::OpticalMaterialRole::opaque);
 
     assert(panel_command->visual.token.material == os::ui::OpticalMaterialRole::crystal);
     assert(panel_command->visual.material.live_backdrop_allowed);
@@ -161,7 +167,11 @@ int main() {
     assert(tree.set_state(panel.value().id, hidden_panel_state));
     auto hidden = os::ui::build_render_commands(tree.renderer_snapshot());
     assert(hidden);
-    assert(hidden.value().count == 0U);
+    assert(hidden.value().count == 1U); // the root background remains renderable
+    assert(find_command(hidden.value(), tree.root()) != nullptr);
+    assert(find_command(hidden.value(), panel.value().id) == nullptr);
+    assert(find_command(hidden.value(), title.value().id) == nullptr);
+    assert(find_command(hidden.value(), button.value().id) == nullptr);
 
     auto invalid_count = snapshot;
     invalid_count.count = os::ui::max_ui_nodes + 1U;
