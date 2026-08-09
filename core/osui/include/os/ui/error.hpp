@@ -35,6 +35,9 @@ inline constexpr std::uint32_t text_shaper_unavailable = 25U;
 inline constexpr std::uint32_t text_shaper_failed = 26U;
 inline constexpr std::uint32_t invalid_collection_source = 27U;
 inline constexpr std::uint32_t stale_collection_snapshot = 28U;
+inline constexpr std::uint32_t invalid_raster_target = 29U;
+inline constexpr std::uint32_t invalid_raster_theme = 30U;
+inline constexpr std::uint32_t invalid_raster_command = 31U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
