@@ -44,14 +44,18 @@ namespace {
 
 Compositor::Compositor(
     DisplayConfiguration configuration,
-    TrustedUiPrincipals trusted_principals) noexcept
+    TrustedUiPrincipals trusted_principals,
+    std::uint64_t service_generation) noexcept
     : configuration_(configuration), trusted_principals_(trusted_principals) {
-    if (!configuration_.size.valid() || configuration_.refresh_millihz == 0U ||
+    if (!valid_display_generation(service_generation) ||
+        !configuration_.size.valid() || configuration_.refresh_millihz == 0U ||
         !os::core::valid_principal(trusted_principals_.shell) ||
         !os::core::valid_principal(trusted_principals_.secure_ui) ||
         trusted_principals_.shell == trusted_principals_.secure_ui) {
         return;
     }
+    object_generation_ = static_cast<std::uint32_t>(service_generation);
+
     const auto horizontal = static_cast<std::uint64_t>(configuration_.safe_insets.left) +
         static_cast<std::uint64_t>(configuration_.safe_insets.right);
     const auto vertical = static_cast<std::uint64_t>(configuration_.safe_insets.top) +
@@ -122,7 +126,7 @@ os::core::Result<SurfaceDescriptor> Compositor::create_surface(
     if (surface_count_for(owner.principal) >= max_surfaces_per_principal) {
         return display_error(errors::principal_surface_limit);
     }
-    if (next_surface_id_ == 0U || next_creation_serial_ == 0U ||
+    if (next_surface_serial_ == 0U || next_creation_serial_ == 0U ||
         (request.role == SurfaceRole::application && next_stack_serial_ == 0U)) {
         return display_error(errors::surface_id_exhausted);
     }
@@ -136,8 +140,15 @@ os::core::Result<SurfaceDescriptor> Compositor::create_surface(
     }
     if (available == nullptr) return display_error(errors::surface_limit);
 
-    const SurfaceId id{next_surface_id_};
-    ++next_surface_id_;
+    const std::uint64_t id_value = make_display_object_value(object_generation_, next_surface_serial_);
+    if (id_value == 0U) return display_error(errors::surface_id_exhausted);
+    const SurfaceId id{id_value};
+    if (next_surface_serial_ == std::numeric_limits<std::uint32_t>::max()) {
+        next_surface_serial_ = 0U;
+    } else {
+        ++next_surface_serial_;
+    }
+
     const std::uint64_t creation_serial = next_creation_serial_;
     ++next_creation_serial_;
     std::uint64_t stack_serial = 0U;
