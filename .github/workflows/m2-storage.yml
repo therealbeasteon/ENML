@@ -14,10 +14,10 @@ jobs:
       - name: Build storage gates
         run: >-
           cmake --build --preset host-debug
-          --target storage_private_storage_test storage_service_integration_test storage_service_identity_test storage_supervised_service_test
+          --target storage_private_storage_test storage_service_integration_test storage_service_identity_test storage_supervised_service_test app_manager_storage_test
           --parallel 2
       - name: Test storage gates
-        run: ctest --preset host-debug --output-on-failure -R '^storage_'
+        run: ctest --preset host-debug --output-on-failure -R '^(storage_|supervisor_storage_)'
 
   storage-clang:
     runs-on: ubuntu-24.04
@@ -31,10 +31,10 @@ jobs:
       - name: Build storage gates
         run: >-
           cmake --build build/m2-storage-clang
-          --target storage_private_storage_test storage_service_integration_test storage_service_identity_test storage_supervised_service_test
+          --target storage_private_storage_test storage_service_integration_test storage_service_identity_test storage_supervised_service_test app_manager_storage_test
           --parallel 2
       - name: Test storage gates
-        run: ctest --test-dir build/m2-storage-clang --output-on-failure -R '^storage_'
+        run: ctest --test-dir build/m2-storage-clang --output-on-failure -R '^(storage_|supervisor_storage_)'
 
   storage-arm64-native:
     runs-on: ubuntu-24.04-arm
@@ -47,7 +47,7 @@ jobs:
       - name: Build storage gates natively
         run: >-
           cmake --build --preset host-debug
-          --target storage_private_storage_test storage_service_integration_test storage_service_identity_test storage_supervised_service_test
+          --target storage_private_storage_test storage_service_integration_test storage_service_identity_test storage_supervised_service_test app_manager_storage_test
           --parallel 2
       - name: Test storage gates natively
-        run: ctest --preset host-debug --output-on-failure -R '^storage_'
+        run: ctest --preset host-debug --output-on-failure -R '^(storage_|supervisor_storage_)'
