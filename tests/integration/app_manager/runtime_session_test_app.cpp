@@ -36,9 +36,35 @@ namespace {
         error.code == os::ipc::errors::peer_died;
 }
 
+[[nodiscard]] bool is_service_not_running(const os::core::Error& error) noexcept {
+    return error.domain == os::core::ErrorDomain::service &&
+        error.code == os::core::errors::service::not_running;
+}
+
 void short_delay() noexcept {
     timespec delay{.tv_sec = 0, .tv_nsec = 5'000'000L};
     while (::nanosleep(&delay, &delay) != 0 && errno == EINTR) {}
+}
+
+[[nodiscard]] os::core::Result<os::app::PlatformServiceEndpoint>
+acquire_after_restart(
+    os::app::PlatformServiceSession& runtime,
+    os::core::ServiceId service,
+    std::uint64_t known_generation,
+    os::core::MutableByteSpan scratch) noexcept {
+    // Restart/re-readiness is asynchronous. `acquire()` is intentionally a
+    // one-shot operation with no hidden reconnect thread; callers may retry the
+    // explicit `not_running` state until the trusted lifecycle loop publishes a
+    // ready replacement generation.
+    for (std::size_t attempt = 0U; attempt < 1000U; ++attempt) {
+        auto acquired = runtime.acquire(service, known_generation, scratch);
+        if (acquired) return acquired;
+        if (!is_service_not_running(acquired.error())) return acquired.error();
+        short_delay();
+    }
+    return os::core::make_error(
+        os::core::ErrorDomain::service,
+        os::core::errors::service::not_running);
 }
 
 [[nodiscard]] bool equal_plaintext(
@@ -179,7 +205,8 @@ int main() {
     }
     if (!key_died) return 28;
 
-    auto fresh_key_endpoint = runtime.acquire(
+    auto fresh_key_endpoint = acquire_after_restart(
+        runtime,
         os::keys::key_service_id,
         old_key_generation,
         scratch);
@@ -221,7 +248,8 @@ int main() {
     }
     if (!storage_died) return 34;
 
-    auto fresh_storage_endpoint = runtime.acquire(
+    auto fresh_storage_endpoint = acquire_after_restart(
+        runtime,
         os::storage::storage_service_id,
         old_storage_generation,
         scratch);
