@@ -1,0 +1,145 @@
+#include <os/ui/raster.hpp>
+
+#include <array>
+#include <cassert>
+#include <cstddef>
+#include <cstdint>
+
+#include <os/core/error.hpp>
+#include <os/ui/error.hpp>
+
+namespace {
+
+void expect_ui_error(const os::core::Error& error, std::uint32_t code) {
+    assert(error.domain == os::core::ErrorDomain::ui);
+    assert(error.code == code);
+}
+
+constexpr std::size_t color_index(os::ui::ColorRole role) {
+    return static_cast<std::size_t>(role);
+}
+
+os::ui::RasterTheme test_theme() {
+    os::ui::RasterTheme theme{};
+    for (auto& color : theme.colors) color = os::ui::Rgba8{0U, 0U, 0U, 255U};
+    theme.colors[color_index(os::ui::ColorRole::transparent)] = {0U, 0U, 0U, 0U};
+    theme.colors[color_index(os::ui::ColorRole::surface)] = {8U, 10U, 18U, 255U};
+    theme.colors[color_index(os::ui::ColorRole::surface_elevated)] = {30U, 30U, 40U, 255U};
+    theme.colors[color_index(os::ui::ColorRole::accent_secondary)] = {100U, 40U, 180U, 255U};
+    theme.colors[color_index(os::ui::ColorRole::outline)] = {120U, 130U, 150U, 255U};
+    theme.colors[color_index(os::ui::ColorRole::focus)] = {250U, 210U, 80U, 255U};
+    return theme;
+}
+
+os::ui::RenderCommandBuffer test_commands() {
+    os::ui::RenderCommandBuffer buffer{};
+    buffer.revision = 7U;
+    buffer.count = 2U;
+
+    auto& root = buffer.commands[0];
+    root.source = os::ui::UiNodeId{1U};
+    root.role = os::ui::UiRole::root;
+    root.bounds = os::ui::LogicalRect{
+        .x_q6 = 0,
+        .y_q6 = 0,
+        .width_q6 = os::ui::logical_from_dp(32U),
+        .height_q6 = os::ui::logical_from_dp(24U),
+    };
+    root.visual.token.background = os::ui::ColorRole::surface;
+    root.visual.token.material_tint = os::ui::ColorRole::transparent;
+    root.visual.token.outline = os::ui::ColorRole::transparent;
+    root.visual.token.material = os::ui::OpticalMaterialRole::opaque;
+    root.visual.material.opacity_percent = 100U;
+    root.contour.role = os::ui::CurveRole::rectilinear;
+
+    auto& panel = buffer.commands[1];
+    panel.source = os::ui::UiNodeId{2U};
+    panel.parent = os::ui::UiNodeId{1U};
+    panel.depth = 1U;
+    panel.role = os::ui::UiRole::container;
+    panel.bounds = os::ui::LogicalRect{
+        .x_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(4U)),
+        .y_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(4U)),
+        .width_q6 = os::ui::logical_from_dp(24U),
+        .height_q6 = os::ui::logical_from_dp(14U),
+    };
+    panel.visual.token.background = os::ui::ColorRole::surface_elevated;
+    panel.visual.token.material_tint = os::ui::ColorRole::accent_secondary;
+    panel.visual.token.outline = os::ui::ColorRole::outline;
+    panel.visual.token.material = os::ui::OpticalMaterialRole::crystal;
+    panel.visual.material.opacity_percent = 72U;
+    panel.visual.material.tint_percent = 25U;
+    panel.contour.role = os::ui::CurveRole::swept;
+    panel.contour.radii = os::ui::CornerRadii{
+        .top_left_q6 = os::ui::logical_from_dp(2U),
+        .top_right_q6 = os::ui::logical_from_dp(4U),
+        .bottom_right_q6 = os::ui::logical_from_dp(3U),
+        .bottom_left_q6 = os::ui::logical_from_dp(5U),
+    };
+    panel.contour.smoothing_percent = 85U;
+    panel.contour.asymmetric = true;
+    panel.focus_visible = true;
+
+    return buffer;
+}
+
+} // namespace
+
+int main() {
+    constexpr std::uint32_t width = 32U;
+    constexpr std::uint32_t height = 24U;
+    std::array<os::ui::Rgba8, width * height> pixels{};
+
+    auto theme = test_theme();
+    auto commands = test_commands();
+    const os::ui::RasterTarget target{
+        .pixels = pixels.data(),
+        .pixel_count = pixels.size(),
+        .width = width,
+        .height = height,
+        .stride = width,
+        .scale = os::ui::RasterScale{1U, os::ui::logical_units_per_dp},
+    };
+
+    auto raster = os::ui::rasterize_opaque_materials(commands, theme, target);
+    assert(raster);
+    assert(raster.value().commands_seen == 2U);
+    assert(raster.value().surfaces_filled == 2U);
+    assert(raster.value().pixel_writes >= width * height);
+
+    const auto surface = theme.colors[color_index(os::ui::ColorRole::surface)];
+    const auto focus = theme.colors[color_index(os::ui::ColorRole::focus)];
+    const os::ui::Rgba8 panel_fill{48U, 33U, 75U, 255U};
+
+    // Root fill proves an actual pixel target is written.
+    assert(pixels[0] == surface);
+
+    // The swept panel does not collapse to a generic rectangle: the authored
+    // top-left contour clips its extreme corner while leaving the center filled.
+    assert(pixels[4U * width + 4U] == surface);
+    assert(pixels[10U * width + 16U] == panel_fill);
+
+    // Focus is rendered as an explicit edge treatment rather than encoded only
+    // by material/transparency, keeping interaction state legible.
+    assert(pixels[4U * width + 5U] == focus);
+
+    auto bad_target = target;
+    bad_target.pixel_count = 1U;
+    auto invalid_target = os::ui::rasterize_opaque_materials(commands, theme, bad_target);
+    assert(!invalid_target);
+    expect_ui_error(invalid_target.error(), os::ui::errors::invalid_raster_target);
+
+    auto bad_theme = theme;
+    bad_theme.colors[color_index(os::ui::ColorRole::transparent)].alpha = 255U;
+    auto invalid_theme = os::ui::rasterize_opaque_materials(commands, bad_theme, target);
+    assert(!invalid_theme);
+    expect_ui_error(invalid_theme.error(), os::ui::errors::invalid_raster_theme);
+
+    auto bad_commands = commands;
+    bad_commands.commands[1].source = {};
+    auto invalid_command = os::ui::rasterize_opaque_materials(bad_commands, theme, target);
+    assert(!invalid_command);
+    expect_ui_error(invalid_command.error(), os::ui::errors::invalid_raster_command);
+
+    return 0;
+}
