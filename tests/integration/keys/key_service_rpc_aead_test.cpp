@@ -150,6 +150,31 @@ int main() {
         plaintext_output.begin() + static_cast<std::ptrdiff_t>(decrypted.value()),
         as_bytes(plaintext_text).begin()));
 
+    // The object endpoint is a capability, but it is also bound to the trusted
+    // owner identity. A forked, unregistered process must not inherit authority
+    // merely because it inherited the underlying file descriptor.
+    const pid_t inherited_user = ::fork();
+    assert(inherited_user >= 0);
+    if (inherited_user == 0) {
+        std::array<std::byte, os::ipc::max_wire_packet_size> child_scratch{};
+        std::array<std::byte, os::keys::max_key_plaintext_bytes> child_output{};
+        auto inherited = duplicate.decrypt(
+            envelope_view,
+            as_bytes(aad_text),
+            child_output,
+            child_scratch);
+        if (!inherited &&
+            inherited.error().domain == os::core::ErrorDomain::security &&
+            inherited.error().code == os::core::errors::security::credential_mismatch) {
+            std::_Exit(0);
+        }
+        std::_Exit(21);
+    }
+    int inherited_status = 0;
+    assert(::waitpid(inherited_user, &inherited_status, 0) == inherited_user);
+    assert(WIFEXITED(inherited_status));
+    assert(WEXITSTATUS(inherited_status) == 0);
+
     auto wrong_aad = duplicate.decrypt(
         envelope_view,
         as_bytes("principal-profile:wrong"),
