@@ -78,6 +78,20 @@ private:
     [[nodiscard]] os::core::Result<ProviderKeyReference>
     install_key(os::core::ByteSpan key_material) noexcept;
 
+    // Legacy unbound helper bodies kept in the original test-provider source
+    // while M2.6 introduces binding-aware persistence in a separate translation
+    // unit. They are private and never used by the persistence boundary.
+    [[nodiscard]] os::core::Result<std::size_t>
+    persist_reference(
+        ProviderKeyReference key,
+        KeyPurpose purpose,
+        os::core::MutableByteSpan output) noexcept;
+
+    [[nodiscard]] os::core::Result<ProviderKeyReference>
+    restore_reference(
+        KeyPurpose purpose,
+        os::core::ByteSpan persistent_blob) noexcept;
+
     std::array<Slot, max_key_records * max_key_versions> slots_ {};
 };
 
