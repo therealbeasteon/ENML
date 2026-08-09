@@ -26,15 +26,13 @@ The boundary rejects:
 
 Focus is applied through `SemanticTree::focus()`, preserving unique-focus, enabled and effective-visibility invariants. Activate/toggle/select actions reuse `SemanticTree::dispatch_action()` rather than creating a parallel authorization model.
 
-## Trusted service authority
+## Trusted accessibility authority
 
-`AccessibilityBridgeAuthority` is the in-process authorization seam for the eventual cross-process accessibility transport. It binds one live `SemanticTree` to one supervisor-assigned trusted accessibility `PrincipalId`.
+`AccessibilityBridgeAuthority` adds the privileged identity boundary above the semantic operations. A caller must have a valid runtime `PeerIdentity` whose principal matches the configured trusted accessibility principal before it can request a semantic snapshot or dispatch an accessibility action.
 
-A protocol/service implementation should pass its already-resolved `PeerIdentity` through this authority rather than duplicating access checks in wire-code handlers. Ordinary application principals cannot request privileged snapshots or dispatch accessibility actions through the authority merely because they know a node ID.
+This mirrors the security shape now used by the compositor input bridge: transport code should authenticate the peer through supervisor/runtime identity first, then call the authority object. The eventual wire service must not duplicate authorization logic or accept an application-provided principal as proof of authority.
 
-The authority still delegates snapshot creation and action dispatch to the same revision-bound functions above, so adding service authorization does not create a second semantic state machine.
-
-Principal-level authorization is intentional at this seam: a supervised accessibility service may restart with a fresh `ProcessId` while retaining its trusted principal. The eventual service endpoint must still use the existing kernel-credential/identity-registry machinery to prove that the caller really owns that principal.
+Unlike compositor input targeting, accessibility is application-runtime state rather than global compositor state. The final transport therefore needs explicit **session ownership**: a trusted accessibility service may address only the application/session endpoint that owns the tree, and the application endpoint must still re-check snapshot revision and target/action validity against its live tree.
 
 ## Editable text is deliberately deferred
 
@@ -57,19 +55,20 @@ A future platform accessibility service may subscribe to semantic revision/chang
 
 The semantic tree remains the source of accessibility meaning. Rendering effects, translucency, shader output and application-drawn lookalike pixels cannot manufacture accessibility authority.
 
-The future cross-process accessibility transport must authenticate the privileged accessibility-service principal through trusted process/kernel state, scope requests to the owning application/session, preserve revision identity, and avoid exposing labels or text from unrelated users/sessions. Secure-system presentation may require stricter policy than ordinary application surfaces.
+The future cross-process transport must authenticate the privileged accessibility-service principal, scope requests to the exact owning application/session, preserve revision identity, and avoid exposing labels or text from unrelated users/sessions. Secure-system presentation may require stricter policy than ordinary application surfaces.
+
+Snapshot transport should remain bounded to the existing semantic capacity or a smaller explicit message window. It must not introduce an unbounded serialized tree, pointer-bearing ABI, framebuffer fallback, or a background poller just because the accessibility consumer is cross-process.
 
 ## Not yet claimed
 
 This slice does not yet provide:
 
-- the privileged accessibility daemon/service transport;
+- the cross-process application/session accessibility endpoint and subscription transport;
 - screen-reader speech output;
 - switch-control or alternative-input policy;
 - editable-text/caret/selection APIs;
 - live-region announcement policy;
 - braille transport;
-- cross-process subscription/change notification;
 - secure-screen redaction policy.
 
 Those should be layered above this bounded semantic contract rather than implemented by pixel scraping or vendor-specific accessibility APIs inside `osui`.
