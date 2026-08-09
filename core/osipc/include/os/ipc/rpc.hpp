@@ -44,6 +44,17 @@ public:
         os::core::ByteSpan request_payload,
         os::core::MutableByteSpan receive_buffer) noexcept;
 
+    // Trusted system protocols may transfer already-authorized object handles
+    // in a request. Normal generated application RPC remains handle-free unless
+    // its service contract explicitly wraps this overload.
+    [[nodiscard]] os::core::Result<InboundMessage>
+    call(
+        os::core::ServiceId service_id,
+        std::uint32_t operation_id,
+        os::core::ByteSpan request_payload,
+        std::span<const os::core::NativeHandle> request_handles,
+        os::core::MutableByteSpan receive_buffer) noexcept;
+
 private:
     Channel* channel_ {nullptr};
     std::uint64_t next_request_id_ {1};
