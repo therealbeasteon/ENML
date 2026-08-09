@@ -24,6 +24,12 @@ namespace {
         error.code == os::core::errors::security::unknown_process;
 }
 
+[[nodiscard]] bool is_already_revoked(const os::core::Error& error) noexcept {
+    return is_unknown_process(error) ||
+        (error.domain == os::core::ErrorDomain::service &&
+         error.code == os::supervisor::broker_errors::process_not_attached);
+}
+
 } // namespace
 
 ApplicationManager::LaunchTarget*
@@ -129,9 +135,8 @@ ApplicationManager::uninstall_application(
     os::core::Error first_error {};
 
     // Keep the retained private-data directory/principal profile for a future
-    // same-signer reinstall, but remove its live Storage policy now. Storage
-    // revocation closes every bearer object minted for this profile, including
-    // capabilities that may have been delegated before uninstall.
+    // same-signer reinstall, but remove live Storage and Key policy now. Bearer
+    // capabilities minted by the old policy are not resurrected later.
     for (auto& profile : profiles_) {
         if (!profile.occupied || profile.application != application) continue;
         auto revoked = revoke_profile(profile);
@@ -144,11 +149,13 @@ ApplicationManager::uninstall_application(
     for (auto& slot : instances_) {
         if (!slot.occupied || slot.info.application != application) continue;
 
-        // Revoke supervisor-mediated service authority immediately rather than
-        // waiting for SIGTERM delivery/process teardown. maintain() tolerates
-        // the resulting unknown-process state when it later reaps the child.
-        auto revoked = supervisor_.unregister_process(slot.info.identity.process);
-        if (!revoked && !is_unknown_process(revoked.error()) && !has_error) {
+        // M2.10 closes the reacquisition path first, then revokes the one
+        // broker-owned identity from every attached service before process
+        // teardown. A still-running app cannot use fd 3 to reacquire authority
+        // after uninstall has committed.
+        slot.service_session.close();
+        auto revoked = release_instance_identity(slot.info.identity.process);
+        if (!revoked && !is_already_revoked(revoked.error()) && !has_error) {
             first_error = revoked.error();
             has_error = true;
         }
