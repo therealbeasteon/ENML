@@ -111,6 +111,9 @@ int main() {
     assert(root_command->role == os::ui::UiRole::root);
     assert(root_command->visual.token.id == os::ui::style_tokens::surface);
     assert(root_command->visual.token.material == os::ui::OpticalMaterialRole::opaque);
+    assert(root_command->font_fallbacks.count == 3U);
+    assert(root_command->font_fallbacks.families[0] == os::ui::FontFamilyRole::interface);
+    assert(root_command->font_fallbacks.contains(os::ui::FontFamilyRole::international));
 
     assert(panel_command->visual.token.material == os::ui::OpticalMaterialRole::crystal);
     assert(panel_command->visual.material.live_backdrop_allowed);
@@ -121,11 +124,17 @@ int main() {
     assert(title_command->content == os::ui::RenderContentKind::text);
     assert(title_command->visual_text == title_text.value());
     assert(title_command->typography.size_q6 == os::ui::logical_from_dp(40U));
+    assert(title_command->font_fallbacks.count == 4U);
+    assert(title_command->font_fallbacks.families[0] == os::ui::FontFamilyRole::display);
+    assert(title_command->font_fallbacks.families[1] == os::ui::FontFamilyRole::interface);
+    assert(title_command->font_fallbacks.contains(os::ui::FontFamilyRole::international));
+    assert(title_command->font_fallbacks.contains(os::ui::FontFamilyRole::symbols));
 
     assert(button_command->content == os::ui::RenderContentKind::control);
     assert(button_command->visual_text.empty());
     assert(button_command->focus_visible);
     assert(button_command->visual.motion.duration_ms > 0U);
+    assert(button_command->font_fallbacks.families[0] == os::ui::FontFamilyRole::interface);
 
     auto economy = os::ui::build_render_commands(
         snapshot,
