@@ -12,9 +12,13 @@
 namespace os::app {
 
 inline constexpr int application_bootstrap_fd = 3;
-// Linux-private bootstrap descriptor. Public app APIs must wrap this rather
-// than exposing a magic fd as stable ENML ABI.
+
+// Linux-private bootstrap descriptor. M1 legacy launches place the authorized
+// data directory here. M2.2 brokered launches instead place a Storage Service
+// endpoint here. Public app APIs must never expose the magic fd value.
 inline constexpr int application_private_data_fd = 5;
+inline constexpr int application_storage_service_fd = 5;
+
 inline constexpr os::core::ServiceId application_bootstrap_service_id{0x0000F010U};
 inline constexpr std::uint32_t application_bootstrap_operation_initialize = 1U;
 inline constexpr std::uint16_t application_bootstrap_version_v1 = 1U;
