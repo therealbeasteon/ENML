@@ -180,15 +180,11 @@ send_service_acquire_response(
     auto encoded = encode_payload(encoder, service, generation);
     if (!encoded) return encoded.error();
 
-    const std::array<os::core::NativeHandle, 1U> handles{
-        os::core::NativeHandle{::fcntl(endpoint.native(), F_DUPFD_CLOEXEC, 0)},
-    };
-    if (!handles[0].valid()) return ipc_error(os::ipc::errors::invalid_native_handle);
     return os::ipc::send_rpc_response(
         channel,
         request_header,
         encoder.written(),
-        std::span<const os::core::NativeHandle>{handles});
+        std::span<const os::core::NativeHandle>{&endpoint, 1U});
 }
 
 } // namespace os::app
