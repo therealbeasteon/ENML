@@ -47,7 +47,7 @@ struct RasterTarget final {
 struct RasterStats final {
     std::uint16_t commands_seen {0U};
     std::uint16_t surfaces_filled {0U};
-    std::uint32_t pixel_writes {0U};
+    std::uint64_t pixel_writes {0U};
 };
 
 inline constexpr std::uint32_t max_raster_dimension = 4096U;
