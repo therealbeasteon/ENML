@@ -23,6 +23,10 @@ inline constexpr std::uint32_t root_immutable = 13U;
 inline constexpr std::uint32_t no_focus = 14U;
 inline constexpr std::uint32_t invalid_viewport = 15U;
 inline constexpr std::uint32_t id_exhausted = 16U;
+inline constexpr std::uint32_t invalid_style = 17U;
+inline constexpr std::uint32_t invalid_collection = 18U;
+inline constexpr std::uint32_t collection_window_limit = 19U;
+inline constexpr std::uint32_t invalid_text_scale = 20U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
