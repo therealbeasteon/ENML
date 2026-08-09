@@ -59,6 +59,9 @@ inline constexpr std::uint32_t invalid_input_point = 49U;
 inline constexpr std::uint32_t invalid_input_action = 50U;
 inline constexpr std::uint32_t input_no_target = 51U;
 inline constexpr std::uint32_t invalid_input_transform = 52U;
+inline constexpr std::uint32_t invalid_accessibility_snapshot = 53U;
+inline constexpr std::uint32_t stale_accessibility_snapshot = 54U;
+inline constexpr std::uint32_t invalid_accessibility_action = 55U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
