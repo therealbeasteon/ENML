@@ -3,6 +3,7 @@ add_library(emnl_supervisor STATIC
     src/control_access_linux.cpp
     src/process_authority_linux.cpp
     src/service_broker.cpp
+    src/service_broker_session.cpp
 )
 
 add_library(emnl::supervisor ALIAS emnl_supervisor)
