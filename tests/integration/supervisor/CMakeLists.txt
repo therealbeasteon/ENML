@@ -126,6 +126,7 @@ target_link_libraries(supervisor_shared_identity_test PRIVATE
 target_compile_options(supervisor_shared_identity_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
+add_dependencies(supervisor_shared_identity_test system_echo)
 add_test(
     NAME supervisor_shared_identity_test
     COMMAND supervisor_shared_identity_test $<TARGET_FILE:system_echo>
