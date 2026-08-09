@@ -21,7 +21,7 @@ namespace {
 
 [[nodiscard]] constexpr bool valid_error_domain(std::uint16_t raw) noexcept {
     return raw >= static_cast<std::uint16_t>(os::core::ErrorDomain::core) &&
-        raw <= static_cast<std::uint16_t>(os::core::ErrorDomain::key);
+        raw <= static_cast<std::uint16_t>(os::core::ErrorDomain::display);
 }
 
 } // namespace
@@ -60,14 +60,10 @@ ClientConnection::call(
     };
 
     auto send_result = channel_->send(request_header, request_payload);
-    if (!send_result) {
-        return send_result.error();
-    }
+    if (!send_result) return send_result.error();
 
     auto receive_result = channel_->receive(receive_buffer);
-    if (!receive_result) {
-        return receive_result.error();
-    }
+    if (!receive_result) return receive_result.error();
     auto response = std::move(receive_result).value();
     const auto& header = response.header();
 
@@ -83,17 +79,12 @@ ClientConnection::call(
     }
 
     if (has_flag(header.flags, WireFlag::error)) {
-        if (header.handle_count != 0U) {
-            return ipc_error(errors::protocol_violation);
-        }
+        if (header.handle_count != 0U) return ipc_error(errors::protocol_violation);
         os::core::Error remote_error{};
         auto error_result = decode_rpc_error(response.payload(), remote_error);
-        if (!error_result) {
-            return error_result.error();
-        }
+        if (!error_result) return error_result.error();
         return remote_error;
     }
-
     return response;
 }
 
@@ -111,15 +102,11 @@ send_rpc_response(
         return ipc_error(errors::handle_count_mismatch);
     }
     for (const auto& handle : handles) {
-        if (!handle.valid()) {
-            return ipc_error(errors::invalid_native_handle);
-        }
+        if (!handle.valid()) return ipc_error(errors::invalid_native_handle);
     }
 
     std::uint32_t flags = flag_value(WireFlag::response);
-    if (!handles.empty()) {
-        flags |= flag_value(WireFlag::has_handles);
-    }
+    if (!handles.empty()) flags |= flag_value(WireFlag::has_handles);
 
     const WireHeaderV1 response_header{
         .flags = flags,
@@ -138,7 +125,7 @@ send_rpc_error(
     Channel& channel,
     const WireHeaderV1& request_header,
     os::core::Error error) noexcept {
-    std::array<std::byte, 8> storage {};
+    std::array<std::byte, 8> storage{};
     Encoder encoder{storage};
     auto result = encoder.write_u16_le(static_cast<std::uint16_t>(error.domain));
     if (!result) return result.error();
@@ -204,9 +191,7 @@ validate_rpc_request(
     }
 
     auto identity_result = identity_resolver.resolve(message.sender_credentials());
-    if (!identity_result) {
-        return identity_result.error();
-    }
+    if (!identity_result) return identity_result.error();
 
     return RequestContext{
         .peer = identity_result.value(),
