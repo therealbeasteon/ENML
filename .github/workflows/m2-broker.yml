@@ -18,7 +18,7 @@ jobs:
       - name: Build broker gates
         run: >-
           cmake --build --preset host-debug
-          --target supervisor_shared_identity_test service_broker_test
+          --target supervisor_shared_identity_test service_broker_test application_bootstrap_v2_test
           --parallel 2
       - name: Test broker gates
         run: ctest --preset host-debug --output-on-failure -L '^m2-broker$'
@@ -32,7 +32,7 @@ jobs:
       - name: Build broker gates with sanitizers
         run: >-
           cmake --build --preset host-asan
-          --target supervisor_shared_identity_test service_broker_test
+          --target supervisor_shared_identity_test service_broker_test application_bootstrap_v2_test
           --parallel 2
       - name: Test broker gates with sanitizers
         run: ctest --preset host-asan --output-on-failure -L '^m2-broker$'
@@ -49,7 +49,7 @@ jobs:
       - name: Build broker gates
         run: >-
           cmake --build build/m2-broker-clang
-          --target supervisor_shared_identity_test service_broker_test
+          --target supervisor_shared_identity_test service_broker_test application_bootstrap_v2_test
           --parallel 2
       - name: Test broker gates
         run: ctest --test-dir build/m2-broker-clang --output-on-failure -L '^m2-broker$'
@@ -65,7 +65,7 @@ jobs:
       - name: Build broker gates natively
         run: >-
           cmake --build --preset host-debug
-          --target supervisor_shared_identity_test service_broker_test
+          --target supervisor_shared_identity_test service_broker_test application_bootstrap_v2_test
           --parallel 2
       - name: Test broker gates natively
         run: ctest --preset host-debug --output-on-failure -L '^m2-broker$'
