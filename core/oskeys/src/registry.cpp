@@ -135,6 +135,51 @@ KeyRegistry::create(
 }
 
 os::core::Result<KeyDescriptor>
+KeyRegistry::adopt_generated(
+    KeyOwner owner,
+    KeyId id,
+    KeyPurpose purpose,
+    RightsMask granted_rights,
+    ProviderKeyReference provider_key) noexcept {
+    if (!os::core::valid_principal(owner.principal) || !id.valid() || !provider_key.valid()) {
+        return key_error(errors::invalid_key);
+    }
+    if (!valid_purpose(purpose)) return key_error(errors::unsupported_purpose);
+    if (!valid_rights(granted_rights)) return key_error(errors::invalid_rights);
+    if (find(id) != nullptr) return key_error(errors::duplicate_key_id);
+
+    KeyRecord* free_record = nullptr;
+    for (auto& record : records_) {
+        if (!record.occupied) {
+            free_record = &record;
+            break;
+        }
+    }
+    if (free_record == nullptr) return key_error(errors::registry_full);
+
+    const KeyDescriptor descriptor{
+        .id = id,
+        .version = 1U,
+        .purpose = purpose,
+        .rights = granted_rights,
+    };
+    *free_record = KeyRecord{
+        .occupied = true,
+        .destroyed = false,
+        .owner = owner,
+        .descriptor = descriptor,
+        .versions = {},
+    };
+    free_record->versions[0] = KeyVersionRecord{
+        .occupied = true,
+        .destroyed = false,
+        .version = 1U,
+        .provider_key = provider_key,
+    };
+    return descriptor;
+}
+
+os::core::Result<KeyDescriptor>
 KeyRegistry::describe(KeyOwner caller, KeyId id) const noexcept {
     auto record = authorize_record(caller, id, key_rights::metadata);
     if (!record) return record.error();
