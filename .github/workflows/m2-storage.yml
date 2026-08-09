@@ -1,0 +1,44 @@
+name: M2 Private Storage
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  storage-gcc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build storage gate
+        run: cmake --build --preset host-debug --target storage_private_storage_test --parallel 2
+      - name: Test storage gate
+        run: ctest --preset host-debug --output-on-failure -R '^storage_'
+
+  storage-clang:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >-
+          cmake -S . -B build/m2-storage-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Build storage gate
+        run: cmake --build build/m2-storage-clang --target storage_private_storage_test --parallel 2
+      - name: Test storage gate
+        run: ctest --test-dir build/m2-storage-clang --output-on-failure -R '^storage_'
+
+  storage-arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm AArch64
+        run: test "$(uname -m)" = "aarch64"
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build storage gate natively
+        run: cmake --build --preset host-debug --target storage_private_storage_test --parallel 2
+      - name: Test storage gate natively
+        run: ctest --preset host-debug --output-on-failure -R '^storage_'
