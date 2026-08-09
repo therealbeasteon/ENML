@@ -20,6 +20,8 @@ inline constexpr std::uint32_t frame_replay = 10U;
 inline constexpr std::uint32_t invalid_buffer_slot = 11U;
 inline constexpr std::uint32_t invalid_damage = 12U;
 inline constexpr std::uint32_t surface_id_exhausted = 13U;
+inline constexpr std::uint32_t application_surface_exists = 14U;
+inline constexpr std::uint32_t activation_denied = 15U;
 }
 
 [[nodiscard]] constexpr os::core::Error display_error(std::uint32_t code) noexcept {
