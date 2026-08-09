@@ -2,7 +2,6 @@ name: M2 Private Storage
 
 on:
   push:
-  pull_request:
 
 jobs:
   storage-gcc:
