@@ -512,6 +512,7 @@ KeyService::dispatch_main(os::core::MutableByteSpan receive_buffer) noexcept {
 
     auto& slot = objects_[slot_index.value()];
     slot.occupied = true;
+    slot.peer = context.value().peer;
     slot.owner = owner;
     slot.descriptor = descriptor;
     slot.endpoint = std::move(pair[0]);
@@ -556,7 +557,7 @@ KeyService::dispatch_object(std::size_t index, os::core::MutableByteSpan receive
     if (!context) {
         return os::ipc::send_rpc_error(slot.endpoint, message.header(), context.error());
     }
-    if (owner_from_context(context.value()) != slot.owner) {
+    if (context.value().peer != slot.peer) {
         return os::ipc::send_rpc_error(
             slot.endpoint, message.header(), key_error(errors::access_denied));
     }
