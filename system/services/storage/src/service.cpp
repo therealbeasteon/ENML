@@ -593,7 +593,19 @@ std::size_t PrivateRootRegistry::size() const noexcept {
     return count;
 }
 
-os::core::Result<std::size_t> StorageService::allocate_slot() noexcept {
+os::core::Result<std::size_t> StorageService::allocate_slot(
+    os::core::PrincipalId principal,
+    os::core::UserId user) noexcept {
+    std::size_t owned = 0U;
+    for (const auto& slot : objects_) {
+        if (slot.occupied && slot.principal == principal && slot.user == user) {
+            ++owned;
+        }
+    }
+    if (owned >= max_storage_objects_per_principal) {
+        return storage_error(errors::principal_object_limit);
+    }
+
     for (std::size_t index = 0U; index < objects_.size(); ++index) {
         if (!objects_[index].occupied) return index;
     }
@@ -698,7 +710,9 @@ StorageService::dispatch_main(os::core::MutableByteSpan receive_buffer) noexcept
             *endpoint_, message.header(), storage_error(errors::root_not_registered));
     }
 
-    auto slot_index = allocate_slot();
+    auto slot_index = allocate_slot(
+        context.value().peer.principal,
+        context.value().peer.user);
     if (!slot_index) {
         return os::ipc::send_rpc_error(*endpoint_, message.header(), slot_index.error());
     }
@@ -880,7 +894,7 @@ StorageService::dispatch_object(
         auto file = std::move(opened).value();
         const auto child_rights = rights_for_file(file);
 
-        auto child_index = allocate_slot();
+        auto child_index = allocate_slot(slot.principal, slot.user);
         if (!child_index) {
             return os::ipc::send_rpc_error(slot.endpoint, message.header(), child_index.error());
         }
@@ -938,7 +952,7 @@ StorageService::dispatch_object(
         if (!opened) return os::ipc::send_rpc_error(slot.endpoint, message.header(), opened.error());
         auto directory = std::move(opened).value();
 
-        auto child_index = allocate_slot();
+        auto child_index = allocate_slot(slot.principal, slot.user);
         if (!child_index) {
             return os::ipc::send_rpc_error(slot.endpoint, message.header(), child_index.error());
         }
