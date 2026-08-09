@@ -29,6 +29,10 @@ struct ResolvedContour final {
     CornerRadii radii {};
     std::uint8_t smoothing_percent {0U};
     bool asymmetric {false};
+
+    [[nodiscard]] friend constexpr bool operator==(
+        const ResolvedContour&,
+        const ResolvedContour&) = default;
 };
 
 [[nodiscard]] inline os::core::Result<ResolvedContour> resolve_contour(
