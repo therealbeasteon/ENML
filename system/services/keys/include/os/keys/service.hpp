@@ -103,6 +103,7 @@ public:
 private:
     struct ObjectSlot final {
         bool occupied {false};
+        os::core::PeerIdentity peer {};
         KeyOwner owner {};
         KeyDescriptor descriptor {};
         os::ipc::Channel endpoint {};
