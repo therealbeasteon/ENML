@@ -1,5 +1,6 @@
 add_library(osdisplay STATIC
     src/compositor.cpp
+    src/buffer_linux.cpp
 )
 add_library(emnl::osdisplay ALIAS osdisplay)
 

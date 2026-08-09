@@ -281,6 +281,10 @@ os::core::Result<void> Supervisor::spawn_service() noexcept {
     }
     auto service_pair = std::move(service_pair_result).value();
 
+    if (generation_ == std::numeric_limits<std::uint64_t>::max()) {
+        state_ = ServiceState::stopped;
+        return service_error(os::core::errors::service::launch_failed);
+    }
     const auto new_generation = generation_ + 1U;
 
     const pid_t child = ::fork();
@@ -321,10 +325,14 @@ os::core::Result<void> Supervisor::spawn_service() noexcept {
     const auto service_record = service_record_result.value();
     service_identity_ = service_record.peer;
 
+    // The bootstrap generation is the exact Supervisor generation for this
+    // execution, not a boot-wide constant. Generation-scoped service objects
+    // can therefore reject stale semantic ids after a crash/restart without
+    // trusting an application-supplied epoch.
     const os::service::BootstrapRecordV1 bootstrap{
         .identity = service_identity_,
         .service_id = config_.descriptor.service_id,
-        .boot_generation = 1U,
+        .boot_generation = generation_,
     };
     auto send_result = os::service::send_bootstrap_request(control_, bootstrap);
     if (!send_result) {

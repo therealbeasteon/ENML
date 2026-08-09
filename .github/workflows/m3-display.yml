@@ -15,9 +15,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Configure
         run: cmake --preset host-debug
-      - name: Build display gate
-        run: cmake --build --preset host-debug --target display_compositor_test --parallel 2
-      - name: Test display gate
+      - name: Build display gates
+        run: >-
+          cmake --build --preset host-debug
+          --target display_compositor_test display_shared_buffer_test
+          display_generation_namespace_test compositor_service_integration_test
+          --parallel 2
+      - name: Test display gates
         run: ctest --preset host-debug --output-on-failure -L '^m3-display$'
 
   display-sanitizers:
@@ -26,9 +30,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Configure ASan and UBSan
         run: cmake --preset host-asan
-      - name: Build display gate with sanitizers
-        run: cmake --build --preset host-asan --target display_compositor_test --parallel 2
-      - name: Test display gate with sanitizers
+      - name: Build display gates with sanitizers
+        run: >-
+          cmake --build --preset host-asan
+          --target display_compositor_test display_shared_buffer_test
+          display_generation_namespace_test compositor_service_integration_test
+          --parallel 2
+      - name: Test display gates with sanitizers
         run: ctest --preset host-asan --output-on-failure -L '^m3-display$'
 
   display-clang:
@@ -40,9 +48,13 @@ jobs:
           cmake -S . -B build/m3-display-clang -G Ninja
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           -DCMAKE_CXX_COMPILER=clang++
-      - name: Build display gate
-        run: cmake --build build/m3-display-clang --target display_compositor_test --parallel 2
-      - name: Test display gate
+      - name: Build display gates
+        run: >-
+          cmake --build build/m3-display-clang
+          --target display_compositor_test display_shared_buffer_test
+          display_generation_namespace_test compositor_service_integration_test
+          --parallel 2
+      - name: Test display gates
         run: ctest --test-dir build/m3-display-clang --output-on-failure -L '^m3-display$'
 
   display-arm64-native:
@@ -53,7 +65,11 @@ jobs:
         run: test "$(uname -m)" = "aarch64"
       - name: Configure
         run: cmake --preset host-debug
-      - name: Build display gate natively
-        run: cmake --build --preset host-debug --target display_compositor_test --parallel 2
-      - name: Test display gate natively
+      - name: Build display gates natively
+        run: >-
+          cmake --build --preset host-debug
+          --target display_compositor_test display_shared_buffer_test
+          display_generation_namespace_test compositor_service_integration_test
+          --parallel 2
+      - name: Test display gates natively
         run: ctest --preset host-debug --output-on-failure -L '^m3-display$'

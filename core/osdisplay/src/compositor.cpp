@@ -35,49 +35,42 @@ namespace {
 
 [[nodiscard]] constexpr bool point_inside(Rect bounds, std::int32_t x, std::int32_t y) noexcept {
     if (x < bounds.x || y < bounds.y) return false;
-    const auto right = static_cast<std::int64_t>(bounds.x) +
-        static_cast<std::int64_t>(bounds.width);
-    const auto bottom = static_cast<std::int64_t>(bounds.y) +
-        static_cast<std::int64_t>(bounds.height);
-    return static_cast<std::int64_t>(x) < right &&
-        static_cast<std::int64_t>(y) < bottom;
+    const auto right = static_cast<std::int64_t>(bounds.x) + static_cast<std::int64_t>(bounds.width);
+    const auto bottom = static_cast<std::int64_t>(bounds.y) + static_cast<std::int64_t>(bounds.height);
+    return static_cast<std::int64_t>(x) < right && static_cast<std::int64_t>(y) < bottom;
 }
 
 } // namespace
 
 Compositor::Compositor(
     DisplayConfiguration configuration,
-    TrustedUiPrincipals trusted_principals) noexcept
-    : configuration_(configuration),
-      trusted_principals_(trusted_principals) {
-    if (!configuration_.size.valid() || configuration_.refresh_millihz == 0U ||
+    TrustedUiPrincipals trusted_principals,
+    std::uint64_t service_generation) noexcept
+    : configuration_(configuration), trusted_principals_(trusted_principals) {
+    if (!valid_display_generation(service_generation) ||
+        !configuration_.size.valid() || configuration_.refresh_millihz == 0U ||
         !os::core::valid_principal(trusted_principals_.shell) ||
         !os::core::valid_principal(trusted_principals_.secure_ui) ||
         trusted_principals_.shell == trusted_principals_.secure_ui) {
         return;
     }
+    object_generation_ = static_cast<std::uint32_t>(service_generation);
 
-    const auto horizontal_insets =
-        static_cast<std::uint64_t>(configuration_.safe_insets.left) +
+    const auto horizontal = static_cast<std::uint64_t>(configuration_.safe_insets.left) +
         static_cast<std::uint64_t>(configuration_.safe_insets.right);
-    const auto vertical_insets =
-        static_cast<std::uint64_t>(configuration_.safe_insets.top) +
+    const auto vertical = static_cast<std::uint64_t>(configuration_.safe_insets.top) +
         static_cast<std::uint64_t>(configuration_.safe_insets.bottom);
-    if (horizontal_insets >= static_cast<std::uint64_t>(configuration_.size.width) ||
-        vertical_insets >= static_cast<std::uint64_t>(configuration_.size.height)) {
-        return;
-    }
+    if (horizontal >= static_cast<std::uint64_t>(configuration_.size.width) ||
+        vertical >= static_cast<std::uint64_t>(configuration_.size.height)) return;
 
-    constexpr std::uint64_t nanoseconds_per_millihertz_period = 1'000'000'000'000ULL;
-    const auto frame_interval = nanoseconds_per_millihertz_period /
+    constexpr std::uint64_t ns_per_millihertz_period = 1'000'000'000'000ULL;
+    const auto interval = ns_per_millihertz_period /
         static_cast<std::uint64_t>(configuration_.refresh_millihz);
-    if (frame_interval == 0U || configuration_.compositor_margin_ns >= frame_interval) return;
+    if (interval == 0U || configuration_.compositor_margin_ns >= interval) return;
     valid_ = true;
 }
 
-bool Compositor::role_allowed(
-    const os::core::PeerIdentity& owner,
-    SurfaceRole role) const noexcept {
+bool Compositor::role_allowed(const os::core::PeerIdentity& owner, SurfaceRole role) const noexcept {
     switch (role) {
     case SurfaceRole::application:
     case SurfaceRole::popup:
@@ -104,7 +97,6 @@ bool Compositor::parent_valid(
     const os::core::PeerIdentity& owner,
     const CreateSurfaceRequest& request) const noexcept {
     if (request.role != SurfaceRole::popup) return request.parent.value() == 0U;
-    if (request.parent.value() == 0U) return false;
     const Slot* parent = find_slot(request.parent);
     return parent != nullptr && same_owner(parent->descriptor.owner, owner) &&
         parent->descriptor.role == SurfaceRole::application;
@@ -114,9 +106,7 @@ bool Compositor::process_has_application_surface(os::core::ProcessId process) co
     if (process.value() == 0U) return false;
     for (const auto& slot : slots_) {
         if (slot.occupied && slot.descriptor.owner.process == process &&
-            slot.descriptor.role == SurfaceRole::application) {
-            return true;
-        }
+            slot.descriptor.role == SurfaceRole::application) return true;
     }
     return false;
 }
@@ -136,7 +126,7 @@ os::core::Result<SurfaceDescriptor> Compositor::create_surface(
     if (surface_count_for(owner.principal) >= max_surfaces_per_principal) {
         return display_error(errors::principal_surface_limit);
     }
-    if (next_surface_id_ == 0U || next_creation_serial_ == 0U ||
+    if (next_surface_serial_ == 0U || next_creation_serial_ == 0U ||
         (request.role == SurfaceRole::application && next_stack_serial_ == 0U)) {
         return display_error(errors::surface_id_exhausted);
     }
@@ -150,11 +140,17 @@ os::core::Result<SurfaceDescriptor> Compositor::create_surface(
     }
     if (available == nullptr) return display_error(errors::surface_limit);
 
-    const SurfaceId id{next_surface_id_};
-    ++next_surface_id_;
+    const std::uint64_t id_value = make_display_object_value(object_generation_, next_surface_serial_);
+    if (id_value == 0U) return display_error(errors::surface_id_exhausted);
+    const SurfaceId id{id_value};
+    if (next_surface_serial_ == std::numeric_limits<std::uint32_t>::max()) {
+        next_surface_serial_ = 0U;
+    } else {
+        ++next_surface_serial_;
+    }
+
     const std::uint64_t creation_serial = next_creation_serial_;
     ++next_creation_serial_;
-
     std::uint64_t stack_serial = 0U;
     if (request.role == SurfaceRole::application) {
         stack_serial = next_stack_serial_;
@@ -166,7 +162,7 @@ os::core::Result<SurfaceDescriptor> Compositor::create_surface(
     }
 
     available->occupied = true;
-    available->descriptor = SurfaceDescriptor{
+    available->descriptor = {
         .id = id,
         .owner = owner,
         .role = request.role,
@@ -177,26 +173,19 @@ os::core::Result<SurfaceDescriptor> Compositor::create_surface(
     };
     available->creation_serial = creation_serial;
     available->stack_serial = stack_serial;
-    available->frame_sequence = 0U;
-    available->buffer_slot = 0U;
-    available->has_frame = false;
     ++surface_count_;
     return available->descriptor;
 }
 
 Compositor::Slot* Compositor::find_slot(SurfaceId surface) noexcept {
     if (surface.value() == 0U) return nullptr;
-    for (auto& slot : slots_) {
-        if (slot.occupied && slot.descriptor.id == surface) return &slot;
-    }
+    for (auto& slot : slots_) if (slot.occupied && slot.descriptor.id == surface) return &slot;
     return nullptr;
 }
 
 const Compositor::Slot* Compositor::find_slot(SurfaceId surface) const noexcept {
     if (surface.value() == 0U) return nullptr;
-    for (const auto& slot : slots_) {
-        if (slot.occupied && slot.descriptor.id == surface) return &slot;
-    }
+    for (const auto& slot : slots_) if (slot.occupied && slot.descriptor.id == surface) return &slot;
     return nullptr;
 }
 
@@ -234,6 +223,7 @@ os::core::Result<void> Compositor::set_bounds(
     auto owned = find_owned_slot(caller, surface);
     if (!owned) return owned.error();
     owned.value()->descriptor.bounds = bounds;
+    owned.value()->buffer = {};
     owned.value()->has_frame = false;
     return {};
 }
@@ -252,15 +242,12 @@ os::core::Result<void> Compositor::activate_application(
     os::core::PeerIdentity caller,
     SurfaceId application_surface) noexcept {
     if (!os::core::valid_peer_identity(caller)) return display_error(errors::invalid_identity);
-    if (caller.principal != trusted_principals_.shell) {
-        return display_error(errors::activation_denied);
-    }
+    if (caller.principal != trusted_principals_.shell) return display_error(errors::activation_denied);
     Slot* root = find_slot(application_surface);
     if (root == nullptr) return display_error(errors::unknown_surface);
     if (root->descriptor.role != SurfaceRole::application || next_stack_serial_ == 0U) {
         return display_error(errors::activation_denied);
     }
-
     const std::uint64_t stack_serial = next_stack_serial_;
     ++next_stack_serial_;
     root->stack_serial = stack_serial;
@@ -290,17 +277,16 @@ bool Compositor::damage_valid(
 }
 
 FrameDeadline Compositor::deadline_after(std::uint64_t now_ns) const noexcept {
-    constexpr std::uint64_t nanoseconds_per_millihertz_period = 1'000'000'000'000ULL;
-    const auto interval = nanoseconds_per_millihertz_period /
+    constexpr std::uint64_t ns_per_millihertz_period = 1'000'000'000'000ULL;
+    const auto interval = ns_per_millihertz_period /
         static_cast<std::uint64_t>(configuration_.refresh_millihz);
     const auto periods = now_ns / interval;
     std::uint64_t next_vsync = std::numeric_limits<std::uint64_t>::max();
-    if (periods < (std::numeric_limits<std::uint64_t>::max() / interval)) {
+    if (periods < std::numeric_limits<std::uint64_t>::max() / interval) {
         next_vsync = (periods + 1U) * interval;
     }
     const auto deadline = next_vsync > configuration_.compositor_margin_ns
-        ? next_vsync - configuration_.compositor_margin_ns
-        : 0U;
+        ? next_vsync - configuration_.compositor_margin_ns : 0U;
     return {.next_vsync_ns = next_vsync, .submission_deadline_ns = deadline};
 }
 
@@ -311,6 +297,7 @@ os::core::Result<FrameReceipt> Compositor::submit_frame(
     auto owned = find_owned_slot(caller, submission.surface);
     if (!owned) return owned.error();
     Slot* slot = owned.value();
+    if (submission.buffer.value() == 0U) return display_error(errors::invalid_buffer);
     if (submission.sequence == 0U || submission.sequence <= slot->frame_sequence) {
         return display_error(errors::frame_replay);
     }
@@ -319,11 +306,13 @@ os::core::Result<FrameReceipt> Compositor::submit_frame(
     }
     if (!damage_valid(slot->descriptor, submission)) return display_error(errors::invalid_damage);
 
+    slot->buffer = submission.buffer;
     slot->frame_sequence = submission.sequence;
     slot->buffer_slot = submission.buffer_slot;
     slot->has_frame = true;
     return FrameReceipt{
         .surface = submission.surface,
+        .buffer = submission.buffer,
         .sequence = submission.sequence,
         .deadline = deadline_after(now_ns),
     };
@@ -336,9 +325,7 @@ os::core::Result<SurfaceDescriptor> Compositor::lookup(SurfaceId surface) const 
 }
 
 SceneSnapshot Compositor::scene_snapshot() const noexcept {
-    struct OrderedSlot final {
-        const Slot* slot {nullptr};
-    };
+    struct OrderedSlot final { const Slot* slot {nullptr}; };
     std::array<OrderedSlot, max_surfaces> ordered{};
     std::size_t count = 0U;
     for (const auto& slot : slots_) {
@@ -377,6 +364,7 @@ SceneSnapshot Compositor::scene_snapshot() const noexcept {
         const Slot& slot = *ordered[index].slot;
         snapshot.entries[index] = {
             .surface = slot.descriptor,
+            .buffer = slot.buffer,
             .frame_sequence = slot.frame_sequence,
             .buffer_slot = slot.buffer_slot,
             .has_frame = slot.has_frame,
@@ -386,9 +374,7 @@ SceneSnapshot Compositor::scene_snapshot() const noexcept {
     return snapshot;
 }
 
-os::core::Result<SurfaceId> Compositor::hit_test(
-    std::int32_t x,
-    std::int32_t y) const noexcept {
+os::core::Result<SurfaceId> Compositor::hit_test(std::int32_t x, std::int32_t y) const noexcept {
     if (!valid_) return display_error(errors::invalid_configuration);
     const auto snapshot = scene_snapshot();
     for (std::size_t offset = 0U; offset < snapshot.count; ++offset) {
@@ -399,6 +385,16 @@ os::core::Result<SurfaceId> Compositor::hit_test(
         if (point_inside(entry.surface.bounds, x, y)) return entry.surface.id;
     }
     return display_error(errors::unknown_surface);
+}
+
+void Compositor::invalidate_buffer(BufferId buffer) noexcept {
+    if (buffer.value() == 0U) return;
+    for (auto& slot : slots_) {
+        if (slot.occupied && slot.buffer == buffer) {
+            slot.buffer = {};
+            slot.has_frame = false;
+        }
+    }
 }
 
 void Compositor::revoke_process(os::core::ProcessId process) noexcept {
