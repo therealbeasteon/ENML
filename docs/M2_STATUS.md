@@ -69,24 +69,42 @@ See `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`.
 
 ## M2.3 — resource accounting and revocation hardening
 
-Status: in progress on `m2-3-storage-quotas-revocation`.
+Status: implementation complete; final PR gates pending before merge.
 
-Implemented in the current branch:
+Implemented:
 
-- additive stable `principal_object_limit` storage error reserved for per-profile object exhaustion
-- explicit 16-object per-profile budget (`PrincipalId + UserId`) reserved beneath the 64-object global table
-- integration coverage for trusted private-root revocation
-- revocation closes every already-minted object endpoint for the profile
-- public `open_private_root()` fails while policy is absent
+- additive stable `principal_object_limit` storage error for profile-local object exhaustion
+- 16-object per-profile budget keyed by durable `PrincipalId + UserId`, beneath the 64-object global table
+- server-side quota enforcement on every object-minting path: private root, child file, and child directory
+- a saturated profile receives `principal_object_limit` while the global table still has capacity
+- a second process/principal sharing the inherited transport can still mint its own root, proving quota isolation uses per-message identity rather than connection ownership
+- trusted private-root revocation closes every already-minted object endpoint for the profile
+- public `open_private_root()` fails with `root_not_registered` while policy is absent
 - republishing policy requires a fresh capability; stale bearer endpoints remain `peer_died`
-- revocation test is gated under GCC, Clang and native AArch64
+- App Manager tracks enabled-vs-published Storage profile policy across service generations
+- package uninstall disables and revokes Storage policy before process teardown while retaining the durable principal and private-data directory
+- same-signer reinstall explicitly republishes the retained profile on the next trusted launch; revoked capabilities are never resurrected
+- integration proof that uninstall revokes Storage authority without deleting private data
+- GCC, Clang and native AArch64 Storage gates cover quota, root revocation, service restart and uninstall revocation
 
-Remaining M2.3 work:
+### I/O accounting decision
 
-- enforce the per-profile object limit in every server-side object-minting path
-- prove one profile at its limit cannot deny object allocation to another profile
-- add bounded per-principal I/O/accounting limits
-- exercise service death during object operations
-- exercise uninstall/reinstall data continuity and revocation without raw directory authority
+The current Storage Service is single-threaded and synchronous: it dispatches at most one object request at a time, and each read/write/atomic operation is already bounded by `max_storage_io_bytes` / `max_storage_atomic_bytes` plus the 64 KiB OSIP message ceiling. A separate "outstanding bytes per principal" counter would not enforce an additional property in this execution model. Add such accounting when Storage gains concurrent/asynchronous requests or queued background I/O, where multiple operations can actually be outstanding.
 
-Key Service/encryption remains separate and follows only after the storage authority/resource lifecycle is stable.
+See `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`.
+
+## Next
+
+M2.4: Key Service foundation and storage-key separation.
+
+Initial scope:
+
+- define opaque key identities/handles; never expose raw long-lived key bytes through public app APIs
+- separate Storage authority from key authority
+- model root/system/profile/application key hierarchy without binding the public ABI to a specific TPM/TEE vendor
+- use authenticated encryption with an explicit current cryptographic profile rather than copying historical BitLocker algorithms
+- support key versioning/rotation and cryptographic deletion semantics
+- keep unlock credentials distinct from raw data-encryption keys
+- add bounded, identity-authenticated Key Service IPC and adversarial caller-identity tests
+
+Boot measurement/verified-boot integration and hardware-backed sealing remain later hardware/BSP work; M2.4 begins with the userspace service contracts and software-backed test provider.
