@@ -18,6 +18,7 @@ struct PixelRect final {
     std::int64_t top_right_radius {0};
     std::int64_t bottom_right_radius {0};
     std::int64_t bottom_left_radius {0};
+    std::uint8_t smoothing_percent {0U};
 };
 
 [[nodiscard]] constexpr bool color_role_valid(ColorRole role) noexcept {
@@ -36,6 +37,30 @@ struct PixelRect final {
     case ColorRole::accent_secondary:
     case ColorRole::accent_tertiary:
     case ColorRole::highlight:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] constexpr bool depth_role_valid(DepthRole role) noexcept {
+    switch (role) {
+    case DepthRole::flush:
+    case DepthRole::inset:
+    case DepthRole::raised:
+    case DepthRole::floating:
+    case DepthRole::hero:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] constexpr bool curve_role_valid(CurveRole role) noexcept {
+    switch (role) {
+    case CurveRole::rectilinear:
+    case CurveRole::soft:
+    case CurveRole::continuous:
+    case CurveRole::swept:
+    case CurveRole::capsule:
         return true;
     }
     return false;
@@ -125,6 +150,7 @@ struct PixelRect final {
         .top_right_radius = scale_radius(command.contour.radii.top_right_q6, scale),
         .bottom_right_radius = scale_radius(command.contour.radii.bottom_right_q6, scale),
         .bottom_left_radius = scale_radius(command.contour.radii.bottom_left_q6, scale),
+        .smoothing_percent = command.contour.smoothing_percent,
     };
 
     const std::int64_t half_width = std::max<std::int64_t>(0, (rect.right - rect.left) / 2);
@@ -137,13 +163,27 @@ struct PixelRect final {
     return rect;
 }
 
+[[nodiscard]] PixelRect offset_rect(PixelRect rect, std::int64_t offset) noexcept {
+    rect.left += offset;
+    rect.top += offset;
+    rect.right += offset;
+    rect.bottom += offset;
+    return rect;
+}
+
+// Smoothing interpolates between circular corner coverage and a squircle-like
+// fourth-power contour. This is still a bounded raster approximation rather
+// than the final ENML vector/path implementation, but it makes smoothing a
+// real geometric input instead of silently discarding it.
 [[nodiscard]] bool corner_inside(
     std::int64_t pixel_x,
     std::int64_t pixel_y,
     std::int64_t center_x,
     std::int64_t center_y,
-    std::int64_t radius) noexcept {
+    std::int64_t radius,
+    std::uint8_t smoothing_percent) noexcept {
     if (radius <= 0) return true;
+
     const std::int64_t point_x2 = pixel_x * 2 + 1;
     const std::int64_t point_y2 = pixel_y * 2 + 1;
     const std::int64_t center_x2 = center_x * 2;
@@ -151,7 +191,17 @@ struct PixelRect final {
     const std::int64_t dx = point_x2 - center_x2;
     const std::int64_t dy = point_y2 - center_y2;
     const std::int64_t radius2 = radius * 2;
-    return dx * dx + dy * dy <= radius2 * radius2;
+
+    const std::uint64_t dx_sq = static_cast<std::uint64_t>(dx * dx);
+    const std::uint64_t dy_sq = static_cast<std::uint64_t>(dy * dy);
+    const std::uint64_t radius_sq = static_cast<std::uint64_t>(radius2 * radius2);
+    const std::uint64_t circle_metric = (dx_sq + dy_sq) * radius_sq;
+    const std::uint64_t squircle_metric = dx_sq * dx_sq + dy_sq * dy_sq;
+    const std::uint64_t limit = radius_sq * radius_sq;
+    const std::uint64_t smoothing = smoothing_percent;
+    const std::uint64_t metric =
+        circle_metric * (100U - smoothing) + squircle_metric * smoothing;
+    return metric <= limit * 100U;
 }
 
 [[nodiscard]] bool contour_contains(
@@ -167,7 +217,8 @@ struct PixelRect final {
             x, y,
             rect.left + rect.top_left_radius,
             rect.top + rect.top_left_radius,
-            rect.top_left_radius);
+            rect.top_left_radius,
+            rect.smoothing_percent);
     }
     if (rect.top_right_radius > 0 &&
         x >= rect.right - rect.top_right_radius &&
@@ -176,7 +227,8 @@ struct PixelRect final {
             x, y,
             rect.right - rect.top_right_radius,
             rect.top + rect.top_right_radius,
-            rect.top_right_radius);
+            rect.top_right_radius,
+            rect.smoothing_percent);
     }
     if (rect.bottom_right_radius > 0 &&
         x >= rect.right - rect.bottom_right_radius &&
@@ -185,7 +237,8 @@ struct PixelRect final {
             x, y,
             rect.right - rect.bottom_right_radius,
             rect.bottom - rect.bottom_right_radius,
-            rect.bottom_right_radius);
+            rect.bottom_right_radius,
+            rect.smoothing_percent);
     }
     if (rect.bottom_left_radius > 0 &&
         x < rect.left + rect.bottom_left_radius &&
@@ -194,7 +247,8 @@ struct PixelRect final {
             x, y,
             rect.left + rect.bottom_left_radius,
             rect.bottom - rect.bottom_left_radius,
-            rect.bottom_left_radius);
+            rect.bottom_left_radius,
+            rect.smoothing_percent);
     }
     return true;
 }
@@ -222,13 +276,29 @@ struct PixelRect final {
     };
 }
 
+[[nodiscard]] constexpr Rgba8 darken_opaque(
+    Rgba8 base,
+    std::uint8_t percent) noexcept {
+    return Rgba8{
+        .red = blend_channel(base.red, 0U, percent),
+        .green = blend_channel(base.green, 0U, percent),
+        .blue = blend_channel(base.blue, 0U, percent),
+        .alpha = 255U,
+    };
+}
+
 [[nodiscard]] bool command_valid(const RenderCommand& command) noexcept {
     return command.source.value() != 0U && command.bounds.bounded() &&
         color_role_valid(command.visual.token.background) &&
         color_role_valid(command.visual.token.material_tint) &&
         color_role_valid(command.visual.token.outline) &&
+        depth_role_valid(command.visual.token.depth) &&
+        curve_role_valid(command.contour.role) &&
         command.visual.material.tint_percent <= 100U &&
         command.visual.material.opacity_percent <= 100U &&
+        command.visual.material.specular_percent <= 100U &&
+        command.visual.depth.opacity_percent <= 100U &&
+        command.contour.smoothing_percent <= 100U &&
         command.contour.radii.top_left_q6 <= command.bounds.width_q6 / 2U &&
         command.contour.radii.top_left_q6 <= command.bounds.height_q6 / 2U &&
         command.contour.radii.top_right_q6 <= command.bounds.width_q6 / 2U &&
@@ -265,16 +335,43 @@ struct PixelRect final {
         !contour_contains(rect, x, y + 1);
 }
 
+[[nodiscard]] bool leading_light_pixel(
+    const PixelRect& rect,
+    std::int64_t x,
+    std::int64_t y) noexcept {
+    if (!boundary_pixel(rect, x, y)) return false;
+    return !contour_contains(rect, x - 1, y) || !contour_contains(rect, x, y - 1);
+}
+
+[[nodiscard]] std::size_t pixel_index(
+    const RasterTarget& target,
+    std::uint32_t x,
+    std::uint32_t y) noexcept {
+    return static_cast<std::size_t>(y) * target.stride + static_cast<std::size_t>(x);
+}
+
 void write_pixel(
     RasterTarget target,
     std::uint32_t x,
     std::uint32_t y,
     Rgba8 color,
     RasterStats& stats) noexcept {
-    const std::size_t index =
-        static_cast<std::size_t>(y) * target.stride + static_cast<std::size_t>(x);
-    target.pixels[index] = color;
+    target.pixels[pixel_index(target, x, y)] = color;
     ++stats.pixel_writes;
+}
+
+[[nodiscard]] bool darken_existing_pixel(
+    RasterTarget target,
+    std::uint32_t x,
+    std::uint32_t y,
+    std::uint8_t percent,
+    RasterStats& stats) noexcept {
+    const std::size_t index = pixel_index(target, x, y);
+    const Rgba8 existing = target.pixels[index];
+    if (existing.alpha == 0U) return false;
+    target.pixels[index] = darken_opaque(existing, percent);
+    ++stats.pixel_writes;
+    return true;
 }
 
 } // namespace
@@ -296,6 +393,42 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
         if (!command_valid(command)) return ui_error(errors::invalid_raster_command);
 
         const PixelRect rect = pixel_rect(command, target.scale);
+        const Rgba8 fill = resolved_fill(command, theme);
+
+        // Opaque depth fallback: before blur kernels or alpha shadows exist,
+        // raised material darkens already-painted supporting pixels at a
+        // deterministic positive offset. Transparent/unpainted target pixels
+        // are left alone so this stage never invents an opaque backdrop.
+        const std::int64_t shadow_offset = scale_radius(
+            command.visual.depth.offset_q6,
+            target.scale);
+        if (fill.alpha != 0U &&
+            command.visual.token.material != OpticalMaterialRole::none &&
+            command.visual.token.depth != DepthRole::flush &&
+            command.visual.depth.opacity_percent != 0U &&
+            shadow_offset > 0) {
+            const PixelRect shadow_rect = offset_rect(rect, shadow_offset);
+            const std::int64_t shadow_left = std::max<std::int64_t>(0, shadow_rect.left);
+            const std::int64_t shadow_top = std::max<std::int64_t>(0, shadow_rect.top);
+            const std::int64_t shadow_right =
+                std::min<std::int64_t>(target.width, shadow_rect.right);
+            const std::int64_t shadow_bottom =
+                std::min<std::int64_t>(target.height, shadow_rect.bottom);
+            bool shadow_written = false;
+            for (std::int64_t y = shadow_top; y < shadow_bottom; ++y) {
+                for (std::int64_t x = shadow_left; x < shadow_right; ++x) {
+                    if (!contour_contains(shadow_rect, x, y)) continue;
+                    shadow_written = darken_existing_pixel(
+                        target,
+                        static_cast<std::uint32_t>(x),
+                        static_cast<std::uint32_t>(y),
+                        command.visual.depth.opacity_percent,
+                        stats) || shadow_written;
+                }
+            }
+            if (shadow_written) ++stats.shadows_drawn;
+        }
+
         const std::int64_t clipped_left = std::max<std::int64_t>(0, rect.left);
         const std::int64_t clipped_top = std::max<std::int64_t>(0, rect.top);
         const std::int64_t clipped_right =
@@ -304,7 +437,6 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
             std::min<std::int64_t>(target.height, rect.bottom);
         if (clipped_left >= clipped_right || clipped_top >= clipped_bottom) continue;
 
-        const Rgba8 fill = resolved_fill(command, theme);
         bool filled = false;
         if (fill.alpha != 0U) {
             for (std::int64_t y = clipped_top; y < clipped_bottom; ++y) {
@@ -321,6 +453,33 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
             }
         }
         if (filled) ++stats.surfaces_filled;
+
+        // A bounded leading-edge highlight gives non-flush material an optical
+        // light direction even when live translucency/specular shaders are not
+        // available. Focus/outline is painted after this and therefore always
+        // remains the final, unambiguous state cue.
+        if (fill.alpha != 0U &&
+            command.visual.token.material != OpticalMaterialRole::none &&
+            command.visual.token.depth != DepthRole::flush &&
+            command.visual.material.specular_percent != 0U) {
+            const Rgba8 highlight = theme.colors[color_index(ColorRole::highlight)];
+            bool lit = false;
+            for (std::int64_t y = clipped_top; y < clipped_bottom; ++y) {
+                for (std::int64_t x = clipped_left; x < clipped_right; ++x) {
+                    if (!leading_light_pixel(rect, x, y)) continue;
+                    const std::uint32_t ux = static_cast<std::uint32_t>(x);
+                    const std::uint32_t uy = static_cast<std::uint32_t>(y);
+                    const std::size_t index = pixel_index(target, ux, uy);
+                    target.pixels[index] = blend_opaque(
+                        target.pixels[index],
+                        highlight,
+                        command.visual.material.specular_percent);
+                    ++stats.pixel_writes;
+                    lit = true;
+                }
+            }
+            if (lit) ++stats.lit_edges_drawn;
+        }
 
         const ColorRole outline_role =
             command.focus_visible ? ColorRole::focus : command.visual.token.outline;
