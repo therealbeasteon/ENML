@@ -52,3 +52,16 @@ add_test(
     NAME storage_root_revocation_test
     COMMAND storage_root_revocation_test $<TARGET_FILE:system.storage>
 )
+
+add_executable(storage_app_uninstall_revocation_test storage_app_uninstall_revocation_test.cpp)
+target_link_libraries(storage_app_uninstall_revocation_test PRIVATE
+    emnl::app_manager
+    emnl_warnings
+)
+target_compile_options(storage_app_uninstall_revocation_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME storage_app_uninstall_revocation_test
+    COMMAND storage_app_uninstall_revocation_test $<TARGET_FILE:system.storage>
+)
