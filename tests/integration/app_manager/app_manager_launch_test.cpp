@@ -2,6 +2,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <string>
 #include <string_view>
@@ -193,18 +194,30 @@ int main(int argc, char** argv) {
     const os::core::UserId user42{42U};
     const os::core::UserId user43{43U};
     const os::core::UserId missing_user{44U};
-    assert(manager.register_application_profile(os::app::ApplicationProfileRegistration{
+    auto profile42 = manager.register_application_profile(os::app::ApplicationProfileRegistration{
         .application = application,
         .user = user42,
         .private_data_directory = open_directory(data42_path),
         .sandbox = {},
-    }));
-    assert(manager.register_application_profile(os::app::ApplicationProfileRegistration{
+    });
+    if (!profile42) {
+        std::fprintf(stderr, "profile42 error domain=%u code=%u\n",
+            static_cast<unsigned>(profile42.error().domain),
+            static_cast<unsigned>(profile42.error().code));
+    }
+    assert(profile42);
+    auto profile43 = manager.register_application_profile(os::app::ApplicationProfileRegistration{
         .application = application,
         .user = user43,
         .private_data_directory = open_directory(data43_path),
         .sandbox = {},
-    }));
+    });
+    if (!profile43) {
+        std::fprintf(stderr, "profile43 error domain=%u code=%u\n",
+            static_cast<unsigned>(profile43.error().domain),
+            static_cast<unsigned>(profile43.error().code));
+    }
+    assert(profile43);
 
     const auto before_missing = principals.record_count();
     auto missing_profile = manager.launch(application.package_id, missing_user);
