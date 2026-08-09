@@ -5,6 +5,7 @@
 #include <cstdint>
 #include <limits>
 
+#include <os/ui/design.hpp>
 #include <os/ui/error.hpp>
 
 namespace os::ui {
@@ -28,6 +29,19 @@ inline constexpr UiActionMask known_actions =
         role == UiRole::text_field || role == UiRole::list_item;
 }
 
+template <typename Array>
+void sort_node_ids(Array& ids, std::size_t count) noexcept {
+    for (std::size_t index = 1U; index < count; ++index) {
+        const UiNodeId current = ids[index];
+        std::size_t position = index;
+        while (position > 0U && ids[position - 1U].value() > current.value()) {
+            ids[position] = ids[position - 1U];
+            --position;
+        }
+        ids[position] = current;
+    }
+}
+
 } // namespace
 
 SemanticTree::SemanticTree(LogicalRect root_bounds) noexcept {
@@ -37,6 +51,7 @@ SemanticTree::SemanticTree(LogicalRect root_bounds) noexcept {
     next_id_ = 2U;
     slots_[0] = Slot{
         .occupied = true,
+        .dirty = true,
         .descriptor = UiNodeDescriptor{
             .id = root_id_,
             .parent = {},
@@ -46,14 +61,37 @@ SemanticTree::SemanticTree(LogicalRect root_bounds) noexcept {
                 .bounds = root_bounds,
                 .actions = 0U,
                 .state = {},
-                .style = {},
+                .style = style_tokens::surface,
                 .label = {},
                 .accessibility_hidden = false,
             },
         },
     };
     node_count_ = 1U;
+    revision_ = 1U;
     valid_ = true;
+}
+
+void SemanticTree::bump_revision() noexcept {
+    if (revision_ == 0U) {
+        revision_ = 1U;
+        return;
+    }
+    if (revision_ != std::numeric_limits<std::uint64_t>::max()) ++revision_;
+}
+
+void SemanticTree::mark_dirty(Slot& slot) noexcept {
+    slot.dirty = true;
+    bump_revision();
+}
+
+void SemanticTree::record_removed(UiNodeId id) noexcept {
+    if (removed_dirty_count_ < removed_dirty_.size()) {
+        removed_dirty_[removed_dirty_count_] = id;
+        ++removed_dirty_count_;
+    } else {
+        dirty_overflow_ = true;
+    }
 }
 
 bool SemanticTree::role_valid(UiRole role) noexcept {
@@ -216,6 +254,7 @@ os::core::Result<UiNodeDescriptor> SemanticTree::add(
         return ui_error(errors::invalid_role);
     }
     if (!spec.bounds.bounded()) return ui_error(errors::invalid_bounds);
+    if (!style_token_valid(spec.style)) return ui_error(errors::invalid_style);
     if (!actions_valid(spec.role, spec.actions)) return ui_error(errors::invalid_action);
     if (spec.accessibility_hidden && spec.actions != 0U) {
         return ui_error(errors::invalid_action);
@@ -261,9 +300,10 @@ os::core::Result<UiNodeDescriptor> SemanticTree::add(
     }
 
     UiNodeSpec stored_spec = spec;
-    if (stored_spec.state.focused) clear_focus();
+    if (stored_spec.state.focused && focused_.value() != 0U) clear_focus();
     *available = Slot{
         .occupied = true,
+        .dirty = true,
         .descriptor = UiNodeDescriptor{
             .id = id,
             .parent = parent,
@@ -272,6 +312,7 @@ os::core::Result<UiNodeDescriptor> SemanticTree::add(
         },
     };
     ++node_count_;
+    bump_revision();
     if (stored_spec.state.focused) focused_ = id;
     return available->descriptor;
 }
@@ -293,8 +334,11 @@ os::core::Result<void> SemanticTree::remove_subtree(UiNodeId node) noexcept {
         }
     }
 
+    if (removed == 0U) return ui_error(errors::invalid_node);
+    bump_revision();
     for (std::size_t index = 0U; index < slots_.size(); ++index) {
         if (!remove[index]) continue;
+        record_removed(slots_[index].descriptor.id);
         if (slots_[index].descriptor.id == focused_) focused_ = {};
         slots_[index] = Slot{};
     }
@@ -314,7 +358,9 @@ os::core::Result<void> SemanticTree::set_bounds(UiNodeId node, LogicalRect bound
     if (!bounds.bounded()) return ui_error(errors::invalid_bounds);
     Slot* slot = find(node);
     if (slot == nullptr) return ui_error(errors::invalid_node);
+    if (slot->descriptor.spec.bounds == bounds) return {};
     slot->descriptor.spec.bounds = bounds;
+    mark_dirty(*slot);
     return {};
 }
 
@@ -325,6 +371,14 @@ os::core::Result<void> SemanticTree::set_state(UiNodeId node, UiNodeState state)
     if (node == root_id_) return ui_error(errors::root_immutable);
     if (!state_valid(slot->descriptor.spec.role, slot->descriptor.spec.actions, state)) {
         return ui_error(errors::invalid_state);
+    }
+    if (slot->descriptor.spec.state == state) return {};
+
+    if (!state.visible && focused_.value() != 0U && focused_ != node) {
+        Slot* focused_slot = find(focused_);
+        if (focused_slot != nullptr && is_descendant_of(*focused_slot, node)) {
+            clear_focus();
+        }
     }
 
     if (state.focused) {
@@ -337,13 +391,14 @@ os::core::Result<void> SemanticTree::set_state(UiNodeId node, UiNodeState state)
             }
             parent = parent_slot->descriptor.parent;
         }
-        clear_focus();
+        if (focused_ != node) clear_focus();
         focused_ = node;
     } else if (focused_ == node) {
         focused_ = {};
     }
 
     slot->descriptor.spec.state = state;
+    mark_dirty(*slot);
     return {};
 }
 
@@ -357,15 +412,20 @@ os::core::Result<void> SemanticTree::set_label(UiNodeId node, SemanticText label
             slot->descriptor.spec.accessibility_hidden)) {
         return ui_error(errors::invalid_text);
     }
+    if (slot->descriptor.spec.label == label) return {};
     slot->descriptor.spec.label = label;
+    mark_dirty(*slot);
     return {};
 }
 
 os::core::Result<void> SemanticTree::set_style(UiNodeId node, StyleTokenId style) noexcept {
     if (!valid_) return ui_error(errors::invalid_tree);
+    if (!style_token_valid(style)) return ui_error(errors::invalid_style);
     Slot* slot = find(node);
     if (slot == nullptr) return ui_error(errors::invalid_node);
+    if (slot->descriptor.spec.style == style) return {};
     slot->descriptor.spec.style = style;
+    mark_dirty(*slot);
     return {};
 }
 
@@ -377,17 +437,22 @@ os::core::Result<void> SemanticTree::focus(UiNodeId node) noexcept {
         !slot->descriptor.spec.state.enabled || !effectively_visible(*slot)) {
         return ui_error(errors::invalid_state);
     }
+    if (focused_ == node && slot->descriptor.spec.state.focused) return {};
 
     clear_focus();
     slot->descriptor.spec.state.focused = true;
     focused_ = node;
+    mark_dirty(*slot);
     return {};
 }
 
 void SemanticTree::clear_focus() noexcept {
     if (focused_.value() != 0U) {
         Slot* previous = find(focused_);
-        if (previous != nullptr) previous->descriptor.spec.state.focused = false;
+        if (previous != nullptr && previous->descriptor.spec.state.focused) {
+            previous->descriptor.spec.state.focused = false;
+            mark_dirty(*previous);
+        }
     }
     focused_ = {};
 }
@@ -454,6 +519,59 @@ AccessibilitySnapshot SemanticTree::accessibility_snapshot() const noexcept {
         };
     }
     return snapshot;
+}
+
+RendererSnapshot SemanticTree::renderer_snapshot() const noexcept {
+    RendererSnapshot snapshot{};
+    if (!valid_) return snapshot;
+    snapshot.revision = revision_;
+
+    std::array<const Slot*, max_ui_nodes> ordered{};
+    for (const auto& slot : slots_) {
+        if (!slot.occupied) continue;
+        ordered[snapshot.count] = &slot;
+        ++snapshot.count;
+    }
+    for (std::size_t index = 1U; index < snapshot.count; ++index) {
+        const Slot* current = ordered[index];
+        std::size_t position = index;
+        while (position > 0U &&
+               ordered[position - 1U]->descriptor.id.value() > current->descriptor.id.value()) {
+            ordered[position] = ordered[position - 1U];
+            --position;
+        }
+        ordered[position] = current;
+    }
+    for (std::size_t index = 0U; index < snapshot.count; ++index) {
+        snapshot.nodes[index] = ordered[index]->descriptor;
+    }
+    return snapshot;
+}
+
+RendererDelta SemanticTree::take_renderer_delta() noexcept {
+    RendererDelta delta{};
+    if (!valid_) return delta;
+    delta.revision = revision_;
+    delta.full_resync_required = dirty_overflow_;
+
+    for (auto& slot : slots_) {
+        if (!slot.occupied || !slot.dirty) continue;
+        delta.changed[delta.changed_count] = slot.descriptor.id;
+        ++delta.changed_count;
+        slot.dirty = false;
+    }
+    sort_node_ids(delta.changed, delta.changed_count);
+
+    delta.removed_count = removed_dirty_count_;
+    for (std::size_t index = 0U; index < removed_dirty_count_; ++index) {
+        delta.removed[index] = removed_dirty_[index];
+        removed_dirty_[index] = {};
+    }
+    sort_node_ids(delta.removed, delta.removed_count);
+
+    removed_dirty_count_ = 0U;
+    dirty_overflow_ = false;
+    return delta;
 }
 
 } // namespace os::ui
