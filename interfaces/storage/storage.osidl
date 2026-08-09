@@ -9,7 +9,7 @@ struct OpenPrivateRootResponse {
 }
 
 service Storage {
-    id 0x0000F010;
+    id 0x0000F020;
     version 1;
 
     operation OpenPrivateRoot = 1 {
