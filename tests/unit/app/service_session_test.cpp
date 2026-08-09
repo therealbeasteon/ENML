@@ -5,7 +5,7 @@
 #include <cstdlib>
 #include <utility>
 
-#include <fcntl.h>
+#include <sys/socket.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -24,17 +24,22 @@ int main() {
     assert(pair_result);
     auto pair = std::move(pair_result).value();
 
-    int pipe_fds[2]{-1, -1};
-    assert(::pipe2(pipe_fds, O_CLOEXEC) == 0);
-    os::core::NativeHandle read_end{pipe_fds[0]};
-    os::core::NativeHandle write_end{pipe_fds[1]};
+    // Runtime reacquisition returns a Channel capability, not an arbitrary fd.
+    // Use a real AF_UNIX SOCK_SEQPACKET endpoint so Channel::adopt() exercises
+    // the same transport contract used by supervised platform services.
+    auto endpoint_pair_result = os::ipc::Channel::create_local_pair();
+    assert(endpoint_pair_result);
+    auto endpoint_pair = std::move(endpoint_pair_result).value();
 
     const pid_t child = ::fork();
     assert(child >= 0);
     if (child == 0) {
         pair[0].close();
-        read_end.reset();
-        write_end.reset();
+        // The child must not succeed through descriptors inherited at fork. Its
+        // only usable service endpoint is the SCM_RIGHTS duplicate returned by
+        // PlatformServiceSession::acquire().
+        endpoint_pair[0].close();
+        endpoint_pair[1].close();
 
         os::app::PlatformServiceSession session{pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
@@ -50,7 +55,7 @@ int main() {
         assert(endpoint.generation == 8U);
 
         std::byte marker{};
-        assert(::read(endpoint.channel.native_fd(), &marker, 1U) == 1);
+        assert(::recv(endpoint.channel.native_fd(), &marker, 1U, 0) == 1);
         assert(marker == std::byte{0x5A});
         std::_Exit(0);
     }
@@ -65,15 +70,17 @@ int main() {
     assert(request.value().sender.user_id == static_cast<std::uint32_t>(::getuid()));
     assert(request.value().sender.group_id == static_cast<std::uint32_t>(::getgid()));
 
+    auto transfer = endpoint_pair[0].take_native_handle_for_transfer();
+    assert(transfer.valid());
     assert(os::app::send_service_acquire_response(
         pair[0],
         request.value().request_header,
         storage_service,
         8U,
-        read_end));
+        transfer));
 
     const std::byte marker{0x5A};
-    assert(::write(write_end.native(), &marker, 1U) == 1);
+    assert(::send(endpoint_pair[1].native_fd(), &marker, 1U, MSG_NOSIGNAL) == 1);
 
     int status = 0;
     assert(::waitpid(child, &status, 0) == child);
