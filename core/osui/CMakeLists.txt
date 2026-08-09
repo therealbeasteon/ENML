@@ -9,6 +9,7 @@ add_library(osui STATIC
     src/text.cpp
     src/paragraph.cpp
     src/renderer.cpp
+    src/render_damage.cpp
     src/raster.cpp
     src/contour_aa.cpp
     src/frame_raster.cpp
