@@ -12,6 +12,7 @@ add_library(osui STATIC
     src/contour_aa.cpp
     src/frame_raster.cpp
     src/glyph_raster.cpp
+    src/text_command_raster.cpp
     src/motion.cpp
 )
 add_library(emnl::osui ALIAS osui)
