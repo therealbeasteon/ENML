@@ -163,6 +163,24 @@ See `docs/M3_2_TEXT_RENDERING.md`.
 
 ENML still does **not** claim a production Unicode shaper, final platform font assets, final hinting, color-font support or a GPU glyph atlas. The bounded seams and real command-to-pixel path are now ready for those renderer-private implementations.
 
+### Semantic input routing
+
+Implemented:
+
+- bounded logical-Q6 `LogicalPoint` input boundary; raw Linux/hardware coordinates remain platform-private
+- immutable-snapshot `route_pointer_action()` for activate/focus/toggle/select semantic actions
+- snapshot validation before trusting node IDs, parent chains, depth, bounds or action masks
+- hidden-node/hidden-ancestor exclusion from the effective hit stack
+- deepest-node hit ownership with equal-depth overlap resolved by larger monotonic `UiNodeId`, matching current later-painted renderer ordering
+- ancestor-path action resolution so text inside a button routes naturally to the button
+- visible non-actionable and disabled topmost overlays block unrelated lower-sibling click-through by default
+- fresh-snapshot `dispatch_pointer_action()` with final authorization through `SemanticTree::focus()` or `dispatch_action()`
+- no input worker thread, polling loop, background gesture recognizer, `/dev/input` handle or evdev structure introduced into `osui`
+
+See `docs/M3_2_INPUT_ROUTING.md`.
+
+This is not yet the privileged hardware input service. Multitouch, gesture recognition, pointer capture, scrolling physics, keyboard traversal, IME/text editing and hardware key mapping remain future explicit contracts.
+
 ### Motion and power discipline
 
 Implemented:
@@ -210,7 +228,7 @@ The original visual direction remains a hard requirement: ENML must be original,
 
 Head `a79bd25956f8d2887dfd2871e2f77fc6f96df479` completed the repository workflows successfully, including M0 CI, M1 package/app foundation, M2 key/private-storage/service-broker, M3 Semantic UI and M3 Display/Compositor.
 
-The current branch extends that validated baseline with contour antialiasing, the composed opaque geometry path, real font-line metrics and direct render-command text painting. The fresh GCC, Clang, ASan/UBSan and native-AArch64 M3 UI line must complete before this newest renderer tranche is treated as validated. Queued CI is not a pass.
+The current branch extends that validated baseline with contour antialiasing, the composed opaque geometry/text path, real font-line metrics, direct render-command text painting and deterministic semantic pointer routing. Fresh GCC, Clang, ASan/UBSan and native-AArch64 M3 UI validation must complete before this newest tranche is treated as validated. Queued CI is not a pass.
 
 ### Remaining M3.2 work
 
@@ -221,7 +239,7 @@ The current branch extends that validated baseline with contour antialiasing, th
 - strengthen bounded depth/lighting before adding live translucency/backdrop filtering
 - continue compositor-deadline-aware motion integration with real scene transitions
 - add platform accessibility service/bridge above semantic snapshots
-- add deterministic input/focus routing without exposing `/dev/input` or compositor internals to applications
+- build the privileged platform input bridge above the semantic router without exposing `/dev/input` or compositor internals to applications
 - freeze public app-facing semantic UI API/OSIDL only after these in-process contracts stabilize
 - align the Figma component/design system to the same semantic token vocabulary and evaluate usability/accessibility before freezing visual language
 
