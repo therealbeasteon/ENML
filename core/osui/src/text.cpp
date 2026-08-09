@@ -56,6 +56,22 @@ inline constexpr std::uint16_t max_font_weight = 1000U;
         face.weight_min <= face.weight_max;
 }
 
+[[nodiscard]] bool font_face_set_valid(
+    const FontFallbackChain& fallback,
+    const FontFaceSet& faces) noexcept {
+    if (!fallback_valid(fallback) || faces.count != fallback.count ||
+        faces.count > faces.faces.size()) {
+        return false;
+    }
+    for (std::size_t index = 0U; index < faces.count; ++index) {
+        if (!font_face_valid(faces.faces[index]) ||
+            faces.faces[index].family != fallback.families[index]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] bool text_style_valid(const ResolvedTextStyle& style) noexcept {
     return style.metrics.size_q6 != 0U &&
         style.metrics.size_q6 <= max_logical_dimension_q6 &&
@@ -242,6 +258,31 @@ os::core::Result<ShapedText> shape_text(
 
     ShapedText output {};
     if (!backend.shape(backend.context, source, style, output)) {
+        return ui_error(errors::text_shaper_failed);
+    }
+    if (!shaped_text_valid(source, style, output)) {
+        return ui_error(errors::invalid_text_shape);
+    }
+    return output;
+}
+
+os::core::Result<ShapedText> shape_text_with_fonts(
+    const SemanticText& source,
+    const ResolvedTextStyle& style,
+    const FontFaceSet& faces,
+    FontAwareTextShaperBackend backend) noexcept {
+    if (!semantic_text_valid(source) || !text_style_valid(style)) {
+        return ui_error(errors::invalid_text_shape);
+    }
+    if (!font_face_set_valid(style.fallback, faces)) {
+        return ui_error(errors::invalid_font_face);
+    }
+    if (backend.shape == nullptr) {
+        return ui_error(errors::text_shaper_unavailable);
+    }
+
+    ShapedText output {};
+    if (!backend.shape(backend.context, source, style, faces, output)) {
         return ui_error(errors::text_shaper_failed);
     }
     if (!shaped_text_valid(source, style, output)) {
