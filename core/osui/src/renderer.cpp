@@ -36,6 +36,12 @@ namespace {
     return false;
 }
 
+[[nodiscard]] constexpr bool capabilities_valid(
+    const RenderCapabilities& capabilities) noexcept {
+    return capabilities.max_backdrop_blur_q6 <= max_logical_dimension_q6 &&
+        capabilities.max_depth_blur_q6 <= max_logical_dimension_q6;
+}
+
 [[nodiscard]] const UiNodeDescriptor* find_node(
     const RendererSnapshot& snapshot,
     UiNodeId id) noexcept {
@@ -153,12 +159,46 @@ void apply_quality_budget(
         logical_from_dp(8U));
 }
 
+void apply_capability_budget(
+    ResolvedVisualStyle& visual,
+    const RenderCapabilities& capabilities) noexcept {
+    visual.depth.blur_q6 = std::min(
+        visual.depth.blur_q6,
+        capabilities.max_depth_blur_q6);
+
+    if (!capabilities.live_backdrop) {
+        visual.material.backdrop_blur_q6 = 0U;
+        visual.material.live_backdrop_allowed = false;
+    } else {
+        visual.material.backdrop_blur_q6 = std::min(
+            visual.material.backdrop_blur_q6,
+            capabilities.max_backdrop_blur_q6);
+        if (visual.material.backdrop_blur_q6 == 0U) {
+            visual.material.live_backdrop_allowed = false;
+        }
+    }
+
+    // A renderer without alpha compositing falls back to opaque material for
+    // material-bearing surfaces. Text/decorative nodes with material=none
+    // remain non-material instead of receiving an invented background.
+    if (!capabilities.alpha_compositing &&
+        visual.token.material != OpticalMaterialRole::none) {
+        visual.material.opacity_percent = 100U;
+        visual.material.backdrop_blur_q6 = 0U;
+        visual.material.live_backdrop_allowed = false;
+    }
+
+    if (!capabilities.spatial_motion) {
+        visual.motion.spatial_motion_allowed = false;
+    }
+}
+
 } // namespace
 
 os::core::Result<RenderCommandBuffer> build_render_commands(
     const RendererSnapshot& snapshot,
     RenderBuildOptions options) noexcept {
-    if (!quality_valid(options.quality)) {
+    if (!quality_valid(options.quality) || !capabilities_valid(options.capabilities)) {
         return ui_error(errors::invalid_render_options);
     }
     if (options.text_scale_percent < min_text_scale_percent ||
@@ -202,6 +242,7 @@ os::core::Result<RenderCommandBuffer> build_render_commands(
         if (!visual_result) return visual_result.error();
         ResolvedVisualStyle visual = visual_result.value();
         apply_quality_budget(visual, options.quality);
+        apply_capability_budget(visual, options.capabilities);
 
         auto contour_result = resolve_contour(node.spec.bounds, visual.token.curve);
         if (!contour_result) return contour_result.error();
