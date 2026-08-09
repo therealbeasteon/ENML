@@ -22,6 +22,11 @@ public:
 
     [[nodiscard]] bool valid() const noexcept { return root_.valid(); }
 
+    // Explicitly duplicates the already-authorized root object. This is used
+    // when a service mints a new bearer capability so later trusted policy
+    // replacement cannot silently retarget an already-issued object.
+    [[nodiscard]] os::core::Result<PrivateRoot> duplicate() const noexcept;
+
     [[nodiscard]] os::core::Result<File>
     open_file(const RelativePath& path, OpenOptions options = {}) const noexcept {
         return root_.open_file(path, options);
