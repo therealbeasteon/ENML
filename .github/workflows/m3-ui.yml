@@ -1,0 +1,71 @@
+name: M3 Semantic UI
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  cancel-in-progress: true
+
+jobs:
+  ui-gcc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build semantic UI gates
+        run: >-
+          cmake --build --preset host-debug
+          --target ui_semantic_tree_test ui_responsive_layout_test
+          --parallel 2
+      - name: Test semantic UI gates
+        run: ctest --preset host-debug --output-on-failure -L '^m3-ui$'
+
+  ui-sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure ASan and UBSan
+        run: cmake --preset host-asan
+      - name: Build semantic UI gates with sanitizers
+        run: >-
+          cmake --build --preset host-asan
+          --target ui_semantic_tree_test ui_responsive_layout_test
+          --parallel 2
+      - name: Test semantic UI gates with sanitizers
+        run: ctest --preset host-asan --output-on-failure -L '^m3-ui$'
+
+  ui-clang:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >-
+          cmake -S . -B build/m3-ui-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Build semantic UI gates
+        run: >-
+          cmake --build build/m3-ui-clang
+          --target ui_semantic_tree_test ui_responsive_layout_test
+          --parallel 2
+      - name: Test semantic UI gates
+        run: ctest --test-dir build/m3-ui-clang --output-on-failure -L '^m3-ui$'
+
+  ui-arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm AArch64
+        run: test "$(uname -m)" = "aarch64"
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build semantic UI gates natively
+        run: >-
+          cmake --build --preset host-debug
+          --target ui_semantic_tree_test ui_responsive_layout_test
+          --parallel 2
+      - name: Test semantic UI gates natively
+        run: ctest --preset host-debug --output-on-failure -L '^m3-ui$'
