@@ -38,7 +38,8 @@ inline constexpr RightsMask metadata = 1U << 0U;
 inline constexpr RightsMask encrypt = 1U << 1U;
 inline constexpr RightsMask decrypt = 1U << 2U;
 inline constexpr RightsMask destroy = 1U << 3U;
-inline constexpr RightsMask all = metadata | encrypt | decrypt | destroy;
+inline constexpr RightsMask rotate = 1U << 4U;
+inline constexpr RightsMask all = metadata | encrypt | decrypt | destroy | rotate;
 } // namespace key_rights
 
 struct KeyDescriptor final {
