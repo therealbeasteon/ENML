@@ -90,19 +90,6 @@ take_single_endpoint(os::ipc::InboundMessage& message) noexcept {
     return os::ipc::Channel::adopt(std::move(native).value());
 }
 
-[[nodiscard]] bool valid_object_request(const os::ipc::InboundMessage& message) noexcept {
-    const auto& header = message.header();
-    return has_flag(header.flags, os::ipc::WireFlag::request) &&
-        !has_flag(header.flags, os::ipc::WireFlag::response) &&
-        !has_flag(header.flags, os::ipc::WireFlag::event) &&
-        !has_flag(header.flags, os::ipc::WireFlag::error) &&
-        !has_flag(header.flags, os::ipc::WireFlag::oneway) &&
-        !has_flag(header.flags, os::ipc::WireFlag::cancellable) &&
-        header.service_id == key_object_service_id &&
-        header.request_id.value() != 0U &&
-        header.handle_count == 0U;
-}
-
 [[nodiscard]] os::core::Result<os::ipc::InboundMessage>
 object_call(
     os::ipc::Channel& channel,
@@ -564,11 +551,14 @@ KeyService::dispatch_object(std::size_t index, os::core::MutableByteSpan receive
         return received.error();
     }
     auto message = std::move(received).value();
-    if (!valid_object_request(message)) {
+    auto context = os::ipc::validate_rpc_request(
+        message, key_object_service_id, *identity_resolver_);
+    if (!context) {
+        return os::ipc::send_rpc_error(slot.endpoint, message.header(), context.error());
+    }
+    if (owner_from_context(context.value()) != slot.owner) {
         return os::ipc::send_rpc_error(
-            slot.endpoint,
-            message.header(),
-            ipc_error(os::ipc::errors::protocol_violation));
+            slot.endpoint, message.header(), key_error(errors::access_denied));
     }
 
     switch (message.header().operation_id) {
@@ -653,8 +643,10 @@ KeyService::dispatch_object(std::size_t index, os::core::MutableByteSpan receive
             slot.endpoint,
             message.header(),
             output.first(response_size));
-        std::fill(operation_buffer_.begin(), operation_buffer_.begin() +
-            static_cast<std::ptrdiff_t>(response_size), std::byte{0});
+        std::fill(
+            operation_buffer_.begin(),
+            operation_buffer_.begin() + static_cast<std::ptrdiff_t>(response_size),
+            std::byte{0});
         return sent;
     }
 
@@ -711,8 +703,10 @@ KeyService::dispatch_object(std::size_t index, os::core::MutableByteSpan receive
             slot.endpoint,
             message.header(),
             output.first(opened.value()));
-        std::fill(operation_buffer_.begin(), operation_buffer_.begin() +
-            static_cast<std::ptrdiff_t>(opened.value()), std::byte{0});
+        std::fill(
+            operation_buffer_.begin(),
+            operation_buffer_.begin() + static_cast<std::ptrdiff_t>(opened.value()),
+            std::byte{0});
         return sent;
     }
 
