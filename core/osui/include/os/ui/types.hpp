@@ -133,13 +133,15 @@ struct SemanticText final {
     std::uint16_t length {0U};
 
     [[nodiscard]] std::string_view view() const noexcept {
-        return std::string_view{bytes.data(), static_cast<std::size_t>(length)};
+        const auto count = static_cast<std::size_t>(length);
+        return std::string_view{bytes.data(), count <= bytes.size() ? count : bytes.size()};
     }
 
     [[nodiscard]] bool empty() const noexcept { return length == 0U; }
     [[nodiscard]] friend bool operator==(const SemanticText&, const SemanticText&) = default;
 };
 
+[[nodiscard]] bool semantic_text_valid(const SemanticText& text) noexcept;
 [[nodiscard]] os::core::Result<SemanticText> make_semantic_text(std::string_view text) noexcept;
 
 struct UiNodeSpec final {
