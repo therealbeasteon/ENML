@@ -128,6 +128,19 @@ ApplicationManager::uninstall_application(
     bool has_error = false;
     os::core::Error first_error {};
 
+    // Keep the retained private-data directory/principal profile for a future
+    // same-signer reinstall, but remove its live Storage policy now. Storage
+    // revocation closes every bearer object minted for this profile, including
+    // capabilities that may have been delegated before uninstall.
+    for (auto& profile : profiles_) {
+        if (!profile.occupied || profile.application != application) continue;
+        auto revoked = revoke_profile(profile);
+        if (!revoked && !has_error) {
+            first_error = revoked.error();
+            has_error = true;
+        }
+    }
+
     for (auto& slot : instances_) {
         if (!slot.occupied || slot.info.application != application) continue;
 
