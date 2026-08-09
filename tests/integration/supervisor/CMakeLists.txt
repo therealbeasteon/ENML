@@ -113,3 +113,15 @@ add_test(
     NAME supervisor_restart_revocation_test
     COMMAND supervisor_restart_revocation_test $<TARGET_FILE:system_echo>
 )
+
+set_property(TEST
+    supervisor_lifecycle_test
+    supervisor_crash_loop_test
+    supervisor_readiness_test
+    supervisor_identity_test
+    supervisor_sandbox_test
+    sandbox_landlock_test
+    supervisor_resource_limits_test
+    supervisor_restart_revocation_test
+    APPEND PROPERTY LABELS m0
+)
