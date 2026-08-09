@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include <os/core/identity.hpp>
+#include <os/core/native_handle.hpp>
 #include <os/core/result.hpp>
 #include <os/core/span.hpp>
 #include <os/ipc/channel.hpp>
@@ -12,6 +13,10 @@
 #include <os/storage/directory.hpp>
 #include <os/storage/file.hpp>
 #include <os/storage/private_root.hpp>
+
+namespace os::service {
+class IdentityRegistry;
+}
 
 namespace os::storage {
 
@@ -21,6 +26,19 @@ namespace os::storage {
 inline constexpr os::core::ServiceId storage_service_id{0x0000F020U};
 inline constexpr os::core::ServiceId storage_object_service_id{0x0000F021U};
 inline constexpr std::uint32_t storage_open_private_root_operation = 1U;
+
+// System-only operation. It is deliberately outside the public operation-id
+// range and accepts a directory handle only from an authenticated provisioner.
+inline constexpr std::uint32_t storage_provision_private_root_operation = 0x80000001U;
+
+// M2.2 system principal used by the trusted application-profile publisher in
+// the first supervised vertical slice. The request still authenticates the
+// actual process through RequestContext; this value is never accepted from an
+// application payload.
+inline constexpr os::core::PrincipalId storage_profile_admin_principal{
+    0x53595354454D0000ULL,
+    0x000000000000A020ULL,
+};
 
 inline constexpr std::size_t max_private_roots = 64U;
 inline constexpr std::size_t max_storage_objects = 64U;
@@ -169,6 +187,25 @@ private:
     os::ipc::ClientConnection* connection_ {nullptr};
 };
 
+// Trusted-system client for publishing an already-authorized application data
+// root into the Storage Service. The target identity is meaningful only because
+// the server first authenticates this caller as storage_profile_admin_principal.
+class StorageProvisioner final {
+public:
+    explicit StorageProvisioner(os::ipc::ClientConnection& connection) noexcept
+        : connection_(&connection) {}
+
+    [[nodiscard]] os::core::Result<void>
+    provision_private_root(
+        os::core::PrincipalId target_principal,
+        os::core::UserId target_user,
+        const os::core::NativeHandle& authorized_directory,
+        os::core::MutableByteSpan scratch) noexcept;
+
+private:
+    os::ipc::ClientConnection* connection_ {nullptr};
+};
+
 // Trusted policy registry. Applications never register roots and no registration
 // method accepts a Linux pathname. The key is durable application principal +
 // user; ProcessId is deliberately not part of private-data identity.
@@ -208,8 +245,22 @@ public:
     StorageService(
         os::ipc::Channel& endpoint,
         os::ipc::PeerIdentityResolver& identity_resolver,
-        PrivateRootRegistry& roots) noexcept
-        : endpoint_(&endpoint), identity_resolver_(&identity_resolver), roots_(&roots) {}
+        PrivateRootRegistry& roots,
+        os::core::PrincipalId provisioning_principal = {}) noexcept
+        : endpoint_(&endpoint),
+          identity_resolver_(&identity_resolver),
+          roots_(&roots),
+          provisioning_principal_(provisioning_principal) {}
+
+    // A supervised system.storage attaches its fd3 control channel so identity
+    // updates and storage/object traffic share one blocking poll without a
+    // periodic wakeup or an extra service thread.
+    void attach_identity_control(
+        os::ipc::Channel& control,
+        os::service::IdentityRegistry& identity_registry) noexcept {
+        control_ = &control;
+        identity_registry_ = &identity_registry;
+    }
 
     [[nodiscard]] os::core::Result<void>
     dispatch_once(os::core::MutableByteSpan receive_buffer, int timeout_ms) noexcept;
@@ -239,6 +290,9 @@ private:
     os::ipc::Channel* endpoint_ {nullptr};
     os::ipc::PeerIdentityResolver* identity_resolver_ {nullptr};
     PrivateRootRegistry* roots_ {nullptr};
+    os::core::PrincipalId provisioning_principal_ {};
+    os::ipc::Channel* control_ {nullptr};
+    os::service::IdentityRegistry* identity_registry_ {nullptr};
     std::array<ObjectSlot, max_storage_objects> objects_ {};
 
     [[nodiscard]] os::core::Result<void>
