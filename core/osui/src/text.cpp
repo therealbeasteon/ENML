@@ -10,6 +10,11 @@
 namespace os::ui {
 namespace {
 
+inline constexpr std::uint16_t min_font_units_per_em = 16U;
+inline constexpr std::uint16_t max_font_units_per_em = 16384U;
+inline constexpr std::uint16_t min_font_weight = 1U;
+inline constexpr std::uint16_t max_font_weight = 1000U;
+
 [[nodiscard]] constexpr bool font_family_valid(FontFamilyRole role) noexcept {
     switch (role) {
     case FontFamilyRole::interface:
@@ -42,6 +47,15 @@ namespace {
     return true;
 }
 
+[[nodiscard]] bool font_face_valid(const FontFaceDescriptor& face) noexcept {
+    return face.id.value() != 0U && font_family_valid(face.family) &&
+        face.units_per_em >= min_font_units_per_em &&
+        face.units_per_em <= max_font_units_per_em &&
+        face.weight_min >= min_font_weight && face.weight_min <= max_font_weight &&
+        face.weight_max >= min_font_weight && face.weight_max <= max_font_weight &&
+        face.weight_min <= face.weight_max;
+}
+
 [[nodiscard]] bool text_style_valid(const ResolvedTextStyle& style) noexcept {
     return style.metrics.size_q6 != 0U &&
         style.metrics.size_q6 <= max_logical_dimension_q6 &&
@@ -72,6 +86,14 @@ bool FontFallbackChain::contains(FontFamilyRole role) const noexcept {
         if (families[index] == role) return true;
     }
     return false;
+}
+
+const FontFaceDescriptor* FontFaceSet::find(FontFamilyRole family) const noexcept {
+    const std::size_t limit = count < faces.size() ? count : faces.size();
+    for (std::size_t index = 0U; index < limit; ++index) {
+        if (faces[index].family == family) return &faces[index];
+    }
+    return nullptr;
 }
 
 os::core::Result<FontFallbackChain> font_fallback_chain(
@@ -114,6 +136,28 @@ os::core::Result<ResolvedTextStyle> resolve_text_style(
         .metrics = metrics.value(),
         .fallback = fallback.value(),
     };
+}
+
+os::core::Result<FontFaceSet> resolve_font_faces(
+    const FontFallbackChain& fallback,
+    FontProviderBackend provider) noexcept {
+    if (!fallback_valid(fallback)) return ui_error(errors::invalid_font_face);
+    if (provider.resolve == nullptr) return ui_error(errors::font_provider_unavailable);
+
+    FontFaceSet set {};
+    set.count = fallback.count;
+    for (std::size_t index = 0U; index < fallback.count; ++index) {
+        const FontFamilyRole requested = fallback.families[index];
+        FontFaceDescriptor face {};
+        if (!provider.resolve(provider.context, requested, face)) {
+            return ui_error(errors::font_provider_failed);
+        }
+        if (!font_face_valid(face) || face.family != requested) {
+            return ui_error(errors::invalid_font_face);
+        }
+        set.faces[index] = face;
+    }
+    return set;
 }
 
 bool shaped_text_valid(
