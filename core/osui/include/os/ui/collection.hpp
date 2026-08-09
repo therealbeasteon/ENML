@@ -66,13 +66,38 @@ struct CollectionRecyclePlan final {
 };
 
 // Renderer/UI code materializes a collection from one immutable logical
-// revision. A data source may mutate between frames, but every key lookup for
-// a materialization pass carries the revision captured by snapshot(). A source
-// that has advanced must reject stale revision lookups instead of mixing two
-// logical collection states into one semantic window.
+// revision. A data source may mutate between frames, but every key/content
+// lookup for a materialization pass carries the revision captured by
+// snapshot(). A source that has advanced must reject stale revision lookups
+// instead of mixing two logical collection states into one semantic window.
 struct CollectionDataSnapshot final {
     CollectionRevision revision {};
     std::uint32_t item_count {0U};
+};
+
+// Initial list publication is intentionally small and semantic. The primary
+// label is both meaningful application content and the minimum accessibility
+// description for a materialized item; an optional secondary label supports a
+// common two-line information hierarchy without exposing renderer/font data.
+// Richer custom row composition belongs to the later public semantic UI API.
+struct CollectionItemContent final {
+    SemanticText primary_label {};
+    SemanticText secondary_label {};
+    bool enabled {true};
+    bool selected {false};
+};
+
+struct CollectionPublishedItem final {
+    std::uint32_t item_index {0U};
+    CollectionItemKey item_key {};
+    CollectionItemContent content {};
+};
+
+struct CollectionContentWindow final {
+    CollectionRevision revision {};
+    CollectionWindow window {};
+    std::array<CollectionPublishedItem, max_materialized_collection_items> items {};
+    std::uint16_t count {0U};
 };
 
 using CollectionSnapshotFn = bool (*)(
@@ -85,6 +110,13 @@ using CollectionItemKeyAtFn = bool (*)(
     std::uint32_t item_index,
     CollectionItemKey& output) noexcept;
 
+using CollectionItemContentAtFn = bool (*)(
+    void* context,
+    CollectionRevision revision,
+    std::uint32_t item_index,
+    CollectionItemKey item_key,
+    CollectionItemContent& output) noexcept;
+
 // In-process backend seam only. The eventual app-facing/OSIDL protocol can be
 // designed after these semantics stabilize; applications do not receive raw
 // function pointers or implementation-owned container addresses.
@@ -92,6 +124,7 @@ struct CollectionDataSourceBackend final {
     void* context {nullptr};
     CollectionSnapshotFn snapshot {nullptr};
     CollectionItemKeyAtFn item_key_at {nullptr};
+    CollectionItemContentAtFn item_content_at {nullptr};
 };
 
 // Maps virtual items onto a stable, fixed pool of materialized semantic child
@@ -133,6 +166,15 @@ private:
 // source revision. Backend refusal is treated as a stale snapshot; zero or
 // duplicate keys are rejected as a malformed source contract.
 [[nodiscard]] os::core::Result<CollectionRecycleRequest> build_collection_recycle_request(
+    const CollectionWindow& window,
+    const CollectionDataSnapshot& snapshot,
+    CollectionDataSourceBackend backend) noexcept;
+
+// Publishes semantic item content for exactly the same captured revision and
+// stable keys used by recycling. The callback receives the already-validated
+// key for each index so a content implementation cannot silently publish a row
+// under different identity. Output is bounded by the materialized child pool.
+[[nodiscard]] os::core::Result<CollectionContentWindow> build_collection_content_window(
     const CollectionWindow& window,
     const CollectionDataSnapshot& snapshot,
     CollectionDataSourceBackend backend) noexcept;
