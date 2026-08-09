@@ -16,6 +16,9 @@ inline constexpr std::uint32_t provider_failure = 6U;
 inline constexpr std::uint32_t unsupported_purpose = 7U;
 inline constexpr std::uint32_t duplicate_key_id = 8U;
 inline constexpr std::uint32_t invalid_rights = 9U;
+inline constexpr std::uint32_t object_limit = 10U;
+inline constexpr std::uint32_t io_failure = 11U;
+inline constexpr std::uint32_t id_generation_failed = 12U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error key_error(std::uint32_t code) noexcept {
