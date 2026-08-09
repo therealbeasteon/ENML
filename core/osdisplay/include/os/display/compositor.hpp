@@ -64,6 +64,14 @@ public:
         std::int32_t x,
         std::int32_t y) const noexcept;
 
+    // Re-check a previously issued hit immediately before privileged delivery.
+    // Surface lifetime, exact owner, role, presented frame, size, visibility
+    // and input eligibility must still match. This gives a future input service
+    // an explicit TOCTOU defense rather than treating a hit result as a bearer
+    // token that remains valid after scene mutation.
+    [[nodiscard]] os::core::Result<void> validate_input_hit(
+        const SurfaceInputHit& hit) const noexcept;
+
     // Compatibility helper for existing callers that need only SurfaceId.
     [[nodiscard]] os::core::Result<SurfaceId> hit_test(
         std::int32_t x,
