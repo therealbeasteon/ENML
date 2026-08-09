@@ -1,4 +1,5 @@
 #include <os/ui/contour_aa.hpp>
+#include <os/ui/frame_raster.hpp>
 
 #include <array>
 #include <cassert>
@@ -131,6 +132,24 @@ int main() {
     assert(before[sample] == theme.colors[color_index(os::ui::ColorRole::surface)]);
     assert(pixels[sample] != before[sample]);
     assert(pixels[sample] != theme.colors[color_index(os::ui::ColorRole::focus)]);
+
+    // The preferred composed CPU frame entry point must produce exactly the
+    // same deterministic material + contour result as invoking both stages in
+    // order by hand.
+    std::array<os::ui::Rgba8, width * height> frame_pixels{};
+    const os::ui::RasterTarget frame_target{
+        .pixels = frame_pixels.data(),
+        .pixel_count = frame_pixels.size(),
+        .width = width,
+        .height = height,
+        .stride = width,
+        .scale = {1U, os::ui::logical_units_per_dp},
+    };
+    auto frame = os::ui::rasterize_opaque_frame(buffer, theme, frame_target);
+    assert(frame);
+    assert(frame.value().materials.commands_seen == 2U);
+    assert(frame.value().contour_antialias.fringes_drawn == 1U);
+    assert(frame_pixels == pixels);
 
     // A rectilinear-only scene has no curved partial coverage to add.
     std::array<os::ui::Rgba8, width * height> flat_pixels{};
