@@ -151,6 +151,54 @@ int main() {
     assert(!economy_panel->visual.material.live_backdrop_allowed);
     assert(economy_panel->contour == panel_command->contour);
 
+    // Capability fallback is separate from quality and accessibility. A device
+    // that cannot alpha-composite, filter a live backdrop or animate spatially
+    // keeps the authored ENML contour/hierarchy but receives an opaque static
+    // implementation of the same semantic material.
+    auto limited = os::ui::build_render_commands(
+        snapshot,
+        os::ui::RenderBuildOptions{
+            .preferences = {},
+            .text_scale_percent = 100U,
+            .quality = os::ui::VisualQualityTier::full,
+            .capabilities = os::ui::RenderCapabilities{
+                .alpha_compositing = false,
+                .live_backdrop = false,
+                .spatial_motion = false,
+                .max_backdrop_blur_q6 = 0U,
+                .max_depth_blur_q6 = os::ui::logical_from_dp(4U),
+            },
+        });
+    assert(limited);
+    const auto* limited_panel = find_command(limited.value(), panel.value().id);
+    assert(limited_panel != nullptr);
+    assert(limited_panel->visual.token.material == os::ui::OpticalMaterialRole::crystal);
+    assert(limited_panel->visual.material.opacity_percent == 100U);
+    assert(limited_panel->visual.material.backdrop_blur_q6 == 0U);
+    assert(!limited_panel->visual.material.live_backdrop_allowed);
+    assert(limited_panel->visual.depth.blur_q6 <= os::ui::logical_from_dp(4U));
+    assert(!limited_panel->visual.motion.spatial_motion_allowed);
+    assert(limited_panel->contour == panel_command->contour);
+
+    auto no_backdrop = os::ui::build_render_commands(
+        snapshot,
+        os::ui::RenderBuildOptions{
+            .preferences = {},
+            .text_scale_percent = 100U,
+            .quality = os::ui::VisualQualityTier::full,
+            .capabilities = os::ui::RenderCapabilities{
+                .alpha_compositing = true,
+                .live_backdrop = false,
+                .spatial_motion = true,
+            },
+        });
+    assert(no_backdrop);
+    const auto* no_backdrop_panel = find_command(no_backdrop.value(), panel.value().id);
+    assert(no_backdrop_panel != nullptr);
+    assert(no_backdrop_panel->visual.material.opacity_percent < 100U);
+    assert(no_backdrop_panel->visual.material.backdrop_blur_q6 == 0U);
+    assert(!no_backdrop_panel->visual.material.live_backdrop_allowed);
+
     auto reduced = os::ui::build_render_commands(
         snapshot,
         os::ui::RenderBuildOptions{
@@ -207,6 +255,19 @@ int main() {
         });
     assert(!invalid_quality);
     expect_ui_error(invalid_quality.error(), os::ui::errors::invalid_render_options);
+
+    auto invalid_capabilities = os::ui::build_render_commands(
+        snapshot,
+        os::ui::RenderBuildOptions{
+            .preferences = {},
+            .text_scale_percent = 100U,
+            .quality = os::ui::VisualQualityTier::full,
+            .capabilities = os::ui::RenderCapabilities{
+                .max_backdrop_blur_q6 = os::ui::max_logical_dimension_q6 + 1U,
+            },
+        });
+    assert(!invalid_capabilities);
+    expect_ui_error(invalid_capabilities.error(), os::ui::errors::invalid_render_options);
 
     return 0;
 }
