@@ -21,3 +21,11 @@ target_compile_options(display_generation_namespace_test PRIVATE
 )
 add_test(NAME display_generation_namespace_test COMMAND display_generation_namespace_test)
 set_tests_properties(display_generation_namespace_test PROPERTIES LABELS m3-display)
+
+add_executable(display_trusted_overlay_test trusted_overlay_test.cpp)
+target_link_libraries(display_trusted_overlay_test PRIVATE emnl::osdisplay emnl_warnings)
+target_compile_options(display_trusted_overlay_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME display_trusted_overlay_test COMMAND display_trusted_overlay_test)
+set_tests_properties(display_trusted_overlay_test PROPERTIES LABELS m3-display)
