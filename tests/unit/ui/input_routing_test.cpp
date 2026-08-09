@@ -143,16 +143,8 @@ int main() {
     assert(!blocked);
     expect_ui_error(blocked.error(), os::ui::errors::input_no_target);
 
-    // Hidden overlays are absent from the effective hit stack and therefore do
-    // not block the visible actionable node beneath them.
-    auto hidden_overlay = tree.add(
-        content.value().id,
-        os::ui::UiNodeSpec{
-            .role = os::ui::UiRole::container,
-            .bounds = rect(20U, 440U, 180U, 72U),
-            .state = os::ui::UiNodeState{.visible = false},
-        });
-    assert(hidden_overlay);
+    // Hidden overlays are absent from the effective hit stack even when they
+    // were inserted later than the visible control beneath them.
     auto visible_button = tree.add(
         content.value().id,
         os::ui::UiNodeSpec{
@@ -162,6 +154,15 @@ int main() {
             .label = text("Visible"),
         });
     assert(visible_button);
+    auto hidden_overlay = tree.add(
+        content.value().id,
+        os::ui::UiNodeSpec{
+            .role = os::ui::UiRole::container,
+            .bounds = rect(20U, 440U, 180U, 72U),
+            .state = os::ui::UiNodeState{.visible = false},
+        });
+    assert(hidden_overlay);
+    assert(hidden_overlay.value().id.value() > visible_button.value().id.value());
 
     auto visible_hit = os::ui::route_pointer_action(
         tree.renderer_snapshot(),
