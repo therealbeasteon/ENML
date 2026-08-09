@@ -65,6 +65,7 @@ inline constexpr std::uint32_t invalid_accessibility_action = 55U;
 inline constexpr std::uint32_t invalid_collection_content = 56U;
 inline constexpr std::uint32_t accessibility_authority_denied = 57U;
 inline constexpr std::uint32_t invalid_render_damage = 58U;
+inline constexpr std::uint32_t accessibility_session_mismatch = 59U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
