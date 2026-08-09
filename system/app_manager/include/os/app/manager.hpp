@@ -18,6 +18,7 @@
 #include <os/package/persistence.hpp>
 #include <os/sandbox/sandbox.hpp>
 #include <os/storage/service.hpp>
+#include <os/supervisor/service_broker.hpp>
 #include <os/supervisor/supervisor.hpp>
 
 namespace os::app {
@@ -41,6 +42,7 @@ inline constexpr std::uint32_t profile_capacity = 110U;
 inline constexpr std::uint32_t profile_not_found = 111U;
 inline constexpr std::uint32_t generation_in_use = 112U;
 inline constexpr std::uint32_t generation_active = 113U;
+inline constexpr std::uint32_t broker_misconfigured = 114U;
 } // namespace manager_errors
 
 // Trusted Package Service registration. Applications never supply executable
@@ -82,10 +84,13 @@ struct ApplicationInstanceInfo final {
 // M2 App Manager. Launch requests contain only PackageId plus trusted user
 // context. Active generation, executable object, per-user principal, native
 // credentials, sandbox policy and service policy all come from trusted state.
-// The three-argument constructor preserves the Storage-only M1/M2.2 substrate;
-// the four-argument M2.8 constructor additionally publishes lifecycle policy to
-// a supervised Key Service. The Key Service private control channel is never
-// inherited by applications.
+//
+// Three-argument mode preserves the Storage-only M1/M2.2 launch contract.
+// Four-argument mode adds the M2.8 Key lifecycle policy publisher but keeps the
+// legacy single fixed Storage endpoint bootstrap.
+// Five-argument M2.9 mode requires Storage + Keys to share one ProcessAuthority
+// with a trusted ServiceBroker. The launched process receives both service
+// channels through bootstrap-v2 SCM_RIGHTS while retaining one PeerIdentity.
 class ApplicationManager final {
 public:
     ApplicationManager(
@@ -98,6 +103,13 @@ public:
         ApplicationPrincipalStore& principals,
         os::supervisor::Supervisor& storage_supervisor,
         os::supervisor::Supervisor& key_supervisor) noexcept;
+
+    ApplicationManager(
+        os::package::PersistentPackageRegistry& packages,
+        ApplicationPrincipalStore& principals,
+        os::supervisor::Supervisor& storage_supervisor,
+        os::supervisor::Supervisor& key_supervisor,
+        os::supervisor::ServiceBroker& service_broker) noexcept;
 
     ~ApplicationManager();
 
@@ -162,14 +174,9 @@ private:
 
     os::package::PersistentPackageRegistry& packages_;
     ApplicationPrincipalStore& principals_;
-    // The original single-service member remains the Storage supervisor so the
-    // frozen M1/M2.2 launch path and ProcessId semantics are unchanged.
     os::supervisor::Supervisor& supervisor_;
-    // M2.8 adds only Key Service lifecycle-policy publication here. Application
-    // Key Service endpoint distribution/runtime identity fan-out is a separate
-    // multi-service broker concern and is not faked by allocating a second
-    // logical ProcessId from another single-service Supervisor instance.
     os::supervisor::Supervisor* key_supervisor_ {nullptr};
+    os::supervisor::ServiceBroker* service_broker_ {nullptr};
     std::array<LaunchTarget, m1_launch_target_capacity> targets_ {};
     std::array<ApplicationProfile, m1_application_profile_capacity> profiles_ {};
     std::array<InstanceSlot, m1_application_instance_capacity> instances_ {};
@@ -182,6 +189,10 @@ private:
     os::ipc::Channel key_control_ {};
     std::optional<os::keys::KeyControlClient> key_control_client_ {};
     std::uint64_t key_service_generation_ {0U};
+
+    [[nodiscard]] bool broker_configuration_valid() const noexcept;
+    [[nodiscard]] os::core::Result<void> release_instance_identity(
+        os::core::ProcessId process) noexcept;
 
     [[nodiscard]] os::core::Result<void> ensure_storage_control() noexcept;
     [[nodiscard]] os::core::Result<void> publish_profile(ApplicationProfile& profile) noexcept;
