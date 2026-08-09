@@ -132,29 +132,31 @@ open_private_data_root(int directory_fd) noexcept {
 
 [[noreturn]] void exec_application_child(
     int executable_fd,
-    int private_data_directory_fd,
+    int application_resource_fd,
+    bool brokered_storage,
     int bootstrap_fd,
     const os::sandbox::SandboxPolicyV1& sandbox) noexcept {
     const int bootstrap_temp = duplicate_cloexec(bootstrap_fd);
     const int executable_temp = duplicate_cloexec(executable_fd);
-    const int data_temp = duplicate_cloexec(private_data_directory_fd);
-    if (bootstrap_temp < 0 || executable_temp < 0 || data_temp < 0) std::_Exit(120);
+    const int resource_temp = duplicate_cloexec(application_resource_fd);
+    if (bootstrap_temp < 0 || executable_temp < 0 || resource_temp < 0) std::_Exit(120);
 
     if (::dup2(bootstrap_temp, application_bootstrap_fd) < 0 ||
         ::dup2(executable_temp, application_executable_fd) < 0 ||
-        ::dup2(data_temp, application_private_data_fd) < 0 ||
+        ::dup2(resource_temp, application_storage_service_fd) < 0 ||
         !set_cloexec(application_executable_fd)) {
         std::_Exit(121);
     }
 
     (void)::close(bootstrap_temp);
     (void)::close(executable_temp);
-    (void)::close(data_temp);
+    (void)::close(resource_temp);
     close_extra_descriptors();
 
     const os::sandbox::ApplicationSandboxHandlesV1 sandbox_handles{
         .executable_fd = application_executable_fd,
-        .private_data_directory_fd = application_private_data_fd,
+        .private_data_directory_fd = brokered_storage ? -1 : application_private_data_fd,
+        .brokered_storage = brokered_storage,
     };
     auto sandbox_result = os::sandbox::apply_application_before_exec(sandbox_handles, sandbox);
     if (!sandbox_result) std::_Exit(122);
@@ -360,6 +362,26 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
     if (free_instance == nullptr) return manager_error(manager_errors::instance_capacity);
     if (next_instance_id_ == 0U) return manager_error(manager_errors::instance_id_exhausted);
 
+    // M2.2 brokered mode publishes the trusted profile root before fork and
+    // obtains a fresh connection to the currently-running Storage Service.
+    // Legacy M1 tests remain valid when no bridge is attached.
+    os::ipc::Channel storage_channel;
+    bool brokered_storage = false;
+    int application_resource_fd = profile->private_data_directory.native();
+    if (storage_bridge_ != nullptr) {
+        auto provisioned = storage_bridge_->provision_private_root(
+            principal.value().principal,
+            user,
+            profile->private_data_directory);
+        if (!provisioned) return provisioned.error();
+
+        auto connected = storage_bridge_->connect_application();
+        if (!connected) return connected.error();
+        storage_channel = std::move(connected).value();
+        application_resource_fd = storage_channel.native_fd();
+        brokered_storage = true;
+    }
+
     const auto instance_id = os::core::ApplicationInstanceId{next_instance_id_};
     if (next_instance_id_ == std::numeric_limits<std::uint64_t>::max()) {
         next_instance_id_ = 0U;
@@ -377,12 +399,14 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
         bootstrap_pair[0].close();
         exec_application_child(
             target->executable.native(),
-            profile->private_data_directory.native(),
+            application_resource_fd,
+            brokered_storage,
             bootstrap_pair[1].native_fd(),
             profile->sandbox);
     }
 
     bootstrap_pair[1].close();
+    storage_channel.close();
 
     auto identity = supervisor_.register_process(child, principal.value().principal, user);
     if (!identity) {
