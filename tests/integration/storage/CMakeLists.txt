@@ -31,6 +31,7 @@ target_link_libraries(storage_supervised_service_test PRIVATE
 target_compile_options(storage_supervised_service_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
+add_dependencies(storage_supervised_service_test system_storage)
 add_test(
     NAME storage_supervised_service_test
     COMMAND storage_supervised_service_test $<TARGET_FILE:system_storage>
