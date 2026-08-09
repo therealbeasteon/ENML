@@ -3,6 +3,7 @@ add_subdirectory(unit/ipc)
 add_subdirectory(unit/service)
 add_subdirectory(unit/package)
 add_subdirectory(unit/app)
+add_subdirectory(unit/storage)
 
 add_subdirectory(integration/ipc)
 add_subdirectory(integration/rpc)
