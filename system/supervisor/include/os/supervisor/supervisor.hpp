@@ -45,6 +45,10 @@ struct ServiceDescriptorV1 final {
 struct ServiceLaunchConfig final {
     ServiceDescriptorV1 descriptor {};
     const char* executable_path {nullptr};
+    // Borrowed trusted directory handle retained by the launcher across service
+    // restarts. When >=0, the child receives only a duplicate at private fd 5.
+    // This is an internal service-construction mechanism, not application ABI.
+    int private_state_directory_fd {-1};
 };
 
 struct ServiceStatus final {
