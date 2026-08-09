@@ -6,7 +6,6 @@
 #include <utility>
 
 #include <poll.h>
-#include <unistd.h>
 
 #include <os/core/native_handle.hpp>
 #include <os/ipc/constants.hpp>
@@ -44,33 +43,31 @@ namespace {
 } // namespace
 
 int main() {
-    auto control = os::ipc::Channel::adopt(
+    auto control_result = os::ipc::Channel::adopt(
         os::core::NativeHandle{os::service::bootstrap_control_fd});
-    auto endpoint = os::ipc::Channel::adopt(
+    if (!control_result) return 10;
+    auto control = std::move(control_result).value();
+
+    auto endpoint_result = os::ipc::Channel::adopt(
         os::core::NativeHandle{os::service::service_endpoint_fd});
+    if (!endpoint_result) return 11;
+    auto endpoint = std::move(endpoint_result).value();
+
     os::core::NativeHandle state_directory{os::service::service_state_directory_fd};
-    if (!control.valid() || !endpoint.valid() || !state_directory.valid()) return 10;
+    if (!state_directory.valid()) return 12;
 
     std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
     auto bootstrap_result = os::service::receive_bootstrap_request(
         control, scratch, os::keys::key_service_id);
-    if (!bootstrap_result) return 11;
+    if (!bootstrap_result) return 13;
     const auto bootstrap = bootstrap_result.value();
 
-    auto self_pidfd = os::service::open_self_pidfd();
-    if (!self_pidfd) return 12;
-
+    // The service does not self-assert its own runtime identity. The Supervisor
+    // owns process identity and publishes external client mappings over this
+    // private control channel after READY. This IdentityRegistry starts empty
+    // for the same reason system.storage does: public callers become trusted
+    // only through supervisor-originated identity-control records.
     os::service::IdentityRegistry identities;
-    const os::service::ProcessIdentityRecord self_record{
-        .kernel = os::ipc::KernelPeerCredentials{
-            .process_id = static_cast<std::int64_t>(::getpid()),
-            .user_id = static_cast<std::uint32_t>(::getuid()),
-            .group_id = static_cast<std::uint32_t>(::getgid()),
-        },
-        .peer = bootstrap.record.identity,
-    };
-    auto registered = identities.register_process(self_record, std::move(self_pidfd).value());
-    if (!registered) return 13;
 
     // Host/CI-only provider. Its wrapping key and software root table are test
     // fixtures and must never be mistaken for production hardware security.
