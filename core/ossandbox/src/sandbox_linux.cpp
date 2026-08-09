@@ -198,11 +198,20 @@ namespace {
     const ApplicationSandboxHandlesV1& handles) noexcept {
 #if defined(SYS_landlock_create_ruleset) && defined(SYS_landlock_restrict_self)
     struct stat executable_info {};
-    struct stat data_info {};
-    if (handles.executable_fd < 0 || handles.private_data_directory_fd < 0 ||
+    if (handles.executable_fd < 0 ||
         ::fstat(handles.executable_fd, &executable_info) != 0 ||
-        ::fstat(handles.private_data_directory_fd, &data_info) != 0 ||
-        !S_ISREG(executable_info.st_mode) || !S_ISDIR(data_info.st_mode)) {
+        !S_ISREG(executable_info.st_mode)) {
+        return false;
+    }
+
+    struct stat data_info {};
+    if (!handles.brokered_storage) {
+        if (handles.private_data_directory_fd < 0 ||
+            ::fstat(handles.private_data_directory_fd, &data_info) != 0 ||
+            !S_ISDIR(data_info.st_mode)) {
+            return false;
+        }
+    } else if (handles.private_data_directory_fd >= 0) {
         return false;
     }
 
@@ -227,10 +236,12 @@ namespace {
         optional_landlock_rights();
 
     bool ok = add_landlock_fd_rule(ruleset_fd, handles.executable_fd, executable_read);
-    ok = ok && add_landlock_fd_rule(
-        ruleset_fd,
-        handles.private_data_directory_fd,
-        private_data_access);
+    if (!handles.brokered_storage) {
+        ok = ok && add_landlock_fd_rule(
+            ruleset_fd,
+            handles.private_data_directory_fd,
+            private_data_access);
+    }
     ok = ok && add_landlock_runtime_rules(ruleset_fd);
     const bool restricted = ok && restrict_with_landlock(ruleset_fd);
     (void)::close(ruleset_fd);
@@ -387,7 +398,9 @@ apply_application_before_exec(
     const ApplicationSandboxHandlesV1& handles,
     const SandboxPolicyV1& policy) noexcept {
     if (!policy.enabled) return {};
-    if (handles.executable_fd < 0 || handles.private_data_directory_fd < 0) {
+    if (handles.executable_fd < 0 ||
+        (!handles.brokered_storage && handles.private_data_directory_fd < 0) ||
+        (handles.brokered_storage && handles.private_data_directory_fd >= 0)) {
         return sandbox_error(os::core::errors::security::sandbox_apply_failed);
     }
     auto common = apply_common_before_exec(policy, 6U);
