@@ -7,7 +7,9 @@
 
 #include <sys/types.h>
 
+#include <os/app/bootstrap.hpp>
 #include <os/app/principal_store.hpp>
+#include <os/app/service_session.hpp>
 #include <os/core/identity.hpp>
 #include <os/core/native_handle.hpp>
 #include <os/core/result.hpp>
@@ -88,9 +90,10 @@ struct ApplicationInstanceInfo final {
 // Three-argument mode preserves the Storage-only M1/M2.2 launch contract.
 // Four-argument mode adds the M2.8 Key lifecycle policy publisher but keeps the
 // legacy single fixed Storage endpoint bootstrap.
-// Five-argument M2.9 mode requires Storage + Keys to share one ProcessAuthority
-// with a trusted ServiceBroker. The launched process receives both service
-// channels through bootstrap-v2 SCM_RIGHTS while retaining one PeerIdentity.
+// Five-argument M2.9+ mode requires Storage + Keys to share one ProcessAuthority
+// with a trusted ServiceBroker. Bootstrap v2 transfers initial service channels
+// by ServiceId. M2.10 keeps that same bootstrap channel open after READY as a
+// bounded runtime platform-service session for generation-bound reacquisition.
 class ApplicationManager final {
 public:
     ApplicationManager(
@@ -170,6 +173,9 @@ private:
     struct InstanceSlot final {
         bool occupied {false};
         ApplicationInstanceInfo info {};
+        os::ipc::Channel service_session {};
+        std::array<os::core::ServiceId, max_application_service_endpoints_v2> services {};
+        std::uint16_t service_count {0U};
     };
 
     os::package::PersistentPackageRegistry& packages_;
@@ -193,6 +199,14 @@ private:
     [[nodiscard]] bool broker_configuration_valid() const noexcept;
     [[nodiscard]] os::core::Result<void> release_instance_identity(
         os::core::ProcessId process) noexcept;
+
+    [[nodiscard]] bool service_allowed(
+        const InstanceSlot& slot,
+        os::core::ServiceId service) const noexcept;
+    [[nodiscard]] os::core::Result<void>
+    service_runtime_session_once(InstanceSlot& slot) noexcept;
+    [[nodiscard]] os::core::Result<void>
+    service_runtime_session_if_pending(InstanceSlot& slot) noexcept;
 
     [[nodiscard]] os::core::Result<void> ensure_storage_control() noexcept;
     [[nodiscard]] os::core::Result<void> publish_profile(ApplicationProfile& profile) noexcept;
