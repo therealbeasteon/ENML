@@ -2,6 +2,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <span>
 #include <utility>
@@ -236,8 +237,9 @@ int main() {
     auto docs_handle = std::move(docs_handle_result).value();
     assert(docs_handle.rights() == restricted_rights);
 
-    auto denied_create = docs_handle.create_directory(
-        os::storage::RelativePath::parse("blocked").value(), scratch);
+    auto blocked_path = os::storage::RelativePath::parse("blocked");
+    assert(blocked_path);
+    auto denied_create = docs_handle.create_directory(blocked_path.value(), scratch);
     assert(!denied_create);
     assert(denied_create.error().domain == os::core::ErrorDomain::storage);
     assert(denied_create.error().code == os::storage::errors::access_denied);
