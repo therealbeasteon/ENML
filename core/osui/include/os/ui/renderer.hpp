@@ -7,6 +7,7 @@
 #include <os/core/result.hpp>
 #include <os/ui/contour.hpp>
 #include <os/ui/design.hpp>
+#include <os/ui/text.hpp>
 #include <os/ui/tree.hpp>
 
 namespace os::ui {
@@ -34,7 +35,7 @@ enum class RenderContentKind : std::uint8_t {
 };
 
 // One command describes one visible styled semantic node. It deliberately
-// remains above concrete paint/GPU commands: no RGB values, shader handles,
+// remains above concrete paint/GPU commands: no RGB values, font paths,
 // glyph IDs, textures, physical pixels or vendor graphics API objects appear
 // here. Later renderer slices lower this bounded intent into concrete drawing.
 struct RenderCommand final {
@@ -48,6 +49,7 @@ struct RenderCommand final {
     ResolvedVisualStyle visual {};
     ResolvedContour contour {};
     TypographyMetrics typography {};
+    FontFallbackChain font_fallbacks {};
 
     // Semantic labels are not generally visible text. Until the public UI
     // content contract exists, only UiRole::text is promoted into visual_text.
