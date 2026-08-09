@@ -19,6 +19,7 @@ jobs:
         run: >-
           cmake --build --preset host-debug
           --target ui_semantic_tree_test ui_responsive_layout_test
+          ui_render_snapshot_test ui_collection_window_test ui_design_reflow_test
           --parallel 2
       - name: Test semantic UI gates
         run: ctest --preset host-debug --output-on-failure -L '^m3-ui$'
@@ -33,6 +34,7 @@ jobs:
         run: >-
           cmake --build --preset host-asan
           --target ui_semantic_tree_test ui_responsive_layout_test
+          ui_render_snapshot_test ui_collection_window_test ui_design_reflow_test
           --parallel 2
       - name: Test semantic UI gates with sanitizers
         run: ctest --preset host-asan --output-on-failure -L '^m3-ui$'
@@ -50,6 +52,7 @@ jobs:
         run: >-
           cmake --build build/m3-ui-clang
           --target ui_semantic_tree_test ui_responsive_layout_test
+          ui_render_snapshot_test ui_collection_window_test ui_design_reflow_test
           --parallel 2
       - name: Test semantic UI gates
         run: ctest --test-dir build/m3-ui-clang --output-on-failure -L '^m3-ui$'
@@ -66,6 +69,7 @@ jobs:
         run: >-
           cmake --build --preset host-debug
           --target ui_semantic_tree_test ui_responsive_layout_test
+          ui_render_snapshot_test ui_collection_window_test ui_design_reflow_test
           --parallel 2
       - name: Test semantic UI gates natively
         run: ctest --preset host-debug --output-on-failure -L '^m3-ui$'
