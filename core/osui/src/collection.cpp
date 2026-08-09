@@ -45,6 +45,12 @@ namespace {
     return false;
 }
 
+[[nodiscard]] constexpr bool data_snapshot_valid(
+    const CollectionDataSnapshot& snapshot) noexcept {
+    return snapshot.revision.value() != 0U &&
+        snapshot.item_count <= max_collection_items;
+}
+
 } // namespace
 
 os::core::Result<CollectionWindow> plan_collection_window(
@@ -132,6 +138,63 @@ os::core::Result<std::int32_t> collection_item_offset_q6(
         return ui_error(errors::invalid_collection);
     }
     return static_cast<std::int32_t>(offset);
+}
+
+os::core::Result<CollectionDataSnapshot> collection_data_snapshot(
+    CollectionDataSourceBackend backend) noexcept {
+    if (backend.snapshot == nullptr) {
+        return ui_error(errors::invalid_collection_source);
+    }
+
+    CollectionDataSnapshot snapshot {};
+    if (!backend.snapshot(backend.context, snapshot) || !data_snapshot_valid(snapshot)) {
+        return ui_error(errors::invalid_collection_source);
+    }
+    return snapshot;
+}
+
+os::core::Result<CollectionRecycleRequest> build_collection_recycle_request(
+    const CollectionWindow& window,
+    const CollectionDataSnapshot& snapshot,
+    CollectionDataSourceBackend backend) noexcept {
+    if (!window_valid_for_recycling(window) || !data_snapshot_valid(snapshot) ||
+        backend.item_key_at == nullptr) {
+        return ui_error(errors::invalid_collection_source);
+    }
+
+    const std::uint64_t window_end =
+        static_cast<std::uint64_t>(window.first_index) + window.count;
+    if (window_end > snapshot.item_count) {
+        return ui_error(errors::invalid_collection_source);
+    }
+
+    CollectionRecycleRequest request {};
+    request.window = window;
+    request.key_count = window.count;
+
+    for (std::uint32_t offset = 0U; offset < window.count; ++offset) {
+        const std::size_t key_index = static_cast<std::size_t>(offset);
+        const std::uint32_t item_index = window.first_index + offset;
+        CollectionItemKey key {};
+        if (!backend.item_key_at(
+                backend.context,
+                snapshot.revision,
+                item_index,
+                key)) {
+            return ui_error(errors::stale_collection_snapshot);
+        }
+        if (key.value() == 0U) {
+            return ui_error(errors::invalid_collection_source);
+        }
+        for (std::size_t earlier = 0U; earlier < key_index; ++earlier) {
+            if (request.item_keys[earlier] == key) {
+                return ui_error(errors::invalid_collection_source);
+            }
+        }
+        request.item_keys[key_index] = key;
+    }
+
+    return request;
 }
 
 os::core::Result<CollectionRecyclePlan> CollectionRecycler::bind(
