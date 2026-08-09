@@ -25,6 +25,11 @@ inline constexpr std::uint32_t too_large = 15U;
 inline constexpr std::uint32_t invalid_offset = 16U;
 inline constexpr std::uint32_t invalid_options = 17U;
 inline constexpr std::uint32_t invalid_root = 18U;
+inline constexpr std::uint32_t invalid_rights = 19U;
+inline constexpr std::uint32_t object_limit = 20U;
+inline constexpr std::uint32_t root_not_registered = 21U;
+inline constexpr std::uint32_t root_already_registered = 22U;
+inline constexpr std::uint32_t invalid_object_type = 23U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error storage_error(std::uint32_t code) noexcept {
