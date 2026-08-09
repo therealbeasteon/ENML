@@ -1,6 +1,7 @@
 add_library(osapp STATIC
     src/bootstrap.cpp
     src/bootstrap_v2.cpp
+    src/service_session.cpp
     src/principal_store_linux.cpp
 )
 
