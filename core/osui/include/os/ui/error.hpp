@@ -41,6 +41,7 @@ inline constexpr std::uint32_t invalid_raster_command = 31U;
 inline constexpr std::uint32_t font_provider_unavailable = 32U;
 inline constexpr std::uint32_t font_provider_failed = 33U;
 inline constexpr std::uint32_t invalid_font_face = 34U;
+inline constexpr std::uint32_t invalid_motion_timeline = 35U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
