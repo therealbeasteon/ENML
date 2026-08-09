@@ -16,7 +16,7 @@ application state/controller
         |
         +--> logical responsive layout
         |
-        +--> collection virtualization + stable item keys
+        +--> collection virtualization + revisioned stable item keys
         |
         +--> immutable RendererSnapshot + bounded RendererDelta
         |
@@ -35,7 +35,7 @@ application state/controller
         +--> resolved optical/depth/motion intent
         +--> quality + renderer-capability fallback
         |
-        +--> renderer-owned bounded shaping contract
+        +--> renderer-owned bounded shaping backend seam
         |       +--> UTF-8 cluster validation
         |       +--> font/direction runs
         |       +--> line partitioning
@@ -112,7 +112,7 @@ Renderer capability is separate from quality and accessibility preference. `Rend
 
 ## Bounded text shaping and measurement contract
 
-ENML does not yet claim a production text shaper. The current work establishes the fixed-capacity contract a renderer-owned shaper must satisfy before its output can be trusted.
+ENML does not yet claim a production text shaper. The current work establishes the fixed-capacity contract and backend seam a renderer-owned shaper must satisfy before its output can be trusted.
 
 Font selection remains semantic. `FontFamilyRole` currently distinguishes interface, display, international, symbols and monospace families. A theme may map display/interface roles to coordinated cuts of one ENML family; applications never choose filesystem paths, vendor font names or renderer font handles.
 
@@ -134,9 +134,11 @@ For one semantic text value, the shaping boundary is bounded to:
 - complete bounded partitioning of glyphs by runs and lines;
 - logical advance/offset bounds and semantic line-height consistency.
 
+`TextShaperBackend` is a renderer-owned, no-allocation callback seam. `shape_text()` refuses an absent backend, reports backend failure explicitly, and validates successful output before returning it to layout/rendering code. This allows a future HarfBuzz-like or native shaper and platform font provider to live behind the renderer boundary without exposing font files, native font handles or unchecked glyph data to applications.
+
 `measure_shaped_text()` derives width from validated glyph advances and height from the semantic line-height contract. It deliberately does not estimate text width from byte counts or Unicode code-point counts. This lets later large-text/reflow work use real shaping metrics once platform font assets and a production shaping backend are connected.
 
-The remaining text work is actual font-provider/shaper integration, paragraph bidi resolution, line breaking and layout integration. Glyph IDs remain renderer-private and do not enter `RenderCommand` or app UI ABI.
+The remaining text work is actual font-provider/shaper implementation, paragraph bidi resolution, line breaking and layout integration. Glyph IDs remain renderer-private and do not enter `RenderCommand` or app UI ABI.
 
 ## Logical geometry and reflow
 
@@ -148,7 +150,7 @@ The default 600dp dual-pane breakpoint remains provisional policy evidence, not 
 
 Text design metrics currently support 100% through 300% scaling. Tests verify that large text increases row extent and collection reflow while stable semantic node identity is preserved during phone/tablet-like recomposition.
 
-## Bounded collection virtualization and stable identity
+## Bounded collection virtualization, identity and revisioned source snapshots
 
 `plan_collection_window()` provides a fixed-capacity virtualization contract for large logical collections without materializing unbounded semantic children.
 
@@ -161,11 +163,13 @@ The current window contract:
 - keeps per-item materialized coordinates near the viewport rather than requiring enormous node geometry;
 - rejects overscroll, impossible viewports and windows that would exceed the materialized budget.
 
-`CollectionRecycler` owns a fixed pool of materialized child slots. The original window-only binding remains available for index-stable collections, but M3.2 now also has strong 64-bit `CollectionItemKey` identity separate from collection index.
+`CollectionRecycler` owns a fixed pool of materialized child slots. The original window-only binding remains available for index-stable collections, but M3.2 also has strong 64-bit `CollectionItemKey` identity separate from collection index.
 
 A keyed recycle request supplies one non-zero unique key for each item in the current materialized window. The recycler retains a slot by key even when insertion/removal/reordering changes that item's logical index. New keys take the lowest free slot deterministically. This lets a higher UI layer keep one semantic `UiNodeId` attached to a recycler slot without confusing item identity with current list position.
 
-A later data-source/mutation protocol still needs to define how applications publish item content, keys and changes across the eventual UI/service boundary. The identity/recycling invariant now exists before that public protocol is frozen.
+M3.2 now also has an in-process revisioned data-source seam. `CollectionDataSnapshot` captures a non-zero strong `CollectionRevision` plus bounded item count. Every stable-key lookup for a materialization pass carries that captured revision. A source that has mutated must reject the old revision, and `build_collection_recycle_request()` returns `stale_collection_snapshot` rather than mixing keys from two logical collection states. Zero keys, duplicate keys, impossible counts and malformed source callbacks are rejected before recycler binding.
+
+This contract intentionally remains renderer/UI-internal. Applications do not receive raw callbacks or implementation-owned container addresses. A later public UI/OSIDL protocol can publish item content and change notifications above the now-defined invariants: bounded snapshots, stable non-zero item keys, explicit revision advance and deterministic recycler identity.
 
 ## Focus and actions
 
@@ -219,7 +223,7 @@ M3.2 does not yet include:
 - a production renderer-owned shaping/font-provider implementation;
 - paragraph bidi resolution and line breaking;
 - scroll physics;
-- collection data-source/mutation protocol above stable keys;
+- collection item-content/change-notification protocol above revisioned stable keys;
 - hardware input service/router;
 - accessibility service IPC;
 - semantic tree serialization/OSIDL;
@@ -228,4 +232,4 @@ M3.2 does not yet include:
 - path tessellation or GPU shader implementation;
 - animation scheduler tied to compositor frame deadlines.
 
-The next M3.2 implementation slice should connect a real bounded text-shaping/font-provider backend to the now-validated shape contract, then build the collection data-source/mutation protocol and an opaque-first bounded 2D material rasterizer before enabling live blur/translucency. Hardware-specific graphics work remains behind the private renderer/display layer.
+The next M3.2 implementation slice should connect a real bounded text-shaping/font-provider backend to the validated shaper seam and continue the collection content/change protocol above the revisioned data-source contract, then build an opaque-first bounded 2D material rasterizer before enabling live blur/translucency. Hardware-specific graphics work remains behind the private renderer/display layer.
