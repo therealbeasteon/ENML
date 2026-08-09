@@ -14,6 +14,7 @@
 #include <os/keys/hierarchy.hpp>
 #include <os/keys/persistence.hpp>
 #include <os/keys/policy.hpp>
+#include <os/keys/product_store.hpp>
 #include <os/keys/random_id_source.hpp>
 #include <os/keys/service.hpp>
 #include <os/keys/testing/openssl_provider.hpp>
@@ -91,9 +92,9 @@ int main() {
     auto persistent = std::move(persistent_result).value();
 
     os::keys::ApplicationKeyPolicy policy;
-    os::keys::PolicyKeyStore gated_store{persistent, policy};
+    os::keys::HierarchicalPolicyKeyStore product_store{persistent, hierarchy, policy};
     os::keys::RandomKeyIdSource ids;
-    os::keys::KeyService service{endpoint, identities, gated_store, ids};
+    os::keys::KeyService service{endpoint, identities, product_store, ids};
     os::keys::KeyControlRouter router{policy, hierarchy, service, identities};
 
     auto ready = os::service::send_ready(control, bootstrap.request_header);
