@@ -21,6 +21,20 @@ namespace {
         static_cast<std::int64_t>(y) < bottom;
 }
 
+[[nodiscard]] constexpr TrustedPresentation trusted_presentation_for_input(
+    SurfaceRole role) noexcept {
+    switch (role) {
+    case SurfaceRole::application:
+    case SurfaceRole::popup:
+        return TrustedPresentation::none;
+    case SurfaceRole::system_chrome:
+        return TrustedPresentation::system_chrome;
+    case SurfaceRole::secure_system:
+        return TrustedPresentation::secure_system;
+    }
+    return TrustedPresentation::none;
+}
+
 } // namespace
 
 os::core::Result<SurfaceInputHit> Compositor::hit_test_input(
@@ -58,6 +72,30 @@ os::core::Result<SurfaceInputHit> Compositor::hit_test_input(
     }
 
     return display_error(errors::unknown_surface);
+}
+
+os::core::Result<void> Compositor::validate_input_hit(
+    const SurfaceInputHit& hit) const noexcept {
+    if (!valid_) return display_error(errors::invalid_configuration);
+    if (!hit.valid()) return display_error(errors::stale_input_hit);
+
+    const Slot* slot = find_slot(hit.surface);
+    if (slot == nullptr || slot->descriptor.owner != hit.owner ||
+        slot->descriptor.role != hit.role ||
+        slot->descriptor.visibility != SurfaceVisibility::visible ||
+        !slot->descriptor.accepts_input || !slot->has_frame ||
+        slot->frame_sequence != hit.frame_sequence ||
+        slot->descriptor.bounds.width != hit.surface_size.width ||
+        slot->descriptor.bounds.height != hit.surface_size.height ||
+        trusted_presentation_for_input(slot->descriptor.role) != hit.trusted_presentation) {
+        return display_error(errors::stale_input_hit);
+    }
+
+    // local_x/local_y were captured relative to the hit surface. Size equality
+    // above plus SurfaceInputHit::valid() proves they remain inside the same
+    // presented surface-local coordinate space. set_bounds() clears has_frame,
+    // so a move/resize cannot preserve an old input hit accidentally.
+    return {};
 }
 
 } // namespace os::display
