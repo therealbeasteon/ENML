@@ -24,7 +24,7 @@ jobs:
           ui_design_reflow_test ui_renderer_command_test ui_text_layout_test
           ui_paragraph_layout_test ui_raster_test ui_contour_aa_test ui_glyph_raster_test
           ui_text_command_raster_test ui_input_transform_test ui_input_routing_test
-          ui_motion_timeline_test
+          ui_accessibility_bridge_test ui_motion_timeline_test
           --parallel 2
       - name: Test semantic UI gates
         run: ctest --preset host-debug --output-on-failure -L '^m3-ui$'
@@ -43,7 +43,7 @@ jobs:
           ui_design_reflow_test ui_renderer_command_test ui_text_layout_test
           ui_paragraph_layout_test ui_raster_test ui_contour_aa_test ui_glyph_raster_test
           ui_text_command_raster_test ui_input_transform_test ui_input_routing_test
-          ui_motion_timeline_test
+          ui_accessibility_bridge_test ui_motion_timeline_test
           --parallel 2
       - name: Test semantic UI gates with sanitizers
         run: ctest --preset host-asan --output-on-failure -L '^m3-ui$'
@@ -65,7 +65,7 @@ jobs:
           ui_design_reflow_test ui_renderer_command_test ui_text_layout_test
           ui_paragraph_layout_test ui_raster_test ui_contour_aa_test ui_glyph_raster_test
           ui_text_command_raster_test ui_input_transform_test ui_input_routing_test
-          ui_motion_timeline_test
+          ui_accessibility_bridge_test ui_motion_timeline_test
           --parallel 2
       - name: Test semantic UI gates
         run: ctest --test-dir build/m3-ui-clang --output-on-failure -L '^m3-ui$'
@@ -86,7 +86,7 @@ jobs:
           ui_design_reflow_test ui_renderer_command_test ui_text_layout_test
           ui_paragraph_layout_test ui_raster_test ui_contour_aa_test ui_glyph_raster_test
           ui_text_command_raster_test ui_input_transform_test ui_input_routing_test
-          ui_motion_timeline_test
+          ui_accessibility_bridge_test ui_motion_timeline_test
           --parallel 2
       - name: Test semantic UI gates natively
         run: ctest --preset host-debug --output-on-failure -L '^m3-ui$'
