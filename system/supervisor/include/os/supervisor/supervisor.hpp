@@ -101,6 +101,10 @@ public:
     [[nodiscard]] os::core::Result<os::service::ProcessIdentityRecord>
     lookup_process(pid_t native_pid) const noexcept;
 
+    [[nodiscard]] os::core::ServiceId service_id() const noexcept {
+        return config_.descriptor.service_id;
+    }
+
     [[nodiscard]] ProcessAuthority& process_authority() noexcept { return *authority_; }
     [[nodiscard]] const ProcessAuthority& process_authority() const noexcept { return *authority_; }
 
