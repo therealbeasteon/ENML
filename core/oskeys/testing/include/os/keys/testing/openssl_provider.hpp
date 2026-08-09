@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <climits>
 #include <cstddef>
 #include <cstdint>
 
