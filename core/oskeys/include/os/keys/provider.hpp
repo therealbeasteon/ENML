@@ -1,6 +1,10 @@
 #pragma once
 
+#include <cstddef>
+
 #include <os/core/result.hpp>
+#include <os/core/span.hpp>
+#include <os/keys/crypto.hpp>
 #include <os/keys/key.hpp>
 
 namespace os::keys {
@@ -15,6 +19,32 @@ public:
 
     [[nodiscard]] virtual os::core::Result<ProviderKeyReference>
     generate(KeyPurpose purpose) noexcept = 0;
+
+    // The provider generates a fresh nonce for every seal operation. ENML
+    // passes canonical envelope metadata separately from caller AAD so the
+    // provider can authenticate both without requiring an intermediate heap
+    // concatenation buffer.
+    [[nodiscard]] virtual os::core::Result<std::size_t>
+    seal(
+        ProviderKeyReference key,
+        CryptoProfileId profile,
+        os::core::ByteSpan envelope_aad,
+        os::core::ByteSpan caller_aad,
+        os::core::ByteSpan plaintext,
+        os::core::MutableByteSpan ciphertext,
+        AeadNonce& nonce,
+        AeadTag& tag) noexcept = 0;
+
+    [[nodiscard]] virtual os::core::Result<std::size_t>
+    open(
+        ProviderKeyReference key,
+        CryptoProfileId profile,
+        os::core::ByteSpan envelope_aad,
+        os::core::ByteSpan caller_aad,
+        const AeadNonce& nonce,
+        const AeadTag& tag,
+        os::core::ByteSpan ciphertext,
+        os::core::MutableByteSpan plaintext) noexcept = 0;
 
     [[nodiscard]] virtual os::core::Result<void>
     destroy(ProviderKeyReference key) noexcept = 0;
