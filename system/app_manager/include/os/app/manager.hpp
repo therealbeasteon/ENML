@@ -134,6 +134,8 @@ private:
 
     struct ApplicationProfile final {
         bool occupied {false};
+        bool storage_enabled {false};
+        bool storage_published {false};
         os::package::ApplicationIdentity application {};
         os::core::UserId user {};
         os::core::PrincipalId principal {};
@@ -160,6 +162,7 @@ private:
 
     [[nodiscard]] os::core::Result<void> ensure_storage_control() noexcept;
     [[nodiscard]] os::core::Result<void> publish_profile(ApplicationProfile& profile) noexcept;
+    [[nodiscard]] os::core::Result<void> revoke_profile(ApplicationProfile& profile) noexcept;
     [[nodiscard]] os::core::Result<void> republish_profiles_if_needed() noexcept;
 
     [[nodiscard]] LaunchTarget*

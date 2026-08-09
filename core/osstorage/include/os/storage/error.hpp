@@ -30,6 +30,7 @@ inline constexpr std::uint32_t object_limit = 20U;
 inline constexpr std::uint32_t root_not_registered = 21U;
 inline constexpr std::uint32_t root_already_registered = 22U;
 inline constexpr std::uint32_t invalid_object_type = 23U;
+inline constexpr std::uint32_t principal_object_limit = 24U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error storage_error(std::uint32_t code) noexcept {

@@ -363,6 +363,13 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
 
     auto storage_policy = republish_profiles_if_needed();
     if (!storage_policy) return storage_policy.error();
+    // An uninstall disables and revokes this retained profile without deleting
+    // its private data. A later same-signer reinstall becomes launch-eligible
+    // again only after this explicit fresh publication; old bearer endpoints
+    // remain dead and are never resurrected.
+    auto current_profile_policy = publish_profile(*profile);
+    if (!current_profile_policy) return current_profile_policy.error();
+
     auto storage_connection_result = supervisor_.connect();
     if (!storage_connection_result) return storage_connection_result.error();
     auto storage_connection = std::move(storage_connection_result).value();
