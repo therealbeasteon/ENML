@@ -1,12 +1,26 @@
 #include <os/ui/collection.hpp>
 
 #include <algorithm>
+#include <cstddef>
 #include <cstdint>
 #include <limits>
 
 #include <os/ui/error.hpp>
 
 namespace os::ui {
+namespace {
+
+[[nodiscard]] bool window_valid_for_recycling(const CollectionWindow& window) noexcept {
+    if (window.count > max_materialized_collection_items) return false;
+    if (window.first_index > max_collection_items) return false;
+    const std::uint64_t end = static_cast<std::uint64_t>(window.first_index) + window.count;
+    if (end > max_collection_items) return false;
+    if (window.count == 0U) return true;
+    return window.item_extent_q6 != 0U &&
+        window.item_extent_q6 <= max_logical_dimension_q6;
+}
+
+} // namespace
 
 os::core::Result<CollectionWindow> plan_collection_window(
     const CollectionWindowRequest& request) noexcept {
@@ -93,6 +107,68 @@ os::core::Result<std::int32_t> collection_item_offset_q6(
         return ui_error(errors::invalid_collection);
     }
     return static_cast<std::int32_t>(offset);
+}
+
+os::core::Result<CollectionRecyclePlan> CollectionRecycler::bind(
+    const CollectionWindow& window) noexcept {
+    if (!window_valid_for_recycling(window)) {
+        return ui_error(errors::invalid_collection);
+    }
+
+    const std::uint64_t first = window.first_index;
+    const std::uint64_t end = first + window.count;
+    for (auto& slot : slots_) {
+        if (!slot.occupied) continue;
+        const std::uint64_t item = slot.item_index;
+        if (item < first || item >= end) slot = Slot{};
+    }
+
+    CollectionRecyclePlan plan{};
+    plan.count = window.count;
+    for (std::uint32_t offset = 0U; offset < window.count; ++offset) {
+        const std::uint32_t item_index = window.first_index + offset;
+        std::size_t slot_index = slots_.size();
+        bool retained = false;
+
+        for (std::size_t index = 0U; index < slots_.size(); ++index) {
+            if (slots_[index].occupied && slots_[index].item_index == item_index) {
+                slot_index = index;
+                retained = true;
+                break;
+            }
+        }
+        if (!retained) {
+            for (std::size_t index = 0U; index < slots_.size(); ++index) {
+                if (!slots_[index].occupied) {
+                    slot_index = index;
+                    slots_[index] = Slot{.occupied = true, .item_index = item_index};
+                    break;
+                }
+            }
+        }
+        if (slot_index == slots_.size()) {
+            return ui_error(errors::collection_window_limit);
+        }
+
+        plan.bindings[offset] = CollectionRecycleBinding{
+            .slot = static_cast<std::uint16_t>(slot_index),
+            .item_index = item_index,
+            .retained = retained,
+        };
+    }
+    return plan;
+}
+
+void CollectionRecycler::reset() noexcept {
+    for (auto& slot : slots_) slot = Slot{};
+}
+
+std::size_t CollectionRecycler::active_count() const noexcept {
+    std::size_t count = 0U;
+    for (const auto& slot : slots_) {
+        if (slot.occupied) ++count;
+    }
+    return count;
 }
 
 } // namespace os::ui
