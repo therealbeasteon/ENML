@@ -5,6 +5,7 @@ add_library(osui STATIC
     src/design.cpp
     src/collection.cpp
     src/text.cpp
+    src/paragraph.cpp
     src/renderer.cpp
     src/raster.cpp
     src/glyph_raster.cpp
