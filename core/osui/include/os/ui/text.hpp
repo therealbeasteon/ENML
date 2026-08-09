@@ -35,6 +35,37 @@ struct ResolvedTextStyle final {
     FontFallbackChain fallback {};
 };
 
+// Concrete font assets stay renderer-private. The platform font provider maps
+// semantic family roles to opaque face IDs plus bounded metrics; no path,
+// filename, vendor family string or native library handle crosses this seam.
+struct FontFaceIdTag;
+using FontFaceId = os::core::StrongId<FontFaceIdTag, std::uint32_t>;
+
+struct FontFaceDescriptor final {
+    FontFaceId id {};
+    FontFamilyRole family {FontFamilyRole::interface};
+    std::uint16_t units_per_em {0U};
+    std::uint16_t weight_min {0U};
+    std::uint16_t weight_max {0U};
+};
+
+struct FontFaceSet final {
+    std::array<FontFaceDescriptor, max_font_fallback_families> faces {};
+    std::size_t count {0U};
+
+    [[nodiscard]] const FontFaceDescriptor* find(FontFamilyRole family) const noexcept;
+};
+
+using ResolveFontFaceBackendFn = bool (*)(
+    void* context,
+    FontFamilyRole family,
+    FontFaceDescriptor& output) noexcept;
+
+struct FontProviderBackend final {
+    void* context {nullptr};
+    ResolveFontFaceBackendFn resolve {nullptr};
+};
+
 // These renderer-private bounds intentionally sit above any concrete shaping
 // library. A future HarfBuzz-like or platform-native backend may produce glyph
 // IDs internally, but applications never submit glyph IDs or font handles.
@@ -108,6 +139,15 @@ struct TextShaperBackend final {
 [[nodiscard]] os::core::Result<ResolvedTextStyle> resolve_text_style(
     TypographyRole role,
     std::uint16_t scale_percent = 100U) noexcept;
+
+// Resolves exactly the semantic families in a fallback chain through a
+// renderer-owned provider. A provider must return a bounded, nonzero opaque
+// face ID and sane font metrics for every requested role. It may map multiple
+// semantic roles to coordinated assets while keeping implementation details
+// private to the renderer.
+[[nodiscard]] os::core::Result<FontFaceSet> resolve_font_faces(
+    const FontFallbackChain& fallback,
+    FontProviderBackend provider) noexcept;
 
 // Validates bounded output from a renderer-owned shaping backend against the
 // original UTF-8 text and semantic fallback policy. This does not pretend that
