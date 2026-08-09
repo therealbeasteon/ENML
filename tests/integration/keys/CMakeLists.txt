@@ -8,6 +8,16 @@ target_compile_options(key_service_identity_test PRIVATE
 )
 add_test(NAME key_service_identity_test COMMAND key_service_identity_test)
 
+add_executable(key_control_policy_test key_control_policy_test.cpp)
+target_link_libraries(key_control_policy_test PRIVATE
+    emnl::key_service
+    emnl_warnings
+)
+target_compile_options(key_control_policy_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME key_control_policy_test COMMAND key_control_policy_test)
+
 if(EMNL_BUILD_OPENSSL_TEST_PROVIDER)
     add_executable(key_service_aead_test key_service_aead_test.cpp)
     target_link_libraries(key_service_aead_test PRIVATE
