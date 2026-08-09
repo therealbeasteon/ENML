@@ -19,15 +19,16 @@ jobs:
           sudo apt-get install -y libssl-dev
       - name: Configure
         run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
-      - name: Build key foundation, hierarchy, policy, control, AEAD and persistence gates
+      - name: Build key foundation, hierarchy, policy, product and persistence gates
         run: >-
           cmake --build --preset host-debug
           --target key_registry_test key_random_id_source_test key_hierarchy_test key_policy_test
           key_control_policy_test key_service_identity_test key_service_aead_test
           key_provider_persistence_test key_registry_persistence_test
           key_service_persistence_restart_test key_service_rpc_aead_test
+          key_service_supervisor_integration_test app_manager_key_policy_integration_test
           --parallel 2
-      - name: Test key foundation, hierarchy, policy, control, AEAD and persistence gates
+      - name: Test key foundation, hierarchy, policy, product and persistence gates
         run: ctest --preset host-debug --output-on-failure -R '^key_'
 
   keys-clang:
@@ -44,15 +45,16 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
           -DCMAKE_CXX_COMPILER=clang++
-      - name: Build key foundation, hierarchy, policy, control, AEAD and persistence gates
+      - name: Build key foundation, hierarchy, policy, product and persistence gates
         run: >-
           cmake --build build/m2-keys-clang
           --target key_registry_test key_random_id_source_test key_hierarchy_test key_policy_test
           key_control_policy_test key_service_identity_test key_service_aead_test
           key_provider_persistence_test key_registry_persistence_test
           key_service_persistence_restart_test key_service_rpc_aead_test
+          key_service_supervisor_integration_test app_manager_key_policy_integration_test
           --parallel 2
-      - name: Test key foundation, hierarchy, policy, control, AEAD and persistence gates
+      - name: Test key foundation, hierarchy, policy, product and persistence gates
         run: ctest --test-dir build/m2-keys-clang --output-on-failure -R '^key_'
 
   keys-arm64-native:
@@ -67,13 +69,14 @@ jobs:
           sudo apt-get install -y libssl-dev
       - name: Configure
         run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
-      - name: Build key foundation, hierarchy, policy, control, AEAD and persistence gates natively
+      - name: Build key foundation, hierarchy, policy, product and persistence gates natively
         run: >-
           cmake --build --preset host-debug
           --target key_registry_test key_random_id_source_test key_hierarchy_test key_policy_test
           key_control_policy_test key_service_identity_test key_service_aead_test
           key_provider_persistence_test key_registry_persistence_test
           key_service_persistence_restart_test key_service_rpc_aead_test
+          key_service_supervisor_integration_test app_manager_key_policy_integration_test
           --parallel 2
-      - name: Test key foundation, hierarchy, policy, control, AEAD and persistence gates natively
+      - name: Test key foundation, hierarchy, policy, product and persistence gates natively
         run: ctest --preset host-debug --output-on-failure -R '^key_'
