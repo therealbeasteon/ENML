@@ -20,10 +20,23 @@ enum class VisualQualityTier : std::uint8_t {
     full = 3U,
 };
 
+// Device/renderer capability is distinct from a user accessibility preference
+// and from a temporary quality/power budget. A renderer may lack live backdrop
+// filtering or spatial animation entirely while still preserving the same ENML
+// semantic hierarchy, contour family and state language.
+struct RenderCapabilities final {
+    bool alpha_compositing {true};
+    bool live_backdrop {true};
+    bool spatial_motion {true};
+    std::uint32_t max_backdrop_blur_q6 {max_logical_dimension_q6};
+    std::uint32_t max_depth_blur_q6 {max_logical_dimension_q6};
+};
+
 struct RenderBuildOptions final {
     VisualPreferences preferences {};
     std::uint16_t text_scale_percent {100U};
     VisualQualityTier quality {VisualQualityTier::balanced};
+    RenderCapabilities capabilities {};
 };
 
 enum class RenderContentKind : std::uint8_t {
