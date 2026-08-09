@@ -27,6 +27,8 @@ int main() {
     constexpr std::string_view plaintext_text = "provider restart persistence proof";
     constexpr std::string_view header_text = "EKEY-header-fixture";
     constexpr std::string_view caller_aad_text = "principal:70;object:persistent";
+    constexpr std::string_view binding_text =
+        "owner=principal70;key=001122;version=1;rights=all";
 
     os::keys::testing::OpenSslTestKeyProvider first_provider;
     auto generated = first_provider.generate(purpose);
@@ -49,7 +51,7 @@ int main() {
 
     std::array<std::byte, os::keys::max_persistent_provider_blob_bytes> persistent_blob{};
     auto persisted = first_provider.persist_reference(
-        generated.value(), purpose, persistent_blob);
+        generated.value(), purpose, as_bytes(binding_text), persistent_blob);
     assert(persisted);
     assert(persisted.value() > 32U);
     assert(persisted.value() <= persistent_blob.size());
@@ -60,6 +62,7 @@ int main() {
     os::keys::testing::OpenSslTestKeyProvider restarted_provider;
     auto restored = restarted_provider.restore_reference(
         purpose,
+        as_bytes(binding_text),
         {persistent_blob.data(), persisted.value()});
     assert(restored);
     assert(restored.value().valid());
@@ -81,10 +84,19 @@ int main() {
         plaintext_output.begin() + static_cast<std::ptrdiff_t>(opened.value()),
         as_bytes(plaintext_text).begin()));
 
+    auto wrong_binding = restarted_provider.restore_reference(
+        purpose,
+        as_bytes("owner=attacker;key=001122;version=1;rights=all"),
+        {persistent_blob.data(), persisted.value()});
+    assert(!wrong_binding);
+    assert(wrong_binding.error() ==
+        os::keys::key_error(os::keys::errors::authentication_failed));
+
     auto tampered_blob = persistent_blob;
     tampered_blob[persisted.value() - 1U] ^= std::byte{0x01};
     auto tampered_restore = restarted_provider.restore_reference(
         purpose,
+        as_bytes(binding_text),
         {tampered_blob.data(), persisted.value()});
     assert(!tampered_restore);
     assert(tampered_restore.error() ==
@@ -92,6 +104,7 @@ int main() {
 
     auto truncated_restore = restarted_provider.restore_reference(
         purpose,
+        as_bytes(binding_text),
         {persistent_blob.data(), persisted.value() - 1U});
     assert(!truncated_restore);
     assert(truncated_restore.error() ==
@@ -99,7 +112,7 @@ int main() {
 
     assert(first_provider.destroy(generated.value()));
     auto persist_destroyed = first_provider.persist_reference(
-        generated.value(), purpose, persistent_blob);
+        generated.value(), purpose, as_bytes(binding_text), persistent_blob);
     assert(!persist_destroyed);
     assert(persist_destroyed.error() ==
         os::keys::key_error(os::keys::errors::provider_failure));
