@@ -4,6 +4,7 @@ add_library(osui STATIC
     src/layout.cpp
     src/design.cpp
     src/collection.cpp
+    src/collection_content.cpp
     src/collection_changes.cpp
     src/text.cpp
     src/paragraph.cpp
