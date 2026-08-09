@@ -568,6 +568,15 @@ ApplicationManager::launch(const os::package::PackageId& package_id, os::core::U
 
     free_instance->occupied = true;
     free_instance->info = info;
+    if (broker_mode) {
+        // Bootstrap-v2 READY transitions fd 3 from one-shot initialization into
+        // the M2.10 long-lived platform-service session. Retain only the parent
+        // endpoint and the trusted service set that was actually bootstrapped.
+        free_instance->service_session = std::move(bootstrap_pair[0]);
+        free_instance->services[0] = os::storage::storage_service_id;
+        free_instance->services[1] = os::keys::key_service_id;
+        free_instance->service_count = 2U;
+    }
     return info;
 }
 
@@ -593,6 +602,14 @@ os::core::Result<void> ApplicationManager::maintain() noexcept {
 
     for (auto& slot : instances_) {
         if (!slot.occupied) continue;
+
+        // Service lifecycle/policy reconciliation above happens first. A
+        // blocked application reacquisition therefore sees only the current
+        // ready generation and freshly-republished policy, never an endpoint to
+        // a half-initialized replacement service.
+        auto session = service_runtime_session_if_pending(slot);
+        if (!session) return session.error();
+
         int status = 0;
         pid_t result = -1;
         do {
