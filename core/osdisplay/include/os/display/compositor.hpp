@@ -38,6 +38,13 @@ public:
         SurfaceId surface,
         SurfaceVisibility visibility) noexcept;
 
+    // Window/application stack authority belongs to trusted system UI. A
+    // normal app can update its own pixels and visibility, but cannot promote
+    // its root/popup group above another application by choosing a z value.
+    [[nodiscard]] os::core::Result<void> activate_application(
+        os::core::PeerIdentity caller,
+        SurfaceId application_surface) noexcept;
+
     [[nodiscard]] os::core::Result<FrameReceipt> submit_frame(
         os::core::PeerIdentity caller,
         const FrameSubmission& submission,
@@ -63,6 +70,7 @@ private:
         bool occupied {false};
         SurfaceDescriptor descriptor {};
         std::uint64_t creation_serial {0U};
+        std::uint64_t stack_serial {0U};
         std::uint64_t frame_sequence {0U};
         std::uint8_t buffer_slot {0U};
         bool has_frame {false};
@@ -78,6 +86,8 @@ private:
     [[nodiscard]] bool parent_valid(
         const os::core::PeerIdentity& owner,
         const CreateSurfaceRequest& request) const noexcept;
+    [[nodiscard]] bool process_has_application_surface(
+        os::core::ProcessId process) const noexcept;
     [[nodiscard]] FrameDeadline deadline_after(std::uint64_t now_ns) const noexcept;
     [[nodiscard]] Slot* find_slot(SurfaceId surface) noexcept;
     [[nodiscard]] const Slot* find_slot(SurfaceId surface) const noexcept;
@@ -90,6 +100,7 @@ private:
     std::array<Slot, max_surfaces> slots_ {};
     std::uint64_t next_surface_id_ {1U};
     std::uint64_t next_creation_serial_ {1U};
+    std::uint64_t next_stack_serial_ {1U};
     std::size_t surface_count_ {0U};
     bool valid_ {false};
 };
