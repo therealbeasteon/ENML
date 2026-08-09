@@ -54,6 +54,10 @@ inline constexpr std::uint32_t collection_change_source_failed = 44U;
 inline constexpr std::uint32_t font_line_metrics_unavailable = 45U;
 inline constexpr std::uint32_t font_line_metrics_failed = 46U;
 inline constexpr std::uint32_t invalid_font_line_metrics = 47U;
+inline constexpr std::uint32_t invalid_input_snapshot = 48U;
+inline constexpr std::uint32_t invalid_input_point = 49U;
+inline constexpr std::uint32_t invalid_input_action = 50U;
+inline constexpr std::uint32_t input_no_target = 51U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
