@@ -45,6 +45,10 @@ inline constexpr std::uint32_t invalid_motion_timeline = 35U;
 inline constexpr std::uint32_t glyph_provider_unavailable = 36U;
 inline constexpr std::uint32_t glyph_provider_failed = 37U;
 inline constexpr std::uint32_t invalid_glyph_mask = 38U;
+inline constexpr std::uint32_t invalid_paragraph_layout = 39U;
+inline constexpr std::uint32_t paragraph_layout_limit = 40U;
+inline constexpr std::uint32_t paragraph_backend_unavailable = 41U;
+inline constexpr std::uint32_t paragraph_backend_failed = 42U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
