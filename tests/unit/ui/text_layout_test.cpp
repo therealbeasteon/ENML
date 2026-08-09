@@ -79,6 +79,44 @@ bool malformed_backend(
     return true;
 }
 
+bool font_provider(
+    void* context,
+    os::ui::FontFamilyRole family,
+    os::ui::FontFaceDescriptor& output) noexcept {
+    if (context == nullptr) return false;
+    const auto base = *static_cast<const std::uint32_t*>(context);
+    output = os::ui::FontFaceDescriptor{
+        .id = os::ui::FontFaceId{
+            base + static_cast<std::uint32_t>(family)},
+        .family = family,
+        .units_per_em = 2048U,
+        .weight_min = 300U,
+        .weight_max = 700U,
+    };
+    return true;
+}
+
+bool failed_font_provider(
+    void*,
+    os::ui::FontFamilyRole,
+    os::ui::FontFaceDescriptor&) noexcept {
+    return false;
+}
+
+bool malformed_font_provider(
+    void*,
+    os::ui::FontFamilyRole family,
+    os::ui::FontFaceDescriptor& output) noexcept {
+    output = os::ui::FontFaceDescriptor{
+        .id = os::ui::FontFaceId{1U},
+        .family = family,
+        .units_per_em = 0U,
+        .weight_min = 400U,
+        .weight_max = 400U,
+    };
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -87,6 +125,55 @@ int main() {
     assert(body_style.value().fallback.contains(os::ui::FontFamilyRole::interface));
     assert(body_style.value().fallback.contains(os::ui::FontFamilyRole::international));
     assert(!body_style.value().fallback.contains(os::ui::FontFamilyRole::display));
+
+    std::uint32_t face_base = 100U;
+    auto body_faces = os::ui::resolve_font_faces(
+        body_style.value().fallback,
+        os::ui::FontProviderBackend{
+            .context = &face_base,
+            .resolve = font_provider,
+        });
+    assert(body_faces);
+    assert(body_faces.value().count == 3U);
+    const auto* interface_face =
+        body_faces.value().find(os::ui::FontFamilyRole::interface);
+    assert(interface_face != nullptr);
+    assert(interface_face->id == os::ui::FontFaceId{101U});
+    assert(interface_face->units_per_em == 2048U);
+    assert(body_faces.value().find(os::ui::FontFamilyRole::display) == nullptr);
+
+    auto title_style = os::ui::resolve_text_style(os::ui::TypographyRole::title, 100U);
+    assert(title_style);
+    auto title_faces = os::ui::resolve_font_faces(
+        title_style.value().fallback,
+        os::ui::FontProviderBackend{
+            .context = &face_base,
+            .resolve = font_provider,
+        });
+    assert(title_faces);
+    assert(title_faces.value().count == 4U);
+    assert(title_faces.value().find(os::ui::FontFamilyRole::display) != nullptr);
+    assert(title_faces.value().find(os::ui::FontFamilyRole::symbols) != nullptr);
+
+    auto unavailable_fonts = os::ui::resolve_font_faces(
+        body_style.value().fallback,
+        os::ui::FontProviderBackend{});
+    assert(!unavailable_fonts);
+    expect_ui_error(
+        unavailable_fonts.error(),
+        os::ui::errors::font_provider_unavailable);
+
+    auto failed_fonts = os::ui::resolve_font_faces(
+        body_style.value().fallback,
+        os::ui::FontProviderBackend{.resolve = failed_font_provider});
+    assert(!failed_fonts);
+    expect_ui_error(failed_fonts.error(), os::ui::errors::font_provider_failed);
+
+    auto malformed_fonts = os::ui::resolve_font_faces(
+        body_style.value().fallback,
+        os::ui::FontProviderBackend{.resolve = malformed_font_provider});
+    assert(!malformed_fonts);
+    expect_ui_error(malformed_fonts.error(), os::ui::errors::invalid_font_face);
 
     auto text = os::ui::make_semantic_text("Hello world");
     assert(text);
