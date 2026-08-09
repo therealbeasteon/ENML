@@ -322,7 +322,7 @@ os::core::Result<FrameReceipt> Compositor::submit_frame(
     slot->frame_sequence = submission.sequence;
     slot->buffer_slot = submission.buffer_slot;
     slot->has_frame = true;
-    return {
+    return FrameReceipt{
         .surface = submission.surface,
         .sequence = submission.sequence,
         .deadline = deadline_after(now_ns),
@@ -361,10 +361,6 @@ SceneSnapshot Compositor::scene_snapshot() const noexcept {
         return left.creation_serial > right.creation_serial;
     };
 
-    // Fixed-capacity insertion sort: scene work is bounded and deterministic.
-    // For application/popup surfaces, the trusted shell-owned stack serial is
-    // compared before the popup-within-parent rank. A background app's popup
-    // therefore cannot leap over the active application group.
     for (std::size_t index = 1U; index < count; ++index) {
         const OrderedSlot current = ordered[index];
         std::size_t position = index;
