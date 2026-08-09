@@ -32,6 +32,8 @@ It does **not** contain an application-supplied color, icon, texture, string, sh
 
 `build_trusted_overlay_snapshot()` also repeats the role/classification consistency check. An inconsistent scene record such as `application + secure_system` is not promoted into the overlay. This is defense in depth; the primary authority remains compositor surface-role authorization.
 
+The builder is private composition machinery conceptually even though it currently lives in the `osdisplay` library. Public compositor IPC exposes no operation that accepts a caller-created `SceneSnapshot` or `TrustedOverlaySnapshot`; applications therefore cannot submit this structure as authority. When the hardware display backend is split out, this contract should remain on that trusted internal path rather than becoming an app-facing OSIDL request.
+
 Only visible surfaces with an actual submitted frame are included. Hidden trusted surfaces and trusted surfaces that have not yet presented pixels produce no current overlay work, which keeps the mechanism event-driven and avoids permanent decorative/background activity.
 
 ## Why this is separate from the ENML material system
