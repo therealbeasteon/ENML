@@ -85,15 +85,9 @@ KeyRegistry::create(
     if (!os::core::valid_principal(owner.principal) || !id.valid()) {
         return key_error(errors::invalid_key);
     }
-    if (!valid_purpose(purpose)) {
-        return key_error(errors::unsupported_purpose);
-    }
-    if (!valid_rights(granted_rights)) {
-        return key_error(errors::invalid_rights);
-    }
-    if (find(id) != nullptr) {
-        return key_error(errors::duplicate_key_id);
-    }
+    if (!valid_purpose(purpose)) return key_error(errors::unsupported_purpose);
+    if (!valid_rights(granted_rights)) return key_error(errors::invalid_rights);
+    if (find(id) != nullptr) return key_error(errors::duplicate_key_id);
 
     KeyRecord* free_record = nullptr;
     for (auto& record : records_) {
@@ -102,15 +96,11 @@ KeyRegistry::create(
             break;
         }
     }
-    if (free_record == nullptr) {
-        return key_error(errors::registry_full);
-    }
+    if (free_record == nullptr) return key_error(errors::registry_full);
 
     auto provider_key = provider_->generate(purpose);
     if (!provider_key) return provider_key.error();
-    if (!provider_key.value().valid()) {
-        return key_error(errors::provider_failure);
-    }
+    if (!provider_key.value().valid()) return key_error(errors::provider_failure);
 
     const KeyDescriptor descriptor{
         .id = id,
@@ -216,6 +206,41 @@ KeyRegistry::rotate(KeyOwner caller, KeyId id) noexcept {
         .destroyed = false,
         .version = new_version,
         .provider_key = provider_key.value(),
+    };
+    record->descriptor.version = new_version;
+    return record->descriptor;
+}
+
+os::core::Result<KeyDescriptor>
+KeyRegistry::rotate_adopt_generated(
+    KeyOwner caller,
+    KeyId id,
+    ProviderKeyReference provider_key) noexcept {
+    if (!provider_key.valid()) return key_error(errors::provider_failure);
+    auto authorized = authorize_record(caller, id, key_rights::rotate);
+    if (!authorized) return authorized.error();
+
+    auto* record = find(id);
+    if (record == nullptr) return key_error(errors::not_found);
+    if (record->descriptor.version == std::numeric_limits<std::uint32_t>::max()) {
+        return key_error(errors::version_limit);
+    }
+
+    KeyVersionRecord* free_version = nullptr;
+    for (auto& version : record->versions) {
+        if (!version.occupied) {
+            free_version = &version;
+            break;
+        }
+    }
+    if (free_version == nullptr) return key_error(errors::version_limit);
+
+    const std::uint32_t new_version = record->descriptor.version + 1U;
+    *free_version = KeyVersionRecord{
+        .occupied = true,
+        .destroyed = false,
+        .version = new_version,
+        .provider_key = provider_key,
     };
     record->descriptor.version = new_version;
     return record->descriptor;
