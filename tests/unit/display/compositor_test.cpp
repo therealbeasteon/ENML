@@ -168,6 +168,19 @@ int main() {
     assert(scene.entries[4].surface.id == secure_surface.id);
     assert(scene.entries[0].buffer == buffer_for(first.id));
 
+    // Trust attribution is compositor-derived metadata. Application and popup
+    // pixels cannot mint it; only compositor-authorized system roles receive a
+    // trusted presentation classification.
+    assert(scene.entries[0].trusted_presentation == os::display::TrustedPresentation::none);
+    assert(scene.entries[1].trusted_presentation == os::display::TrustedPresentation::none);
+    assert(scene.entries[2].trusted_presentation == os::display::TrustedPresentation::none);
+    assert(
+        scene.entries[3].trusted_presentation ==
+        os::display::TrustedPresentation::system_chrome);
+    assert(
+        scene.entries[4].trusted_presentation ==
+        os::display::TrustedPresentation::secure_system);
+
     assert(compositor.set_visibility(secure, secure_surface.id, os::display::SurfaceVisibility::hidden));
     auto hit = compositor.hit_test(200, 500);
     assert(hit && hit.value() == second.id);
@@ -183,6 +196,9 @@ int main() {
     assert(scene.entries[0].capture_allowed && scene.entries[1].capture_allowed);
     assert(scene.entries[2].capture_allowed && scene.entries[3].capture_allowed);
     assert(!scene.entries[4].capture_allowed);
+    assert(
+        scene.entries[4].trusted_presentation ==
+        os::display::TrustedPresentation::secure_system);
 
     auto out_of_bounds = compositor.set_bounds(app, first.id, {0, 0, 1081U, 2400U});
     assert(!out_of_bounds);
