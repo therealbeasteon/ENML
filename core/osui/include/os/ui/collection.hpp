@@ -14,6 +14,9 @@ inline constexpr std::uint8_t max_collection_overscan_items = 8U;
 inline constexpr std::uint16_t max_materialized_collection_items =
     static_cast<std::uint16_t>(max_ui_children_per_node);
 
+struct CollectionItemKeyTag;
+using CollectionItemKey = os::core::StrongId<CollectionItemKeyTag, std::uint64_t>;
+
 struct CollectionWindowRequest final {
     std::uint32_t item_count {0U};
     std::uint32_t item_extent_q6 {0U};
@@ -37,9 +40,20 @@ struct CollectionWindow final {
     }
 };
 
+// Stable identity is separate from a collection index. Insertions, removals
+// and reordering may change an item's index while its key remains constant.
+// This lets a materialized semantic node keep focus/accessibility identity
+// when the logical collection mutates underneath the visible window.
+struct CollectionRecycleRequest final {
+    CollectionWindow window {};
+    std::array<CollectionItemKey, max_materialized_collection_items> item_keys {};
+    std::uint16_t key_count {0U};
+};
+
 struct CollectionRecycleBinding final {
     std::uint16_t slot {0U};
     std::uint32_t item_index {0U};
+    CollectionItemKey item_key {};
     bool retained {false};
 };
 
@@ -48,13 +62,14 @@ struct CollectionRecyclePlan final {
     std::uint16_t count {0U};
 };
 
-// Maps virtual item indices onto a stable, fixed pool of materialized semantic
-// child slots. Overlapping items retain their slot across window changes; new
-// items deterministically take the lowest free slot. A UI layer can associate
-// one UiNodeId with each recycler slot and update its semantic content instead
-// of creating unbounded list children while scrolling.
+// Maps virtual items onto a stable, fixed pool of materialized semantic child
+// slots. Keyed binding retains a slot by logical item identity even if that
+// item's index changes. The legacy window-only overload derives identity from
+// index and is retained only for non-mutating/index-stable collections.
 class CollectionRecycler final {
 public:
+    [[nodiscard]] os::core::Result<CollectionRecyclePlan> bind(
+        const CollectionRecycleRequest& request) noexcept;
     [[nodiscard]] os::core::Result<CollectionRecyclePlan> bind(
         const CollectionWindow& window) noexcept;
     void reset() noexcept;
@@ -63,6 +78,7 @@ public:
 private:
     struct Slot final {
         bool occupied {false};
+        CollectionItemKey item_key {};
         std::uint32_t item_index {0U};
     };
 
