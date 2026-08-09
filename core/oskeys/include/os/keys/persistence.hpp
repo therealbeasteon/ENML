@@ -120,7 +120,7 @@ private:
     load_snapshot(int directory_fd, PersistentKeyProvider& provider) noexcept;
 
     [[nodiscard]] os::core::Result<void>
-    persist_candidate(const KeyRegistry& candidate) noexcept;
+    persist_candidate(const KeyRegistry& candidate, bool& replaced) noexcept;
 
     static void cleanup_provider_references(
         PersistentKeyProvider& provider,
