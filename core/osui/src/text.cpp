@@ -67,7 +67,8 @@ namespace {
 } // namespace
 
 bool FontFallbackChain::contains(FontFamilyRole role) const noexcept {
-    for (std::size_t index = 0U; index < count; ++index) {
+    const std::size_t limit = count < families.size() ? count : families.size();
+    for (std::size_t index = 0U; index < limit; ++index) {
         if (families[index] == role) return true;
     }
     return false;
@@ -211,7 +212,8 @@ os::core::Result<TextMeasurement> measure_shaped_text(
     }
 
     const std::uint64_t height =
-        static_cast<std::uint64_t>(style.metrics.line_height_q6) * shaped.line_count;
+        static_cast<std::uint64_t>(style.metrics.line_height_q6) *
+        static_cast<std::uint64_t>(shaped.line_count);
     if (height > max_logical_dimension_q6 ||
         shaped.line_count > std::numeric_limits<std::uint16_t>::max()) {
         return ui_error(errors::text_shape_limit);
