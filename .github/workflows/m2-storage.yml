@@ -15,6 +15,7 @@ jobs:
         run: >-
           cmake --build --preset host-debug
           --target storage_private_storage_test storage_service_integration_test storage_service_identity_test
+          storage_app_manager_restart_test system.storage
           --parallel 2
       - name: Test storage gates
         run: ctest --preset host-debug --output-on-failure -R '^storage_'
@@ -32,6 +33,7 @@ jobs:
         run: >-
           cmake --build build/m2-storage-clang
           --target storage_private_storage_test storage_service_integration_test storage_service_identity_test
+          storage_app_manager_restart_test system.storage
           --parallel 2
       - name: Test storage gates
         run: ctest --test-dir build/m2-storage-clang --output-on-failure -R '^storage_'
@@ -48,6 +50,7 @@ jobs:
         run: >-
           cmake --build --preset host-debug
           --target storage_private_storage_test storage_service_integration_test storage_service_identity_test
+          storage_app_manager_restart_test system.storage
           --parallel 2
       - name: Test storage gates natively
         run: ctest --preset host-debug --output-on-failure -R '^storage_'
