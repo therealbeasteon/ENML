@@ -89,8 +89,8 @@ int main() {
         .width_q6 = os::ui::logical_from_dp(320U),
         .height_q6 = os::ui::logical_from_dp(480U),
         .safe_insets = {
-            .left_q6 = os::ui::logical_from_dp(200U),
             .right_q6 = os::ui::logical_from_dp(200U),
+            .left_q6 = os::ui::logical_from_dp(200U),
         },
     };
     auto invalid_viewport = os::ui::layout_list_detail(bad_insets);
