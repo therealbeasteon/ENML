@@ -57,6 +57,7 @@ target_link_libraries(app_manager_storage_test PRIVATE
 target_compile_options(app_manager_storage_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
+add_dependencies(app_manager_storage_test system_storage m2_storage_test_app)
 add_test(
     NAME supervisor_storage_app_manager_brokered_test
     COMMAND app_manager_storage_test
