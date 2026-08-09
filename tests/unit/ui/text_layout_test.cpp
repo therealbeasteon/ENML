@@ -50,6 +50,35 @@ os::ui::ShapedText shape_ascii(
     return shaped;
 }
 
+bool ascii_backend(
+    void* context,
+    const os::ui::SemanticText& text,
+    const os::ui::ResolvedTextStyle& style,
+    os::ui::ShapedText& output) noexcept {
+    if (context == nullptr) return false;
+    const auto advance_q6 = *static_cast<const std::uint32_t*>(context);
+    output = shape_ascii(text, style, advance_q6);
+    return true;
+}
+
+bool failed_backend(
+    void*,
+    const os::ui::SemanticText&,
+    const os::ui::ResolvedTextStyle&,
+    os::ui::ShapedText&) noexcept {
+    return false;
+}
+
+bool malformed_backend(
+    void* context,
+    const os::ui::SemanticText& text,
+    const os::ui::ResolvedTextStyle& style,
+    os::ui::ShapedText& output) noexcept {
+    if (!ascii_backend(context, text, style, output)) return false;
+    if (output.glyph_count != 0U) output.glyphs[0].cluster_byte_offset = text.length;
+    return true;
+}
+
 } // namespace
 
 int main() {
@@ -64,6 +93,40 @@ int main() {
     const auto advance = os::ui::logical_from_dp(8U);
     auto shaped = shape_ascii(text.value(), body_style.value(), advance);
     assert(os::ui::shaped_text_valid(text.value(), body_style.value(), shaped));
+
+    auto backend_shaped = os::ui::shape_text(
+        text.value(),
+        body_style.value(),
+        os::ui::TextShaperBackend{
+            .context = const_cast<std::uint32_t*>(&advance),
+            .shape = ascii_backend,
+        });
+    assert(backend_shaped);
+    assert(backend_shaped.value().glyph_count == shaped.glyph_count);
+
+    auto unavailable = os::ui::shape_text(
+        text.value(),
+        body_style.value(),
+        os::ui::TextShaperBackend{});
+    assert(!unavailable);
+    expect_ui_error(unavailable.error(), os::ui::errors::text_shaper_unavailable);
+
+    auto failed = os::ui::shape_text(
+        text.value(),
+        body_style.value(),
+        os::ui::TextShaperBackend{.shape = failed_backend});
+    assert(!failed);
+    expect_ui_error(failed.error(), os::ui::errors::text_shaper_failed);
+
+    auto malformed = os::ui::shape_text(
+        text.value(),
+        body_style.value(),
+        os::ui::TextShaperBackend{
+            .context = const_cast<std::uint32_t*>(&advance),
+            .shape = malformed_backend,
+        });
+    assert(!malformed);
+    expect_ui_error(malformed.error(), os::ui::errors::invalid_text_shape);
 
     auto measured = os::ui::measure_shaped_text(text.value(), body_style.value(), shaped);
     assert(measured);
