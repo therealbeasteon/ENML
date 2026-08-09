@@ -67,6 +67,11 @@ namespace {
 
 } // namespace
 
+bool semantic_text_valid(const SemanticText& text) noexcept {
+    if (static_cast<std::size_t>(text.length) > text.bytes.size()) return false;
+    return valid_utf8(text.view());
+}
+
 os::core::Result<SemanticText> make_semantic_text(std::string_view text) noexcept {
     if (text.size() > max_semantic_text_bytes) {
         return ui_error(errors::text_too_long);
