@@ -33,9 +33,8 @@ inline constexpr std::uint32_t storage_control_unregister_root_operation = 101U;
 
 inline constexpr std::size_t max_private_roots = 64U;
 inline constexpr std::size_t max_storage_objects = 64U;
-// One profile must not be able to consume the global object table. The quota is
-// keyed by the durable private-data identity (PrincipalId + UserId), not by a
-// transient ProcessId.
+// M2.3 reserves an explicit per-profile object budget. Enforcement lands in
+// the service allocation path; the ownership key remains PrincipalId + UserId.
 inline constexpr std::size_t max_storage_objects_per_principal = 16U;
 inline constexpr std::size_t max_storage_io_bytes = 60U * 1024U;
 inline constexpr std::size_t max_storage_atomic_bytes = 56U * 1024U;
@@ -301,8 +300,7 @@ private:
     [[nodiscard]] os::core::Result<void>
     dispatch_object(std::size_t index, os::core::MutableByteSpan receive_buffer) noexcept;
 
-    [[nodiscard]] os::core::Result<std::size_t>
-    allocate_slot(os::core::PrincipalId principal, os::core::UserId user) noexcept;
+    [[nodiscard]] os::core::Result<std::size_t> allocate_slot() noexcept;
     void clear_slot(std::size_t index) noexcept;
     void clear_objects_for(os::core::PrincipalId principal, os::core::UserId user) noexcept;
 };
