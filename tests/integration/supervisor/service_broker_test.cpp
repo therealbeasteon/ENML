@@ -5,6 +5,7 @@
 #include <span>
 #include <utility>
 
+#include <signal.h>
 #include <unistd.h>
 
 #include <os/ipc/constants.hpp>
@@ -46,7 +47,7 @@ os::supervisor::ServiceLaunchConfig make_config(
             .principal_id = principal,
             .user_id = os::core::UserId{0U},
             .name = name,
-            .restart_policy = os::supervisor::RestartPolicy::on_failure,
+            .restart_policy = os::supervisor::RestartPolicy::never,
             .restart_delay_ms = 10U,
             .max_restarts_in_window = 3U,
             .restart_window_ms = 2000U,
@@ -84,6 +85,16 @@ void expect_unknown_sender(
     assert(!response);
     assert(response.error().domain == os::core::ErrorDomain::security);
     assert(response.error().code == os::core::errors::security::unknown_process);
+}
+
+void wait_stopped(os::supervisor::Supervisor& supervisor) {
+    for (std::size_t attempt = 0U; attempt < 200U; ++attempt) {
+        auto maintained = supervisor.maintain();
+        assert(maintained);
+        if (supervisor.status().state == os::supervisor::ServiceState::stopped) return;
+        ::usleep(5000U);
+    }
+    assert(false);
 }
 
 } // namespace
@@ -192,6 +203,26 @@ int main(int argc, char** argv) {
     assert(stale_connect.error().domain == os::core::ErrorDomain::service);
     assert(stale_connect.error().code == os::supervisor::broker_errors::process_not_attached);
 
+    // Broker publication ownership is explicit. A process already published by
+    // another trusted subsystem cannot be silently adopted and later revoked
+    // by the broker.
+    auto direct = first.register_process(::getpid(), client_principal, client_user);
+    assert(direct);
+    const std::array first_only{first_service_id};
+    auto steal = broker.attach_process(
+        ::getpid(),
+        client_principal,
+        client_user,
+        std::span<const os::core::ServiceId>{first_only});
+    assert(!steal);
+    assert(steal.error().domain == os::core::ErrorDomain::service);
+    assert(steal.error().code == os::supervisor::broker_errors::service_conflict);
+    assert(broker.process_count() == 0U);
+    auto direct_still_present = first.lookup_process(::getpid());
+    assert(direct_still_present);
+    assert(direct_still_present.value().peer.process == direct.value().peer.process);
+    assert(first.unregister_process(direct.value().peer.process));
+
     // Explicit detach ends the old authorization epoch. A later trusted attach
     // of the still-live process receives a fresh boot-scoped ProcessId.
     auto reattached = broker.attach_process(
@@ -201,6 +232,32 @@ int main(int argc, char** argv) {
         std::span<const os::core::ServiceId>{requested_services});
     assert(reattached);
     assert(reattached.value().peer.process != process);
-    assert(broker.detach_process(reattached.value().peer.process));
+    const auto reattached_process = reattached.value().peer.process;
+    assert(broker.detach_process(reattached_process));
+
+    // Multi-service publication is a transaction. If a later requested service
+    // is unavailable, an earlier successful publication is removed and the
+    // broker-owned base identity reference is released instead of leaving a
+    // half-authorized process.
+    assert(second.terminate(SIGKILL));
+    wait_stopped(second);
+    auto rolled_back = broker.attach_process(
+        ::getpid(),
+        client_principal,
+        client_user,
+        std::span<const os::core::ServiceId>{requested_services});
+    assert(!rolled_back);
+    assert(rolled_back.error().domain == os::core::ErrorDomain::service);
+    assert(rolled_back.error().code == os::core::errors::service::not_running);
+    assert(broker.process_count() == 0U);
+
+    auto first_absent = first.lookup_process(::getpid());
+    assert(!first_absent);
+    assert(first_absent.error().domain == os::core::ErrorDomain::security);
+    assert(first_absent.error().code == os::core::errors::security::unknown_process);
+    auto authority_absent = authority.lookup(::getpid());
+    assert(!authority_absent);
+    assert(authority_absent.error().domain == os::core::ErrorDomain::security);
+    assert(authority_absent.error().code == os::core::errors::security::unknown_process);
     return 0;
 }
