@@ -13,12 +13,14 @@ class Compositor final {
 public:
     Compositor(
         DisplayConfiguration configuration,
-        TrustedUiPrincipals trusted_principals) noexcept;
+        TrustedUiPrincipals trusted_principals,
+        std::uint64_t service_generation = 1U) noexcept;
 
     [[nodiscard]] bool valid() const noexcept { return valid_; }
     [[nodiscard]] const DisplayConfiguration& configuration() const noexcept {
         return configuration_;
     }
+    [[nodiscard]] std::uint32_t object_generation() const noexcept { return object_generation_; }
 
     [[nodiscard]] os::core::Result<SurfaceDescriptor> create_surface(
         os::core::PeerIdentity owner,
@@ -100,7 +102,8 @@ private:
     DisplayConfiguration configuration_ {};
     TrustedUiPrincipals trusted_principals_ {};
     std::array<Slot, max_surfaces> slots_ {};
-    std::uint64_t next_surface_id_ {1U};
+    std::uint32_t object_generation_ {1U};
+    std::uint32_t next_surface_serial_ {1U};
     std::uint64_t next_creation_serial_ {1U};
     std::uint64_t next_stack_serial_ {1U};
     std::size_t surface_count_ {0U};
