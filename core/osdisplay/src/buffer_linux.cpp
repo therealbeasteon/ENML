@@ -70,7 +70,7 @@ os::core::Result<BufferDescriptor> SharedBufferPool::make_descriptor(
     os::core::PeerIdentity owner,
     PixelSize size,
     PixelFormat format) noexcept {
-    if (id.value() == 0U || !os::core::valid_peer_identity(owner)) {
+    if (!valid_display_object_value(id.value()) || !os::core::valid_peer_identity(owner)) {
         return display_error(errors::invalid_identity);
     }
     if (!size.valid()) return display_error(errors::invalid_geometry);
@@ -99,13 +99,17 @@ os::core::Result<SharedBufferLease> SharedBufferPool::allocate(
     os::core::PeerIdentity owner,
     PixelSize size,
     PixelFormat format) noexcept {
-    if (next_buffer_id_ == 0U) return display_error(errors::buffer_id_exhausted);
+    if (!valid()) return display_error(errors::invalid_configuration);
+    if (!os::core::valid_peer_identity(owner)) return display_error(errors::invalid_identity);
+    if (next_buffer_serial_ == 0U) return display_error(errors::buffer_id_exhausted);
     if (buffer_count_ >= max_shared_buffers) return display_error(errors::buffer_limit);
     if (buffer_count_for(owner.principal) >= max_shared_buffers_per_principal) {
         return display_error(errors::principal_buffer_limit);
     }
 
-    auto descriptor_result = make_descriptor(BufferId{next_buffer_id_}, owner, size, format);
+    const std::uint64_t id_value = make_display_object_value(object_generation_, next_buffer_serial_);
+    if (id_value == 0U) return display_error(errors::buffer_id_exhausted);
+    auto descriptor_result = make_descriptor(BufferId{id_value}, owner, size, format);
     if (!descriptor_result) return descriptor_result.error();
     const BufferDescriptor descriptor = descriptor_result.value();
 
@@ -136,10 +140,10 @@ os::core::Result<SharedBufferLease> SharedBufferPool::allocate(
     ++buffer_count_;
     byte_count_ += descriptor.byte_size;
 
-    if (next_buffer_id_ == std::numeric_limits<std::uint64_t>::max()) {
-        next_buffer_id_ = 0U;
+    if (next_buffer_serial_ == std::numeric_limits<std::uint32_t>::max()) {
+        next_buffer_serial_ = 0U;
     } else {
-        ++next_buffer_id_;
+        ++next_buffer_serial_;
     }
 
     return SharedBufferLease{
