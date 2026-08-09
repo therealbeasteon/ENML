@@ -28,6 +28,7 @@ os::ui::RasterTheme test_theme() {
     theme.colors[color_index(os::ui::ColorRole::accent_secondary)] = {100U, 40U, 180U, 255U};
     theme.colors[color_index(os::ui::ColorRole::outline)] = {120U, 130U, 150U, 255U};
     theme.colors[color_index(os::ui::ColorRole::focus)] = {250U, 210U, 80U, 255U};
+    theme.colors[color_index(os::ui::ColorRole::highlight)] = {240U, 230U, 255U, 255U};
     return theme;
 }
 
@@ -49,6 +50,7 @@ os::ui::RenderCommandBuffer test_commands() {
     root.visual.token.material_tint = os::ui::ColorRole::transparent;
     root.visual.token.outline = os::ui::ColorRole::transparent;
     root.visual.token.material = os::ui::OpticalMaterialRole::opaque;
+    root.visual.token.depth = os::ui::DepthRole::flush;
     root.visual.material.opacity_percent = 100U;
     root.contour.role = os::ui::CurveRole::rectilinear;
 
@@ -67,8 +69,12 @@ os::ui::RenderCommandBuffer test_commands() {
     panel.visual.token.material_tint = os::ui::ColorRole::accent_secondary;
     panel.visual.token.outline = os::ui::ColorRole::outline;
     panel.visual.token.material = os::ui::OpticalMaterialRole::crystal;
+    panel.visual.token.depth = os::ui::DepthRole::floating;
     panel.visual.material.opacity_percent = 72U;
     panel.visual.material.tint_percent = 25U;
+    panel.visual.material.specular_percent = 20U;
+    panel.visual.depth.offset_q6 = os::ui::logical_from_dp(2U);
+    panel.visual.depth.opacity_percent = 20U;
     panel.contour.role = os::ui::CurveRole::swept;
     panel.contour.radii = os::ui::CornerRadii{
         .top_left_q6 = os::ui::logical_from_dp(2U),
@@ -105,11 +111,14 @@ int main() {
     assert(raster);
     assert(raster.value().commands_seen == 2U);
     assert(raster.value().surfaces_filled == 2U);
+    assert(raster.value().shadows_drawn == 1U);
+    assert(raster.value().lit_edges_drawn == 1U);
     assert(raster.value().pixel_writes >= width * height);
 
     const auto surface = theme.colors[color_index(os::ui::ColorRole::surface)];
     const auto focus = theme.colors[color_index(os::ui::ColorRole::focus)];
     const os::ui::Rgba8 panel_fill{48U, 33U, 75U, 255U};
+    const os::ui::Rgba8 shadowed_surface{6U, 8U, 14U, 255U};
 
     // Root fill proves an actual pixel target is written.
     assert(pixels[0] == surface);
@@ -119,9 +128,36 @@ int main() {
     assert(pixels[4U * width + 4U] == surface);
     assert(pixels[10U * width + 16U] == panel_fill);
 
+    // Smoothing is a real geometric input. The high-smoothing swept top-right
+    // corner includes this leading-edge sample and focus paints it explicitly.
+    assert(pixels[4U * width + 26U] == focus);
+
+    // Depth has a useful opaque fallback before blur/alpha exists: the floating
+    // panel darkens already-painted support pixels at its positive offset.
+    assert(pixels[18U * width + 28U] == shadowed_surface);
+
     // Focus is rendered as an explicit edge treatment rather than encoded only
     // by material/transparency, keeping interaction state legible.
     assert(pixels[4U * width + 5U] == focus);
+
+    // With smoothing removed, the same top-right sample falls outside the
+    // circular corner and therefore remains the root surface. This protects
+    // authored contour identity from being ignored by the raster backend.
+    std::array<os::ui::Rgba8, width * height> circular_pixels{};
+    auto circular_commands = commands;
+    circular_commands.commands[1].contour.smoothing_percent = 0U;
+    const os::ui::RasterTarget circular_target{
+        .pixels = circular_pixels.data(),
+        .pixel_count = circular_pixels.size(),
+        .width = width,
+        .height = height,
+        .stride = width,
+        .scale = os::ui::RasterScale{1U, os::ui::logical_units_per_dp},
+    };
+    auto circular_raster = os::ui::rasterize_opaque_materials(
+        circular_commands, theme, circular_target);
+    assert(circular_raster);
+    assert(circular_pixels[4U * width + 26U] == surface);
 
     auto bad_target = target;
     bad_target.pixel_count = 1U;
@@ -140,6 +176,13 @@ int main() {
     auto invalid_command = os::ui::rasterize_opaque_materials(bad_commands, theme, target);
     assert(!invalid_command);
     expect_ui_error(invalid_command.error(), os::ui::errors::invalid_raster_command);
+
+    auto bad_smoothing = commands;
+    bad_smoothing.commands[1].contour.smoothing_percent = 101U;
+    auto invalid_smoothing = os::ui::rasterize_opaque_materials(
+        bad_smoothing, theme, target);
+    assert(!invalid_smoothing);
+    expect_ui_error(invalid_smoothing.error(), os::ui::errors::invalid_raster_command);
 
     return 0;
 }
