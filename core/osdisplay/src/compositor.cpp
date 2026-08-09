@@ -1,6 +1,6 @@
 #include <os/display/compositor.hpp>
 
-#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -10,18 +10,21 @@
 namespace os::display {
 namespace {
 
-[[nodiscard]] constexpr std::uint8_t role_rank(SurfaceRole role) noexcept {
+[[nodiscard]] constexpr std::uint8_t role_band(SurfaceRole role) noexcept {
     switch (role) {
     case SurfaceRole::application:
-        return 1U;
     case SurfaceRole::popup:
-        return 2U;
+        return 1U;
     case SurfaceRole::system_chrome:
-        return 3U;
+        return 2U;
     case SurfaceRole::secure_system:
-        return 4U;
+        return 3U;
     }
     return 0U;
+}
+
+[[nodiscard]] constexpr std::uint8_t role_rank_within_band(SurfaceRole role) noexcept {
+    return role == SurfaceRole::popup ? 2U : 1U;
 }
 
 [[nodiscard]] constexpr bool same_owner(
@@ -68,9 +71,7 @@ Compositor::Compositor(
     constexpr std::uint64_t nanoseconds_per_millihertz_period = 1'000'000'000'000ULL;
     const auto frame_interval = nanoseconds_per_millihertz_period /
         static_cast<std::uint64_t>(configuration_.refresh_millihz);
-    if (frame_interval == 0U || configuration_.compositor_margin_ns >= frame_interval) {
-        return;
-    }
+    if (frame_interval == 0U || configuration_.compositor_margin_ns >= frame_interval) return;
     valid_ = true;
 }
 
@@ -109,6 +110,17 @@ bool Compositor::parent_valid(
         parent->descriptor.role == SurfaceRole::application;
 }
 
+bool Compositor::process_has_application_surface(os::core::ProcessId process) const noexcept {
+    if (process.value() == 0U) return false;
+    for (const auto& slot : slots_) {
+        if (slot.occupied && slot.descriptor.owner.process == process &&
+            slot.descriptor.role == SurfaceRole::application) {
+            return true;
+        }
+    }
+    return false;
+}
+
 os::core::Result<SurfaceDescriptor> Compositor::create_surface(
     os::core::PeerIdentity owner,
     const CreateSurfaceRequest& request) noexcept {
@@ -117,11 +129,15 @@ os::core::Result<SurfaceDescriptor> Compositor::create_surface(
     if (!role_allowed(owner, request.role)) return display_error(errors::invalid_role);
     if (!bounds_valid(request.bounds)) return display_error(errors::invalid_geometry);
     if (!parent_valid(owner, request)) return display_error(errors::invalid_parent);
+    if (request.role == SurfaceRole::application && process_has_application_surface(owner.process)) {
+        return display_error(errors::application_surface_exists);
+    }
     if (surface_count_ >= max_surfaces) return display_error(errors::surface_limit);
     if (surface_count_for(owner.principal) >= max_surfaces_per_principal) {
         return display_error(errors::principal_surface_limit);
     }
-    if (next_surface_id_ == 0U || next_creation_serial_ == 0U) {
+    if (next_surface_id_ == 0U || next_creation_serial_ == 0U ||
+        (request.role == SurfaceRole::application && next_stack_serial_ == 0U)) {
         return display_error(errors::surface_id_exhausted);
     }
 
@@ -139,6 +155,16 @@ os::core::Result<SurfaceDescriptor> Compositor::create_surface(
     const std::uint64_t creation_serial = next_creation_serial_;
     ++next_creation_serial_;
 
+    std::uint64_t stack_serial = 0U;
+    if (request.role == SurfaceRole::application) {
+        stack_serial = next_stack_serial_;
+        ++next_stack_serial_;
+    } else if (request.role == SurfaceRole::popup) {
+        const Slot* parent = find_slot(request.parent);
+        if (parent == nullptr) return display_error(errors::invalid_parent);
+        stack_serial = parent->stack_serial;
+    }
+
     available->occupied = true;
     available->descriptor = SurfaceDescriptor{
         .id = id,
@@ -150,6 +176,7 @@ os::core::Result<SurfaceDescriptor> Compositor::create_surface(
         .accepts_input = request.accepts_input,
     };
     available->creation_serial = creation_serial;
+    available->stack_serial = stack_serial;
     available->frame_sequence = 0U;
     available->buffer_slot = 0U;
     available->has_frame = false;
@@ -188,10 +215,6 @@ os::core::Result<void> Compositor::destroy_surface(
     SurfaceId surface) noexcept {
     auto owned = find_owned_slot(caller, surface);
     if (!owned) return owned.error();
-
-    // Destroying an application surface also revokes its directly-attached
-    // popup capabilities. They cannot outlive the parent that gave them UI
-    // meaning or retain stale input authority.
     for (auto& candidate : slots_) {
         if (candidate.occupied && candidate.descriptor.parent == surface) {
             candidate = Slot{};
@@ -211,8 +234,6 @@ os::core::Result<void> Compositor::set_bounds(
     auto owned = find_owned_slot(caller, surface);
     if (!owned) return owned.error();
     owned.value()->descriptor.bounds = bounds;
-    // Geometry changes invalidate the previously submitted pixel geometry but
-    // not the monotonic sequence history.
     owned.value()->has_frame = false;
     return {};
 }
@@ -224,6 +245,30 @@ os::core::Result<void> Compositor::set_visibility(
     auto owned = find_owned_slot(caller, surface);
     if (!owned) return owned.error();
     owned.value()->descriptor.visibility = visibility;
+    return {};
+}
+
+os::core::Result<void> Compositor::activate_application(
+    os::core::PeerIdentity caller,
+    SurfaceId application_surface) noexcept {
+    if (!os::core::valid_peer_identity(caller)) return display_error(errors::invalid_identity);
+    if (caller.principal != trusted_principals_.shell) {
+        return display_error(errors::activation_denied);
+    }
+    Slot* root = find_slot(application_surface);
+    if (root == nullptr) return display_error(errors::unknown_surface);
+    if (root->descriptor.role != SurfaceRole::application || next_stack_serial_ == 0U) {
+        return display_error(errors::activation_denied);
+    }
+
+    const std::uint64_t stack_serial = next_stack_serial_;
+    ++next_stack_serial_;
+    root->stack_serial = stack_serial;
+    for (auto& candidate : slots_) {
+        if (candidate.occupied && candidate.descriptor.parent == application_surface) {
+            candidate.stack_serial = stack_serial;
+        }
+    }
     return {};
 }
 
@@ -239,9 +284,7 @@ bool Compositor::damage_valid(
         const auto bottom = static_cast<std::uint64_t>(static_cast<std::uint32_t>(damage.y)) +
             static_cast<std::uint64_t>(damage.height);
         if (right > static_cast<std::uint64_t>(surface.bounds.width) ||
-            bottom > static_cast<std::uint64_t>(surface.bounds.height)) {
-            return false;
-        }
+            bottom > static_cast<std::uint64_t>(surface.bounds.height)) return false;
     }
     return true;
 }
@@ -258,10 +301,7 @@ FrameDeadline Compositor::deadline_after(std::uint64_t now_ns) const noexcept {
     const auto deadline = next_vsync > configuration_.compositor_margin_ns
         ? next_vsync - configuration_.compositor_margin_ns
         : 0U;
-    return FrameDeadline{
-        .next_vsync_ns = next_vsync,
-        .submission_deadline_ns = deadline,
-    };
+    return {.next_vsync_ns = next_vsync, .submission_deadline_ns = deadline};
 }
 
 os::core::Result<FrameReceipt> Compositor::submit_frame(
@@ -277,14 +317,12 @@ os::core::Result<FrameReceipt> Compositor::submit_frame(
     if (submission.buffer_slot >= max_frame_buffer_slots) {
         return display_error(errors::invalid_buffer_slot);
     }
-    if (!damage_valid(slot->descriptor, submission)) {
-        return display_error(errors::invalid_damage);
-    }
+    if (!damage_valid(slot->descriptor, submission)) return display_error(errors::invalid_damage);
 
     slot->frame_sequence = submission.sequence;
     slot->buffer_slot = submission.buffer_slot;
     slot->has_frame = true;
-    return FrameReceipt{
+    return {
         .surface = submission.surface,
         .sequence = submission.sequence,
         .deadline = deadline_after(now_ns),
@@ -305,25 +343,32 @@ SceneSnapshot Compositor::scene_snapshot() const noexcept {
     std::size_t count = 0U;
     for (const auto& slot : slots_) {
         if (slot.occupied) {
-            ordered[count] = OrderedSlot{&slot};
+            ordered[count] = {&slot};
             ++count;
         }
     }
 
-    // Fixed-capacity insertion sort keeps composition deterministic without a
-    // heap allocation. Z authority is role-based and compositor-owned; apps do
-    // not submit arbitrary global z values.
+    const auto after = [](const Slot& left, const Slot& right) noexcept {
+        const auto left_band = role_band(left.descriptor.role);
+        const auto right_band = role_band(right.descriptor.role);
+        if (left_band != right_band) return left_band > right_band;
+        if (left_band == 1U && left.stack_serial != right.stack_serial) {
+            return left.stack_serial > right.stack_serial;
+        }
+        const auto left_rank = role_rank_within_band(left.descriptor.role);
+        const auto right_rank = role_rank_within_band(right.descriptor.role);
+        if (left_rank != right_rank) return left_rank > right_rank;
+        return left.creation_serial > right.creation_serial;
+    };
+
+    // Fixed-capacity insertion sort: scene work is bounded and deterministic.
+    // For application/popup surfaces, the trusted shell-owned stack serial is
+    // compared before the popup-within-parent rank. A background app's popup
+    // therefore cannot leap over the active application group.
     for (std::size_t index = 1U; index < count; ++index) {
         const OrderedSlot current = ordered[index];
         std::size_t position = index;
-        while (position > 0U) {
-            const Slot* left = ordered[position - 1U].slot;
-            const Slot* right = current.slot;
-            const auto left_rank = role_rank(left->descriptor.role);
-            const auto right_rank = role_rank(right->descriptor.role);
-            const bool should_move = left_rank > right_rank ||
-                (left_rank == right_rank && left->creation_serial > right->creation_serial);
-            if (!should_move) break;
+        while (position > 0U && after(*ordered[position - 1U].slot, *current.slot)) {
             ordered[position] = ordered[position - 1U];
             --position;
         }
@@ -334,7 +379,7 @@ SceneSnapshot Compositor::scene_snapshot() const noexcept {
     snapshot.count = count;
     for (std::size_t index = 0U; index < count; ++index) {
         const Slot& slot = *ordered[index].slot;
-        snapshot.entries[index] = SceneEntry{
+        snapshot.entries[index] = {
             .surface = slot.descriptor,
             .frame_sequence = slot.frame_sequence,
             .buffer_slot = slot.buffer_slot,
@@ -354,9 +399,7 @@ os::core::Result<SurfaceId> Compositor::hit_test(
         const std::size_t index = snapshot.count - 1U - offset;
         const auto& entry = snapshot.entries[index];
         if (entry.surface.visibility != SurfaceVisibility::visible ||
-            !entry.surface.accepts_input || !entry.has_frame) {
-            continue;
-        }
+            !entry.surface.accepts_input || !entry.has_frame) continue;
         if (point_inside(entry.surface.bounds, x, y)) return entry.surface.id;
     }
     return display_error(errors::unknown_surface);
