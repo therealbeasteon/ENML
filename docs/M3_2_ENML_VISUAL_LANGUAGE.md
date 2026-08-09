@@ -28,7 +28,9 @@ The current code deliberately expresses these as semantic optical roles rather t
 
 ### Curves with authorship
 
-Curves are a first-class part of the ENML language. `CurveRole` is separate from the legacy simple radius role so later renderers can support continuous and swept contours, asymmetry, custom paths and characteristic transitions between edges.
+Curves are a first-class part of the ENML language. `CurveRole` is separate from the legacy simple radius role so renderers can support continuous and swept contours, asymmetry, custom paths and characteristic transitions between edges.
+
+The current renderer boundary resolves bounded contour intent without binding public UI semantics to a vendor path or GPU API. The asymmetric swept family is deliberately present so the language is not reduced to generic rounded rectangles.
 
 A future ENML renderer should be able to make a panel identifiable from its contour and motion even when color is removed.
 
@@ -43,6 +45,14 @@ Secure system UI must remain visually attributable to trusted system principals.
 ENML is not constrained to monochrome minimalism. The design system includes multiple semantic accent roles so themes can compose richer palettes and gradients without baking concrete colors into application semantics.
 
 Color still cannot be the only carrier of state. Focus, selection, error and security attribution require redundant geometry, text, iconography or motion cues.
+
+### Typography as craft and infrastructure
+
+Typography is part of ENML's identity, but applications must not choose platform font files or vendor family names as public ABI. The renderer now carries bounded semantic font-family roles and fallback order rather than concrete file paths or font handles.
+
+`interface` and `display` are roles, not a requirement to use unrelated families. A final ENML theme can map them to coordinated cuts of one type family, preserving the cohesive readability recommended by the reference material while still allowing titles and hero surfaces to have a more authored character. International and symbol fallbacks are platform-owned so localization does not depend on every application bundling its own font strategy.
+
+Text scaling remains independent of the concrete font asset. The current design metrics support 100% through 300%, and later shaping/measurement must reflow rather than clip or silently shrink important text.
 
 ### Motion as interaction physics
 
@@ -63,13 +73,14 @@ The design resolver currently supports:
 - high-contrast resolution that suppresses material tint and live translucency;
 - text scaling from 100% through 300%;
 - minimum logical touch targets;
-- semantic accessibility independent of rendered pixels.
+- semantic accessibility independent of rendered pixels;
+- explicit economy/balanced/full optical quality tiers that preserve contour, hierarchy and state while reducing expensive backdrop/specular work.
 
-A future low-power or low-capability renderer should use the same principle: lower optical complexity while preserving semantic hierarchy, geometry, state, focus and timing order.
+A low-power or low-capability renderer should lower optical complexity while preserving semantic hierarchy, geometry, state, focus and timing order. It must not fall back to a visually unrelated second design system.
 
 ## Current code boundary
 
-The current M3.2 design layer adds semantic roles for:
+The current M3.2 design and renderer-intent layers provide semantic roles for:
 
 - color;
 - typography;
@@ -80,14 +91,19 @@ The current M3.2 design layer adds semantic roles for:
 - authored curve families;
 - motion;
 - material tint;
-- user visual preferences.
+- user visual preferences;
+- platform-owned font family/fallback roles;
+- renderer quality budgeting.
 
-`StyleTokenId` remains the semantic tree's only style reference. Applications do not receive shader parameters, compositor internals, physical pixel density, Linux display handles, GPU resources or vendor theme implementation details.
+`StyleTokenId` remains the semantic tree's only style reference. Applications do not receive shader parameters, compositor internals, physical pixel density, Linux display handles, GPU resources, font paths or vendor theme implementation details.
 
-The intended path is:
+The implemented path is now:
 
 ```text
 semantic node + StyleTokenId
+          |
+          v
+immutable RendererSnapshot
           |
           v
 platform style token
@@ -100,18 +116,27 @@ platform style token
           +--> motion role
           |
           v
-preference + capability resolution
+preference + quality resolution
+          |
+          +--> bounded contour intent
+          +--> scaled typography metrics
+          +--> platform font fallback roles
           |
           v
-renderer-owned concrete palette / paths / shaders / animation
+bounded deterministic RenderCommandBuffer
+          |
+          v
+future renderer-owned palette / font assets / shaping / paths / shaders
           |
           v
 M3 compositor surface + BufferId
 ```
 
+The renderer command buffer validates the semantic snapshot, resolves effective visibility, preserves deterministic node order and carries no concrete vendor graphics or font handles. Semantic accessibility labels are also kept distinct from visible control text; only actual text-role content is currently promoted to renderer text intent.
+
 ## Reference guidance incorporated
 
-The supplied BlackBerry UI material is useful for status visibility, direct feedback, recoverability, progressive disclosure, responsive task organization and the general idea that premium visual quality can use material, lighting, texture and depth. ENML does not copy BlackBerry component visuals or historical theme assets.
+The supplied BlackBerry UI material is useful for status visibility, direct feedback, recoverability, progressive disclosure, responsive task organization, readable scalable typography and the general idea that premium visual quality can use material, lighting, texture and depth. ENML does not copy BlackBerry component visuals, fonts, icons or historical theme assets.
 
 The supplied Figma material is useful as a construction workflow for opacity, gradients, corner shaping, blur, shadows, component organization and prototyping. Figma is a design tool in the workflow, not the source of ENML's identity.
 
@@ -123,17 +148,18 @@ The supplied natural-interface guidance is useful for discoverability, immediate
 
 ## Next renderer work
 
-This document does not claim that the final visual renderer exists yet. The next visual implementation slices should remain small and testable:
+This document does not claim that the final pixel renderer exists yet. Completed M3.2 mechanisms now include the immutable renderer snapshot/delta, deterministic resolved command buffer, authored contour intent, visual quality fallback and semantic font fallback boundary.
 
-1. immutable renderer command/snapshot representation for resolved style roles;
-2. deterministic curve/path primitives independent of vendor graphics APIs;
-3. text shaping/font fallback and large-text reflow;
-4. bounded 2D material renderer with opaque fallback first;
-5. composited translucency and blur with explicit capability/power budgets;
-6. motion scheduler tied to frame deadlines and reduced-motion policy;
-7. design-system components built from semantic roles rather than raw paint commands;
-8. Figma reference file using the same token vocabulary so implementation and design stay aligned;
-9. secure-system visual attribution that applications cannot request or counterfeit;
-10. usability and accessibility evaluation before the visual language is frozen.
+The next visual implementation slices should remain small and testable:
+
+1. bounded text shaping/measurement output above platform-owned font assets, including localization and large-text reflow;
+2. bounded 2D material renderer with opaque fallback first;
+3. collection data-source/recycling identity contract above the existing window/recycler slots;
+4. composited translucency and blur with explicit capability/power budgets;
+5. motion scheduler tied to compositor frame deadlines and reduced-motion policy;
+6. design-system components built from semantic roles rather than raw paint commands;
+7. Figma reference file using the same token vocabulary so implementation and design stay aligned;
+8. secure-system visual attribution that applications cannot request or counterfeit;
+9. usability and accessibility evaluation before the visual language is frozen.
 
 The visual identity should remain flexible while these mechanisms mature. ENML should become distinctive through a coherent combination of contour, material, color, typography, depth and motion rather than through imitation of an existing operating system.
