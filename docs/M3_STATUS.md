@@ -57,11 +57,11 @@ Implemented:
 
 See `docs/M3_1_SHARED_BUFFER_COMPOSITOR_SERVICE.md`.
 
-## M3.2 — bounded semantic UI tree + accessibility foundation
+## M3.2 — bounded semantic UI tree + accessibility/design foundation
 
 Status: implementation in progress on `m3-2-semantic-ui-foundation`.
 
-Initial implementation now includes:
+Implemented in the current branch:
 
 - additive `ErrorDomain::ui`
 - new no-exceptions/no-RTTI `core/osui` library
@@ -80,21 +80,41 @@ Initial implementation now includes:
 - fixed-point density-independent logical geometry (Q6: 64 units per logical dp)
 - safe-inset-aware responsive single-pane/dual-pane list-detail layout
 - explicit configurable responsive policy rather than device-class probing
-- independent style-token references so semantic structure does not freeze one visual theme
+- bounded collection virtualization planning for up to 1,000,000 logical items with materialization bounded by the semantic child budget
+- deep-list 64-bit scroll/content extent with viewport-relative materialized item coordinates
+- immutable renderer snapshot with revision tracking
+- bounded renderer dirty/removal delta and full-resync fallback on bookkeeping overflow
+- semantic design token table independent of concrete vendor colors/assets
+- typography/spacing/color/simple-shape roles
+- optical material roles for opaque/translucent/crystal/smoked/luminous treatment
+- separate depth roles for flush/inset/raised/floating/hero hierarchy
+- curve roles that can evolve beyond generic rounded rectangles, including continuous and swept contours
+- motion roles for micro/responsive/transition/reveal behavior
+- multiple semantic accent/tint roles without fixed RGB ABI
+- reduced-transparency, reduced-motion and high-contrast visual preference resolution
+- text scaling from 100% through 300% and minimum logical touch-target policy
+- large-text tests proving row reflow and reduced visible collection window size
+- phone/tablet recomposition tests preserving semantic node identity
 - adversarial unit tests for malformed UTF-8, oversized/forged labels, stale node IDs, depth/child bounds, role/state/action misuse, focus transfer and accessibility projection
 - responsive layout tests for phone/tablet-like viewports, safe insets, policy changes and invalid viewport/policy inputs
+- collection-window tests for overscroll, deep scrolling, window limits and out-of-window access
+- renderer snapshot/delta tests
+- design/reflow tests including optical material and accessibility fallbacks
+- dedicated GCC, Clang, ASan/UBSan and native AArch64 semantic-UI gates; the expanded design/reflow branch passed all four gates
 
-See `docs/M3_2_SEMANTIC_UI_FOUNDATION.md`, `docs/REFERENCE_ANDROID_UI_DESIGN.md`, and `docs/REFERENCE_NOTES_2026_08_09_UI.md`.
+See `docs/M3_2_SEMANTIC_UI_FOUNDATION.md`, `docs/M3_2_ENML_VISUAL_LANGUAGE.md`, `docs/REFERENCE_ANDROID_UI_DESIGN.md`, and `docs/REFERENCE_NOTES_2026_08_09_UI.md`.
 
-Remaining M3.2 work after this foundation:
+Remaining M3.2 work:
 
-- bounded collection virtualization/recycling rather than materializing unbounded list children;
-- renderer-facing immutable semantic snapshot and dirty/invalidation model;
-- initial design-system token table for typography/spacing/color/shape without vendor visual identity;
+- renderer-facing deterministic command/geometry representation for resolved style roles;
+- deterministic contour/path representation for ENML curve families without binding public ABI to a vendor graphics API;
+- text shaping/font fallback and measurement/reflow integration;
+- collection data-source/recycling protocol rather than only window planning;
 - public app-facing semantic UI API/OSIDL after the in-process contracts stabilize;
-- platform accessibility service/bridge above the semantic snapshot;
+- platform accessibility service/bridge above semantic snapshots;
 - deterministic input/focus routing integration without exposing `/dev/input` or compositor internals to apps;
-- tests for large-text/reflow and one-pane/two-pane recomposition using the same semantic content;
-- GCC, Clang, ASan/UBSan and native AArch64 gates before declaring M3.2 complete.
+- renderer capability/power-quality fallback policy for blur, translucency, depth and motion;
+- secure-system design attribution that application surfaces cannot request or counterfeit;
+- usability/accessibility evaluation and Figma design-system alignment before freezing the visual language.
 
-Hardware DRM/KMS/GPU backend work, rich motion/animation, shell visual identity and telephony UI remain later slices.
+Hardware DRM/KMS/GPU backend work, production shader implementation, rich shell visual identity, telephony UI, verified boot and production hardware key providers remain later slices.
