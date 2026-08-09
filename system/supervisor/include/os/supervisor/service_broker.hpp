@@ -42,6 +42,7 @@ class ServiceBroker final {
 public:
     explicit ServiceBroker(ProcessAuthority& authority) noexcept
         : authority_(&authority) {}
+    ~ServiceBroker();
 
     ServiceBroker(const ServiceBroker&) = delete;
     ServiceBroker& operator=(const ServiceBroker&) = delete;
