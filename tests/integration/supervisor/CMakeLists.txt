@@ -114,6 +114,24 @@ add_test(
     COMMAND supervisor_restart_revocation_test $<TARGET_FILE:system_echo>
 )
 
+# M2.9 product gate: two service supervisors share one boot-scoped identity
+# authority. This intentionally is not labeled m0 because the frozen M0 signal
+# remains the original single-service lifecycle substrate.
+add_executable(supervisor_shared_identity_test supervisor_shared_identity_test.cpp)
+target_link_libraries(supervisor_shared_identity_test PRIVATE
+    emnl::supervisor
+    emnl::echo_generated
+    emnl_warnings
+)
+target_compile_options(supervisor_shared_identity_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(
+    NAME supervisor_shared_identity_test
+    COMMAND supervisor_shared_identity_test $<TARGET_FILE:system_echo>
+)
+set_tests_properties(supervisor_shared_identity_test PROPERTIES LABELS m2-broker)
+
 set_property(TEST
     supervisor_lifecycle_test
     supervisor_crash_loop_test
