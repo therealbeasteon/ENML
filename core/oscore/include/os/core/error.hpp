@@ -11,6 +11,7 @@ enum class ErrorDomain : std::uint16_t {
     storage = 4,
     package = 5,
     security = 6,
+    key = 7,
 };
 
 struct Error final {
