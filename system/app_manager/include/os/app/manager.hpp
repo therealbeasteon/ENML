@@ -10,6 +10,7 @@
 #include <os/accessibility/transport.hpp>
 #include <os/app/bootstrap.hpp>
 #include <os/app/input_event.hpp>
+#include <os/app/lifecycle.hpp>
 #include <os/app/principal_store.hpp>
 #include <os/app/service_session.hpp>
 #include <os/collection/session.hpp>
@@ -32,6 +33,7 @@ inline constexpr std::size_t m1_launch_target_capacity = 32U;
 inline constexpr std::size_t m1_application_profile_capacity = 64U;
 inline constexpr std::size_t m1_application_instance_capacity = 16U;
 inline constexpr std::size_t max_collection_sessions_per_instance = 8U;
+static_assert(m1_application_instance_capacity == max_application_lifecycle_instances);
 
 namespace manager_errors {
 inline constexpr std::uint32_t invalid_target = 100U;
@@ -60,12 +62,9 @@ inline constexpr std::uint32_t collection_session_capacity = 122U;
 inline constexpr std::uint32_t collection_session_exhausted = 123U;
 inline constexpr std::uint32_t collection_authority_denied = 124U;
 inline constexpr std::uint32_t collection_endpoint_unavailable = 125U;
+inline constexpr std::uint32_t lifecycle_revision_exhausted = 126U;
 } // namespace manager_errors
 
-// Trusted Package Service registration. Applications never supply executable
-// paths. The generation directory is already authorized and entry_point is the
-// normalized package-analyzer path. App Manager opens and retains the exact
-// executable object at registration time.
 struct LaunchTargetRegistration final {
     os::package::PackageGenerationRecord package {};
     os::core::NativeHandle generation_directory {};
@@ -73,10 +72,6 @@ struct LaunchTargetRegistration final {
     std::uint32_t readiness_timeout_ms {1000U};
 };
 
-// Trusted per-user application policy. The private data directory is an
-// already-authorized handle. PrincipalId is deliberately absent: App Manager
-// resolves/allocates it from ApplicationPrincipalStore and publishes Storage
-// and Key Service policy from the resulting durable PrincipalId + UserId.
 struct ApplicationProfileRegistration final {
     os::package::ApplicationIdentity application {};
     os::core::UserId user {};
@@ -98,9 +93,6 @@ struct ApplicationInstanceInfo final {
     }
 };
 
-// Move-only service side of one private accessibility capability. App Manager
-// releases it only to the trusted accessibility principal and only for the
-// exact live application PeerIdentity that requested the paired endpoint.
 struct BrokeredAccessibilityEndpoint final {
     std::uint64_t session_id {0U};
     os::core::PeerIdentity application {};
@@ -117,10 +109,6 @@ struct BrokeredAccessibilityEndpoint final {
     }
 };
 
-// Move-only consumer side of one private application-produced collection
-// session. Session authority is the conjunction of exact live application
-// identity, runtime-minted session id and this channel; the numeric id alone is
-// not a globally usable object reference.
 struct BrokeredCollectionEndpoint final {
     std::uint64_t session_id {0U};
     os::core::PeerIdentity application {};
@@ -137,17 +125,6 @@ struct BrokeredCollectionEndpoint final {
     }
 };
 
-// M2 App Manager. Launch requests contain only PackageId plus trusted user
-// context. Active generation, executable object, per-user principal, native
-// credentials, sandbox policy and service policy all come from trusted state.
-//
-// Three-argument mode preserves the Storage-only M1/M2.2 launch contract.
-// Four-argument mode adds the M2.8 Key lifecycle policy publisher but keeps the
-// legacy single fixed Storage endpoint bootstrap.
-// Five-argument M2.9+ mode requires Storage + Keys to share one ProcessAuthority
-// with a trusted ServiceBroker. Bootstrap v2 transfers initial service channels
-// by ServiceId. M2.10 keeps that same bootstrap channel open after READY as a
-// bounded runtime platform-service session for generation-bound reacquisition.
 class ApplicationManager final {
 public:
     ApplicationManager(
@@ -200,30 +177,24 @@ public:
     [[nodiscard]] os::core::Result<ApplicationInstanceInfo>
     instance(os::core::ApplicationInstanceId instance_id) const noexcept;
 
+    // Trusted semantic lifecycle projection for shell/runtime consumers. It
+    // strips native_pid, package code handles, service endpoints, storage roots
+    // and sandbox internals. Snapshot revision advances only when the observed
+    // exact live-instance set changes; repeated reads of the same state are quiet.
+    [[nodiscard]] os::core::Result<ApplicationLifecycleSnapshot>
+    lifecycle_snapshot() const noexcept;
+
     [[nodiscard]] os::core::Result<void>
     terminate(os::core::ApplicationInstanceId instance_id, int signal_number) noexcept;
 
-    // Trusted-runtime delivery seam. The event already names the compositor-
-    // issued exact owner. App Manager finds that live instance by exact
-    // PeerIdentity; callers cannot redirect delivery with an ApplicationInstanceId.
     [[nodiscard]] os::core::Result<void>
     deliver_input_event(const ApplicationInputEventV1& event) noexcept;
 
-    // One-shot trusted accessibility-service claim. `caller` must already be a
-    // supervisor/runtime-resolved identity for the canonical accessibility
-    // principal; `target` must exactly match one live application identity.
-    // Knowledge of a numeric session id or application ProcessId is not enough
-    // to obtain the capability.
     [[nodiscard]] os::core::Result<BrokeredAccessibilityEndpoint>
     take_accessibility_endpoint(
         os::core::PeerIdentity caller,
         os::core::PeerIdentity target) noexcept;
 
-    // One-shot collection consumer claim. Unlike accessibility, applications
-    // may host several collections concurrently, so the trusted consumer must
-    // name the exact runtime-minted session in addition to the exact live app.
-    // The caller identity must already come from trusted runtime/supervisor
-    // resolution and own collection_consumer_principal.
     [[nodiscard]] os::core::Result<BrokeredCollectionEndpoint>
     take_collection_endpoint(
         os::core::PeerIdentity caller,
@@ -281,6 +252,9 @@ private:
     std::uint64_t next_instance_id_ {1U};
     std::uint64_t next_accessibility_session_id_ {1U};
     std::uint64_t next_collection_session_id_ {1U};
+    mutable std::uint64_t lifecycle_revision_ {1U};
+    mutable ApplicationLifecycleSnapshot lifecycle_cache_ {};
+    mutable bool lifecycle_cache_initialized_ {false};
 
     os::ipc::Channel storage_control_ {};
     std::optional<os::storage::StorageControlClient> storage_control_client_ {};

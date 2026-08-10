@@ -1,5 +1,6 @@
 add_library(emnl_compositor_service STATIC
     src/service.cpp
+    src/shell_control.cpp
 )
 add_library(emnl::compositor_service ALIAS emnl_compositor_service)
 

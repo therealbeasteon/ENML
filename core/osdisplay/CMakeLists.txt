@@ -1,5 +1,6 @@
 add_library(osdisplay STATIC
     src/compositor.cpp
+    src/activation.cpp
     src/input.cpp
     src/input_bridge.cpp
     src/trusted_overlay.cpp

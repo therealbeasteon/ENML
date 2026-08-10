@@ -82,6 +82,20 @@ add_test(
 )
 set_tests_properties(accessibility_service_supervisor_test PROPERTIES LABELS m3-ui)
 
+# M4.0 private trusted-shell lifecycle boundary. The forked caller is resolved
+# from SCM_CREDENTIALS; ordinary principals are denied before lifecycle state or
+# protocol details can be enumerated.
+add_executable(shell_lifecycle_control_test shell_lifecycle_control_test.cpp)
+target_link_libraries(shell_lifecycle_control_test PRIVATE
+    emnl::app_manager
+    emnl_warnings
+)
+target_compile_options(shell_lifecycle_control_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME shell_lifecycle_control_test COMMAND shell_lifecycle_control_test)
+set_tests_properties(shell_lifecycle_control_test PROPERTIES LABELS m4-shell)
+
 # The M2.9 fixture consumes the versioned handle-based bootstrap. It receives
 # Storage + Keys by typed ServiceId and never relies on a fixed service fd.
 add_executable(m2_broker_test_app broker_test_app.cpp)

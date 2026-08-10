@@ -14,6 +14,7 @@ enum class ErrorDomain : std::uint16_t {
     key = 7,
     display = 8,
     ui = 9,
+    shell = 10,
 };
 
 struct Error final {
