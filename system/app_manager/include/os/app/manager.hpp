@@ -7,6 +7,7 @@
 
 #include <sys/types.h>
 
+#include <os/accessibility/transport.hpp>
 #include <os/app/bootstrap.hpp>
 #include <os/app/input_event.hpp>
 #include <os/app/principal_store.hpp>
@@ -49,6 +50,10 @@ inline constexpr std::uint32_t broker_misconfigured = 114U;
 inline constexpr std::uint32_t input_target_not_found = 115U;
 inline constexpr std::uint32_t input_endpoint_unavailable = 116U;
 inline constexpr std::uint32_t input_event_replay = 117U;
+inline constexpr std::uint32_t accessibility_target_not_found = 118U;
+inline constexpr std::uint32_t accessibility_endpoint_unavailable = 119U;
+inline constexpr std::uint32_t accessibility_authority_denied = 120U;
+inline constexpr std::uint32_t accessibility_session_exhausted = 121U;
 } // namespace manager_errors
 
 // Trusted Package Service registration. Applications never supply executable
@@ -84,6 +89,25 @@ struct ApplicationInstanceInfo final {
     [[nodiscard]] bool valid() const noexcept {
         return instance.value() != 0U && application.valid() && generation.value() != 0U &&
             content.valid() && os::core::valid_peer_identity(identity) && native_pid > 0;
+    }
+};
+
+// Move-only service side of one private accessibility capability. App Manager
+// releases it only to the trusted accessibility principal and only for the
+// exact live application PeerIdentity that requested the paired endpoint.
+struct BrokeredAccessibilityEndpoint final {
+    std::uint64_t session_id {0U};
+    os::core::PeerIdentity application {};
+    os::ipc::Channel channel {};
+
+    BrokeredAccessibilityEndpoint() noexcept = default;
+    BrokeredAccessibilityEndpoint(const BrokeredAccessibilityEndpoint&) = delete;
+    BrokeredAccessibilityEndpoint& operator=(const BrokeredAccessibilityEndpoint&) = delete;
+    BrokeredAccessibilityEndpoint(BrokeredAccessibilityEndpoint&&) noexcept = default;
+    BrokeredAccessibilityEndpoint& operator=(BrokeredAccessibilityEndpoint&&) noexcept = default;
+
+    [[nodiscard]] bool valid() const noexcept {
+        return session_id != 0U && os::core::valid_peer_identity(application) && channel.valid();
     }
 };
 
@@ -159,6 +183,16 @@ public:
     [[nodiscard]] os::core::Result<void>
     deliver_input_event(const ApplicationInputEventV1& event) noexcept;
 
+    // One-shot trusted accessibility-service claim. `caller` must already be a
+    // supervisor/runtime-resolved identity for the canonical accessibility
+    // principal; `target` must exactly match one live application identity.
+    // Knowledge of a numeric session id or application ProcessId is not enough
+    // to obtain the capability.
+    [[nodiscard]] os::core::Result<BrokeredAccessibilityEndpoint>
+    take_accessibility_endpoint(
+        os::core::PeerIdentity caller,
+        os::core::PeerIdentity target) noexcept;
+
 private:
     struct LaunchTarget final {
         bool occupied {false};
@@ -186,6 +220,8 @@ private:
         os::ipc::Channel service_session {};
         os::ipc::Channel input_event_sender {};
         std::uint64_t last_input_event_sequence {0U};
+        os::ipc::Channel accessibility_service_endpoint {};
+        std::uint64_t accessibility_session_id {0U};
         std::array<os::core::ServiceId, max_application_service_endpoints_v2> services {};
         std::uint16_t service_count {0U};
     };
@@ -199,6 +235,7 @@ private:
     std::array<ApplicationProfile, m1_application_profile_capacity> profiles_ {};
     std::array<InstanceSlot, m1_application_instance_capacity> instances_ {};
     std::uint64_t next_instance_id_ {1U};
+    std::uint64_t next_accessibility_session_id_ {1U};
 
     os::ipc::Channel storage_control_ {};
     std::optional<os::storage::StorageControlClient> storage_control_client_ {};
