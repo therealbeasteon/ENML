@@ -58,8 +58,11 @@ inline constexpr ResourceBudget service_budgets[] {
         .service_id = 0x0000F001U,
         .principal_high = system_principal_high,
         .principal_low = 0x000000000000F001ULL,
+        // Measured 3516 KiB (x86-64) / 3012 KiB (AArch64), ready in 2 ms,
+        // 0 idle wakeups. Ceilings carry deliberate headroom over the higher
+        // architecture, not over the number we wish we had.
         .max_resident_kib = 4096U,
-        .max_ready_ms = 750U,
+        .max_ready_ms = 250U,
         .max_idle_wakeups_per_second = 5U,
         .idle_window_ms = 1000U,
     },
@@ -73,8 +76,10 @@ inline constexpr ResourceBudget service_budgets[] {
         .service_id = 0x0000F020U,
         .principal_high = system_principal_high,
         .principal_low = 0x000000000000F020ULL,
-        .max_resident_kib = 6144U,
-        .max_ready_ms = 750U,
+        // Measured 3572 KiB (x86-64) / 3088 KiB (AArch64), ready in 1 ms,
+        // 0 idle wakeups after the dispatch loop was fixed to block.
+        .max_resident_kib = 4608U,
+        .max_ready_ms = 250U,
         .max_idle_wakeups_per_second = 5U,
         .idle_window_ms = 1000U,
     },
