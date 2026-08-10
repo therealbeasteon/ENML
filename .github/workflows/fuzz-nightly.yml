@@ -1,0 +1,148 @@
+name: Fuzz Nightly
+
+# The per-PR fuzz-smoke job in ci.yml runs each target for 1000-5000 executions,
+# which takes about a second and proves the harnesses still build and do not
+# crash on trivial input. That is a build gate, not fuzzing.
+#
+# This workflow is the actual fuzzing: seeded corpora, dictionaries, meaningful
+# wall-clock, and a corpus that persists between runs so coverage accumulates
+# instead of restarting from nothing every night. The two are complementary and
+# the smoke job is deliberately left untouched, since PR feedback must stay fast.
+
+on:
+  schedule:
+    # Deliberately off the hour: scheduled runners are heavily contended at :00.
+    - cron: '37 3 * * *'
+  workflow_dispatch:
+    inputs:
+      duration_seconds:
+        description: Per-target fuzzing duration in seconds
+        required: false
+        default: '600'
+  # A schedule-only workflow is never exercised before it is merged. Running a
+  # short version whenever the fuzz infrastructure itself changes means a broken
+  # harness, dictionary or seed generator is caught by the PR that breaks it
+  # rather than by a silent 3am failure. Ordinary PRs are unaffected.
+  pull_request:
+    paths:
+      - 'fuzz/**'
+      - '.github/workflows/fuzz-nightly.yml'
+
+concurrency:
+  group: fuzz-nightly
+  cancel-in-progress: false
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    strategy:
+      # One target finding a crash must not cancel the others: each is an
+      # independent parser and we want every night's full result.
+      fail-fast: false
+      matrix:
+        include:
+          - target: ipc_decoder_fuzz
+            dictionary: fuzz/dict/ipc_wire.dict
+          - target: rpc_error_fuzz
+            dictionary: fuzz/dict/ipc_wire.dict
+          - target: osidlc_compiler_fuzz
+            dictionary: fuzz/dict/osidl.dict
+          - target: package_manifest_fuzz
+            dictionary: ''
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Configure fuzz build
+        run: >-
+          cmake -S . -B build/fuzz -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF
+          -DEMNL_BUILD_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++
+
+      - name: Build ${{ matrix.target }}
+        run: cmake --build build/fuzz --target ${{ matrix.target }} --parallel 2
+
+      - name: Materialize seed corpus
+        run: python3 fuzz/corpus/generate_seeds.py build/fuzz/seeds
+
+      # Restoring by prefix picks up the most recent saved corpus. The exact key
+      # includes the run id so every night writes a new entry rather than
+      # colliding with an immutable existing one.
+      - name: Restore accumulated corpus
+        uses: actions/cache/restore@v4
+        with:
+          path: build/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: |
+            fuzz-corpus-${{ matrix.target }}-
+
+      - name: Fuzz ${{ matrix.target }}
+        env:
+          # Matches the existing smoke job. Leak detection on these harnesses is
+          # a separate change: it needs the known allocation behavior of the
+          # osidlc compiler triaged first, and turning it on blind would make
+          # the nightly signal unreliable on day one.
+          ASAN_OPTIONS: detect_leaks=0
+          UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
+          # Validation runs on a fuzz-infrastructure PR only need to prove the
+          # plumbing works, not to search; the nightly run does the searching.
+          DURATION: ${{ github.event.inputs.duration_seconds || (github.event_name == 'pull_request' && '60' || '600') }}
+        run: |
+          set -euo pipefail
+          corpus="build/fuzz/corpus/${{ matrix.target }}"
+          seeds="build/fuzz/seeds/${{ matrix.target }}"
+          mkdir -p "$corpus" crashes
+          if [ -d "$seeds" ]; then
+            cp -n "$seeds"/* "$corpus"/ 2>/dev/null || true
+          fi
+
+          dict_arg=""
+          if [ -n "${{ matrix.dictionary }}" ]; then
+            dict_arg="-dict=${{ matrix.dictionary }}"
+          fi
+
+          echo "corpus entries before: $(find "$corpus" -type f | wc -l)"
+          ./build/fuzz/fuzz/${{ matrix.target }} \
+            "$corpus" \
+            $dict_arg \
+            -max_total_time="$DURATION" \
+            -print_final_stats=1 \
+            -rss_limit_mb=2048 \
+            -timeout=25 \
+            -artifact_prefix=crashes/
+          echo "corpus entries after: $(find "$corpus" -type f | wc -l)"
+
+      # Minimizing keeps the cached corpus from growing without bound while
+      # preserving coverage, so tomorrow's run starts from the same reach at a
+      # fraction of the entries.
+      - name: Minimize corpus
+        if: success()
+        run: |
+          set -euo pipefail
+          corpus="build/fuzz/corpus/${{ matrix.target }}"
+          merged="build/fuzz/merged/${{ matrix.target }}"
+          mkdir -p "$merged"
+          ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/${{ matrix.target }} \
+            -merge=1 "$merged" "$corpus"
+          rm -rf "$corpus"
+          mv "$merged" "$corpus"
+          echo "corpus entries after minimize: $(find "$corpus" -type f | wc -l)"
+
+      # PR validation runs must not write to the shared corpus cache: a 60-second
+      # branch run would otherwise overwrite the accumulated nightly coverage.
+      - name: Save accumulated corpus
+        if: success() && github.event_name != 'pull_request'
+        uses: actions/cache/save@v4
+        with:
+          path: build/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+
+      # A crashing input is the entire point of the run. Preserve it as an
+      # artifact so the reproducer survives the runner.
+      - name: Upload crash reproducers
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashes-${{ matrix.target }}
+          path: crashes/
+          if-no-files-found: ignore
+          retention-days: 30
