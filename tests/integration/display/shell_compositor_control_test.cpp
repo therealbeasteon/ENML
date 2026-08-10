@@ -12,6 +12,7 @@
 #include <os/display/error.hpp>
 #include <os/display/shell_control.hpp>
 #include <os/ipc/constants.hpp>
+#include <os/shell/compositor_client.hpp>
 
 namespace {
 
@@ -115,7 +116,7 @@ int main() {
     assert(trusted_child >= 0);
     if (trusted_child == 0) {
         trusted_pair[0].close();
-        os::display::ShellCompositorControlClient client{trusted_pair[1]};
+        os::shell::ShellCompositorClient client{trusted_pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
         auto activated = client.activate_exact(app_one, first.id, scratch);
         if (!activated) ::_exit(20);
@@ -143,7 +144,7 @@ int main() {
     assert(ordinary_child >= 0);
     if (ordinary_child == 0) {
         denied_pair[0].close();
-        os::display::ShellCompositorControlClient client{denied_pair[1]};
+        os::shell::ShellCompositorClient client{denied_pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> child_scratch{};
         auto denied = client.activate_exact(app_two, second.id, child_scratch);
         if (denied || denied.error().domain != os::core::ErrorDomain::service ||
@@ -170,7 +171,7 @@ int main() {
     assert(mismatch_child >= 0);
     if (mismatch_child == 0) {
         mismatch_pair[0].close();
-        os::display::ShellCompositorControlClient client{mismatch_pair[1]};
+        os::shell::ShellCompositorClient client{mismatch_pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> child_scratch{};
         auto mismatch = client.activate_exact(app_one, second.id, child_scratch);
         if (mismatch || mismatch.error().domain != os::core::ErrorDomain::display ||
@@ -197,7 +198,7 @@ int main() {
     assert(stale_child >= 0);
     if (stale_child == 0) {
         stale_pair[0].close();
-        os::display::ShellCompositorControlClient client{stale_pair[1]};
+        os::shell::ShellCompositorClient client{stale_pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> child_scratch{};
         auto stale = client.activate_exact(app_one, stale_surface, child_scratch);
         if (stale || stale.error().domain != os::core::ErrorDomain::display ||
