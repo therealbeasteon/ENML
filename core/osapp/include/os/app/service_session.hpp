@@ -13,11 +13,17 @@
 namespace os::app {
 
 // M2.10 private application/runtime control protocol. It is deliberately a
-// narrow endpoint-reacquisition session, not a caller-selected daemon bus.
+// narrow trusted-runtime session, not a caller-selected daemon bus.
 inline constexpr os::core::ServiceId application_service_session_id{0x0000F011U};
 inline constexpr std::uint32_t application_service_session_operation_acquire = 1U;
+inline constexpr std::uint32_t application_service_session_operation_acquire_input_events = 2U;
+inline constexpr std::uint32_t application_service_session_operation_acquire_accessibility = 3U;
+inline constexpr std::uint32_t application_service_session_operation_acquire_collection = 4U;
 inline constexpr std::uint16_t application_service_session_version_v1 = 1U;
 inline constexpr std::uint16_t application_service_session_payload_size_v1 = 16U;
+inline constexpr std::uint16_t application_input_endpoint_payload_size_v1 = 4U;
+inline constexpr std::uint16_t application_accessibility_endpoint_payload_size_v1 = 12U;
+inline constexpr std::uint16_t application_collection_endpoint_payload_size_v1 = 12U;
 
 // The application may report the generation it last observed. This is advisory
 // state only: it never selects a service implementation, ProcessId, PrincipalId
@@ -25,6 +31,21 @@ inline constexpr std::uint16_t application_service_session_payload_size_v1 = 16U
 // generation or an error.
 struct ServiceAcquireRequestV1 final {
     os::ipc::WireHeaderV1 request_header {};
+    os::core::ServiceId service {};
+    std::uint64_t known_generation {0U};
+    os::ipc::KernelPeerCredentials sender {};
+};
+
+enum class RuntimeSessionRequestKind : std::uint8_t {
+    acquire_service = 1U,
+    acquire_input_events = 2U,
+    acquire_accessibility = 3U,
+    acquire_collection = 4U,
+};
+
+struct RuntimeSessionRequestV1 final {
+    os::ipc::WireHeaderV1 request_header {};
+    RuntimeSessionRequestKind kind {RuntimeSessionRequestKind::acquire_service};
     os::core::ServiceId service {};
     std::uint64_t known_generation {0U};
     os::ipc::KernelPeerCredentials sender {};
@@ -46,9 +67,47 @@ struct PlatformServiceEndpoint final {
     }
 };
 
+// Application side of one App Manager-minted accessibility capability. The
+// numeric session is meaningful only together with this move-only channel; it
+// is not a globally discoverable application identifier.
+struct PlatformAccessibilityEndpoint final {
+    std::uint64_t session_id {0U};
+    os::ipc::Channel channel {};
+
+    PlatformAccessibilityEndpoint() noexcept = default;
+    PlatformAccessibilityEndpoint(const PlatformAccessibilityEndpoint&) = delete;
+    PlatformAccessibilityEndpoint& operator=(const PlatformAccessibilityEndpoint&) = delete;
+    PlatformAccessibilityEndpoint(PlatformAccessibilityEndpoint&&) noexcept = default;
+    PlatformAccessibilityEndpoint& operator=(PlatformAccessibilityEndpoint&&) noexcept = default;
+
+    [[nodiscard]] bool valid() const noexcept {
+        return session_id != 0U && channel.valid();
+    }
+};
+
+// Producer/application side of one App Manager-minted collection capability.
+// The application hosts CollectionSessionServer on this channel. App Manager
+// retains the paired consumer endpoint for a one-shot exact-owner claim by the
+// trusted semantic collection consumer.
+struct PlatformCollectionEndpoint final {
+    std::uint64_t session_id {0U};
+    os::ipc::Channel channel {};
+
+    PlatformCollectionEndpoint() noexcept = default;
+    PlatformCollectionEndpoint(const PlatformCollectionEndpoint&) = delete;
+    PlatformCollectionEndpoint& operator=(const PlatformCollectionEndpoint&) = delete;
+    PlatformCollectionEndpoint(PlatformCollectionEndpoint&&) noexcept = default;
+    PlatformCollectionEndpoint& operator=(PlatformCollectionEndpoint&&) noexcept = default;
+
+    [[nodiscard]] bool valid() const noexcept {
+        return session_id != 0U && channel.valid();
+    }
+};
+
 // Application-side session layered over the bootstrap-v2 control channel after
 // READY. The channel remains long-lived for the application process lifetime.
-// Returned service endpoints are move-only generation-bound capabilities.
+// Returned service/event endpoints are move-only capabilities created or
+// selected by trusted runtime state, never by a native descriptor in payload.
 class PlatformServiceSession final {
 public:
     explicit PlatformServiceSession(os::ipc::Channel& channel) noexcept
@@ -63,12 +122,39 @@ public:
         std::uint64_t known_generation,
         os::core::MutableByteSpan receive_buffer) noexcept;
 
+    // Requests a fresh private runtime→application input event channel. No
+    // target identity is supplied by the application; the runtime binds the
+    // endpoint to the already-authenticated application session.
+    [[nodiscard]] os::core::Result<os::ipc::Channel>
+    acquire_input_events(os::core::MutableByteSpan receive_buffer) noexcept;
+
+    // Requests the application side of a private accessibility channel plus a
+    // runtime-minted session id. The request contains no target identity or
+    // trusted-accessibility-service identity; App Manager binds the capability
+    // to this already-authenticated application runtime.
+    [[nodiscard]] os::core::Result<PlatformAccessibilityEndpoint>
+    acquire_accessibility(os::core::MutableByteSpan receive_buffer) noexcept;
+
+    // Requests one fresh producer-side collection capability. The request is
+    // intentionally empty: the application cannot name another process,
+    // consumer principal, session id, or native descriptor. Multiple sessions
+    // are allowed only within App Manager's fixed per-instance capacity.
+    [[nodiscard]] os::core::Result<PlatformCollectionEndpoint>
+    acquire_collection(os::core::MutableByteSpan receive_buffer) noexcept;
+
 private:
     os::ipc::ClientConnection connection_;
 };
 
-// Trusted runtime-side codec entry point. The caller must authenticate sender
-// credentials against ProcessAuthority before granting an endpoint.
+// Generic trusted runtime-side decoder used by App Manager. The sender's
+// SCM_CREDENTIALS are returned for authorization against ProcessAuthority.
+[[nodiscard]] os::core::Result<RuntimeSessionRequestV1>
+receive_runtime_session_request(
+    os::ipc::Channel& channel,
+    os::core::MutableByteSpan receive_buffer) noexcept;
+
+// Compatibility entry point for the original service-acquisition-only server
+// tests/callers. It rejects any other runtime-session operation.
 [[nodiscard]] os::core::Result<ServiceAcquireRequestV1>
 receive_service_acquire_request(
     os::ipc::Channel& channel,
@@ -80,6 +166,26 @@ send_service_acquire_response(
     const os::ipc::WireHeaderV1& request_header,
     os::core::ServiceId service,
     std::uint64_t generation,
+    const os::core::NativeHandle& endpoint) noexcept;
+
+[[nodiscard]] os::core::Result<void>
+send_input_event_endpoint_response(
+    os::ipc::Channel& channel,
+    const os::ipc::WireHeaderV1& request_header,
+    const os::core::NativeHandle& endpoint) noexcept;
+
+[[nodiscard]] os::core::Result<void>
+send_accessibility_endpoint_response(
+    os::ipc::Channel& channel,
+    const os::ipc::WireHeaderV1& request_header,
+    std::uint64_t session_id,
+    const os::core::NativeHandle& endpoint) noexcept;
+
+[[nodiscard]] os::core::Result<void>
+send_collection_endpoint_response(
+    os::ipc::Channel& channel,
+    const os::ipc::WireHeaderV1& request_header,
+    std::uint64_t session_id,
     const os::core::NativeHandle& endpoint) noexcept;
 
 } // namespace os::app

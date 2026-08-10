@@ -21,7 +21,7 @@ namespace {
 
 [[nodiscard]] constexpr bool valid_error_domain(std::uint16_t raw) noexcept {
     return raw >= static_cast<std::uint16_t>(os::core::ErrorDomain::core) &&
-        raw <= static_cast<std::uint16_t>(os::core::ErrorDomain::display);
+        raw <= static_cast<std::uint16_t>(os::core::ErrorDomain::ui);
 }
 
 } // namespace

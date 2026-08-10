@@ -1,32 +1,39 @@
-# EMNL OS M0
+# ENML OS
 
-Incremental implementation of the first EMNL OS userspace slice.
+ENML OS is an incremental phone-OS project focused on a compact trusted computing base, explicit subsystem ownership, security by default, low resource consumption, fast response/startup, minimal unnecessary background activity, power efficiency, hardware portability and an original accessible mobile UX.
 
-Current checkpoint:
+The project takes historical and contemporary OS/security/UI references as engineering guidance rather than as implementations or visual templates to copy. In particular, “Symbian-like” means compactness, modular ownership and event-driven resource discipline — not Symbian ABI compatibility or a recreation of its UI.
 
-- M0.0 build/repository foundation
-- M0.1 `liboscore`
-- M0.2 bounded `libosipc` wire codec
-- M0.3 Linux `AF_UNIX` / `SOCK_SEQPACKET` channel transport
-- M0.4 minimal `osidlc` compiler with generated Echo types/codecs/ABI metadata
-- M0.5 typed cross-process Echo RPC with generated client/dispatcher bindings
-- M0.6 `os-supervisor` lifecycle/bootstrap/readiness/restart vertical slice
-- M0.7 trusted runtime identity (`PeerIdentity`, supervisor registry, pidfd-backed stale-PID defense)
-- M0.8 initial Linux service sandbox (`no_new_privs`, empty capabilities, seccomp, bounded rlimits, fixed environment, adversarial probe)
-- M0.9 adversarial/fault/resource certification gate (IPC handle flood, revocation/restart race, active rlimit probes, expanded seccomp escape matrix, RPC baseline, RPC error fuzzing)
-- M0.10 ARM64 native + cross-build/QEMU validation — COMPLETE
+## Current milestone
 
-M0.3 includes bounded packet receive, `SCM_RIGHTS` descriptor transfer, kernel-supplied per-message credentials via `SCM_CREDENTIALS`, connection credentials via `SO_PEERCRED`, strict ancillary validation, and peer-death behavior.
+Completed foundations include:
 
-Kernel PID/UID/GID are transport evidence only. M0.7 now resolves those credentials through supervisor-published, pidfd-backed process records into `PeerIdentity { PrincipalId, UserId, ProcessId }` before generated service dispatch.
+- M0: bounded core/IPC/OSIDL, supervised services, trusted runtime identity, Linux sandboxing and native AArch64 validation;
+- M1: package/application foundation and lifecycle ownership;
+- M2: key/private-storage/service-broker foundations;
+- M3.0: compositor/surface ownership and trusted scene ordering;
+- M3.1: typed shared buffers and supervised `system.compositor` service.
 
-M0.4 adds the first deliberately small OSIDL language and build-time C++ generation. The current M0 struct encoding is named `appendable-positional-v0` and is explicitly pre-freeze.
+M3.2 is active on `m3-2-semantic-ui-foundation` / PR #26. It is building the bounded semantic UI, accessibility, collections, text, input and concrete renderer foundation above the compositor substrate. See `docs/M3_STATUS.md` and `docs/M3_2_EXIT_CRITERIA.md` for the exact implemented/current/remaining state.
 
-M0.5 adds the first typed RPC path: generated clients encode requests through `libosipc`, `ClientConnection` assigns and validates RequestIds, generated dispatchers validate and decode requests, and typed responses/errors cross a real `SOCK_SEQPACKET` process boundary.
+The M3.2 branch already has real CPU-side ENML material/text pixels, not just UI mockups, but it deliberately does **not** claim a final production Unicode/font backend, final GPU renderer, final trust mark or final translucent material implementation yet.
 
-M0.6 adds a real `os-supervisor` and `system.echo` executable. The supervisor launches the service by direct `fork`/`exec`, passes a bounded bootstrap record over a private control channel, waits for explicit readiness, allocates a new logical ProcessId per generation, exposes reconnectable service endpoints, restarts on failure with bounded backoff, suppresses crash loops, and rejects never-ready children by timeout. No text manifest parser or shell execution exists in the supervisor.
+## Architectural rules
 
-## Build
+ENML development is expected to preserve these invariants:
+
+- applications receive semantic/bounded APIs rather than raw privileged Linux device interfaces;
+- identity/ownership is re-authorized at subsystem boundaries rather than accepted from application payloads;
+- capacities, queues, shared-memory budgets and work scheduling are explicit and bounded;
+- stale generations/revisions/frames fail closed rather than aliasing replacement state;
+- UI meaning/accessibility comes from semantics, not framebuffer scraping;
+- motion/input/accessibility/collection work is event-driven and should become quiet when there is no useful work;
+- renderer implementation details such as font files, glyph IDs, RGB mappings, GPU handles and compositor internals remain platform-private;
+- richer optical effects must degrade without changing ENML's semantic hierarchy or original visual identity.
+
+## Build and test
+
+Host debug build:
 
 ```sh
 cmake --preset host-debug
@@ -42,25 +49,47 @@ cmake --build --preset host-asan
 ctest --preset host-asan
 ```
 
-Run the supervisor manually:
+Focused M3 UI tests:
 
 ```sh
-./build/host-debug/system/supervisor/os-supervisor \
-  --echo-executable ./build/host-debug/system/services/echo/system.echo
+ctest --preset host-debug --output-on-failure -L '^m3-ui$'
 ```
 
-Stop it with Ctrl-C or SIGTERM.
+Focused M3 display/compositor tests:
 
-Generate Echo manually after a build:
+```sh
+ctest --preset host-debug --output-on-failure -L '^m3-display$'
+```
+
+CI also exercises Clang and native AArch64 gates; the current PR head is not considered validated merely because an older branch head was green.
+
+## Repository map
+
+- `core/oscore` — stable core identities/results/errors and bounded primitives
+- `core/osipc` — local IPC transport/RPC foundations
+- `core/osdisplay` — surfaces, buffers, compositor authority, trusted presentation/input seams
+- `core/osui` — semantic UI, accessibility, layout, collections, design tokens, text/input/motion and CPU raster foundations
+- `interfaces` — OSIDL definitions/generation examples and service interfaces
+- `system/services` — supervised system-service implementations
+- `system/supervisor` — service lifecycle/bootstrap/runtime identity authority
+- `system/app_manager` — application lifecycle/sandbox ownership
+- `tests` — unit, integration, adversarial and architecture-specific validation
+- `docs` — milestone contracts, threat/architecture notes, project vision and reference-use rules
+
+## OSIDL
+
+The repository includes a deliberately small build-time OSIDL compiler. The current encoding remains pre-freeze; new public interfaces should be frozen only after their in-process security/ownership semantics have stabilized.
+
+Example generation after a host build:
 
 ```sh
 ./build/host-debug/tools/osidlc/osidlc \
   --input interfaces/echo/echo.osidl \
-  --out-dir /tmp/emnl-echo-generated
+  --out-dir /tmp/enml-echo-generated
 ```
 
-M0.8 adds a pre-exec Linux sandbox for supervised services: fixed environment, deny-by-default inherited descriptors, `PR_SET_NO_NEW_PRIVS`, empty effective/permitted/inheritable capability sets, bounded resource limits, parent-death kill behavior, and a seccomp filter for privilege/namespace/kernel-control syscalls. An `evil_echo_service` integration fixture verifies the sandbox before announcing readiness.
+## Project direction
 
-An opt-in Landlock filesystem policy is implemented. The local development container returns `ENOSYS` for Landlock and therefore records a skip there, but the final native AArch64 GitHub run executed `sandbox_landlock_test` as a real pass.
+The canonical product charter is `docs/PROJECT_VISION.md`. The reference-use guardrails live in `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md` and `docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md`.
 
-M0 is complete. The final M0.10 gate passed on native AArch64 (32/32 tests, including Landlock) and on the independent x86-64 → AArch64 cross-build/QEMU-safe CI path. See `docs/M0_10_ARM64.md`. The next track is M1: package identity, immutable package generations, Package Service, App Manager lifecycle, application principals, and per-app sandboxing.
+The intended UI character is original ENML: classic/crafted/luxurious, colorful, dimensional and curve-authored, with controlled translucency and meaningful motion. It must stay legible, responsive and recognizably ENML when accessibility, capability, thermal/power or frame-budget constraints reduce premium effects.

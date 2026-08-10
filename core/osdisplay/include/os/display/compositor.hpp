@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include <os/core/result.hpp>
+#include <os/display/input.hpp>
 #include <os/display/types.hpp>
 
 namespace os::display {
@@ -54,6 +55,24 @@ public:
 
     [[nodiscard]] SceneSnapshot scene_snapshot() const noexcept;
 
+    // Privileged input routing asks the compositor to choose the topmost
+    // visible/framed/input-enabled surface. The result carries the exact owner,
+    // surface identity, presented frame sequence and surface-local coordinates
+    // needed by a trusted input bridge without exposing global scene state to
+    // the eventual application endpoint.
+    [[nodiscard]] os::core::Result<SurfaceInputHit> hit_test_input(
+        std::int32_t x,
+        std::int32_t y) const noexcept;
+
+    // Re-check a previously issued hit immediately before privileged delivery.
+    // Surface lifetime, exact owner, role, presented frame, size, visibility
+    // and input eligibility must still match. This gives a future input service
+    // an explicit TOCTOU defense rather than treating a hit result as a bearer
+    // token that remains valid after scene mutation.
+    [[nodiscard]] os::core::Result<void> validate_input_hit(
+        const SurfaceInputHit& hit) const noexcept;
+
+    // Compatibility helper for existing callers that need only SurfaceId.
     [[nodiscard]] os::core::Result<SurfaceId> hit_test(
         std::int32_t x,
         std::int32_t y) const noexcept;

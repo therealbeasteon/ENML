@@ -16,6 +16,8 @@
 namespace {
 
 constexpr os::core::ServiceId storage_service{0x0000F020U};
+constexpr std::uint64_t accessibility_session_id = 0xA110U;
+constexpr std::uint64_t collection_session_id = 0xC011U;
 
 } // namespace
 
@@ -24,22 +26,37 @@ int main() {
     assert(pair_result);
     auto pair = std::move(pair_result).value();
 
-    // Runtime reacquisition returns a Channel capability, not an arbitrary fd.
-    // Use a real AF_UNIX SOCK_SEQPACKET endpoint so Channel::adopt() exercises
-    // the same transport contract used by supervised platform services.
+    // Runtime reacquisition returns Channel capabilities, not arbitrary fd
+    // integers. Use real AF_UNIX SOCK_SEQPACKET endpoints so Channel::adopt()
+    // exercises the same SCM_RIGHTS transport contract used by the runtime.
     auto endpoint_pair_result = os::ipc::Channel::create_local_pair();
     assert(endpoint_pair_result);
     auto endpoint_pair = std::move(endpoint_pair_result).value();
+    auto input_pair_result = os::ipc::Channel::create_local_pair();
+    assert(input_pair_result);
+    auto input_pair = std::move(input_pair_result).value();
+    auto accessibility_pair_result = os::ipc::Channel::create_local_pair();
+    assert(accessibility_pair_result);
+    auto accessibility_pair = std::move(accessibility_pair_result).value();
+    auto collection_pair_result = os::ipc::Channel::create_local_pair();
+    assert(collection_pair_result);
+    auto collection_pair = std::move(collection_pair_result).value();
 
     const pid_t child = ::fork();
     assert(child >= 0);
     if (child == 0) {
         pair[0].close();
         // The child must not succeed through descriptors inherited at fork. Its
-        // only usable service endpoint is the SCM_RIGHTS duplicate returned by
-        // PlatformServiceSession::acquire().
+        // usable endpoints arrive only as SCM_RIGHTS duplicates from the
+        // authenticated runtime session.
         endpoint_pair[0].close();
         endpoint_pair[1].close();
+        input_pair[0].close();
+        input_pair[1].close();
+        accessibility_pair[0].close();
+        accessibility_pair[1].close();
+        collection_pair[0].close();
+        collection_pair[1].close();
 
         os::app::PlatformServiceSession session{pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
@@ -57,6 +74,29 @@ int main() {
         std::byte marker{};
         assert(::recv(endpoint.channel.native_fd(), &marker, 1U, 0) == 1);
         assert(marker == std::byte{0x5A});
+
+        auto input_events = session.acquire_input_events(scratch);
+        assert(input_events);
+        auto input_channel = std::move(input_events).value();
+        assert(input_channel.valid());
+        assert(::recv(input_channel.native_fd(), &marker, 1U, 0) == 1);
+        assert(marker == std::byte{0x6B});
+
+        auto accessibility = session.acquire_accessibility(scratch);
+        assert(accessibility);
+        auto accessibility_endpoint = std::move(accessibility).value();
+        assert(accessibility_endpoint.valid());
+        assert(accessibility_endpoint.session_id == accessibility_session_id);
+        assert(::recv(accessibility_endpoint.channel.native_fd(), &marker, 1U, 0) == 1);
+        assert(marker == std::byte{0x7C});
+
+        auto collection = session.acquire_collection(scratch);
+        assert(collection);
+        auto collection_endpoint = std::move(collection).value();
+        assert(collection_endpoint.valid());
+        assert(collection_endpoint.session_id == collection_session_id);
+        assert(::recv(collection_endpoint.channel.native_fd(), &marker, 1U, 0) == 1);
+        assert(marker == std::byte{0x8D});
         std::_Exit(0);
     }
 
@@ -79,8 +119,73 @@ int main() {
         8U,
         transfer));
 
-    const std::byte marker{0x5A};
-    assert(::send(endpoint_pair[1].native_fd(), &marker, 1U, MSG_NOSIGNAL) == 1);
+    const std::byte service_marker{0x5A};
+    assert(::send(endpoint_pair[1].native_fd(), &service_marker, 1U, MSG_NOSIGNAL) == 1);
+
+    auto input_request = os::app::receive_runtime_session_request(pair[0], scratch);
+    assert(input_request);
+    assert(input_request.value().kind == os::app::RuntimeSessionRequestKind::acquire_input_events);
+    assert(input_request.value().service.value() == 0U);
+    assert(input_request.value().known_generation == 0U);
+    assert(input_request.value().sender.process_id == static_cast<std::int64_t>(child));
+
+    auto input_transfer = input_pair[0].take_native_handle_for_transfer();
+    assert(input_transfer.valid());
+    assert(os::app::send_input_event_endpoint_response(
+        pair[0],
+        input_request.value().request_header,
+        input_transfer));
+
+    const std::byte input_marker{0x6B};
+    assert(::send(input_pair[1].native_fd(), &input_marker, 1U, MSG_NOSIGNAL) == 1);
+
+    auto accessibility_request = os::app::receive_runtime_session_request(pair[0], scratch);
+    assert(accessibility_request);
+    assert(
+        accessibility_request.value().kind ==
+        os::app::RuntimeSessionRequestKind::acquire_accessibility);
+    assert(accessibility_request.value().service.value() == 0U);
+    assert(accessibility_request.value().known_generation == 0U);
+    assert(accessibility_request.value().sender.process_id == static_cast<std::int64_t>(child));
+
+    auto accessibility_transfer = accessibility_pair[0].take_native_handle_for_transfer();
+    assert(accessibility_transfer.valid());
+    assert(os::app::send_accessibility_endpoint_response(
+        pair[0],
+        accessibility_request.value().request_header,
+        accessibility_session_id,
+        accessibility_transfer));
+
+    const std::byte accessibility_marker{0x7C};
+    assert(::send(
+        accessibility_pair[1].native_fd(),
+        &accessibility_marker,
+        1U,
+        MSG_NOSIGNAL) == 1);
+
+    auto collection_request = os::app::receive_runtime_session_request(pair[0], scratch);
+    assert(collection_request);
+    assert(
+        collection_request.value().kind ==
+        os::app::RuntimeSessionRequestKind::acquire_collection);
+    assert(collection_request.value().service.value() == 0U);
+    assert(collection_request.value().known_generation == 0U);
+    assert(collection_request.value().sender.process_id == static_cast<std::int64_t>(child));
+
+    auto collection_transfer = collection_pair[0].take_native_handle_for_transfer();
+    assert(collection_transfer.valid());
+    assert(os::app::send_collection_endpoint_response(
+        pair[0],
+        collection_request.value().request_header,
+        collection_session_id,
+        collection_transfer));
+
+    const std::byte collection_marker{0x8D};
+    assert(::send(
+        collection_pair[1].native_fd(),
+        &collection_marker,
+        1U,
+        MSG_NOSIGNAL) == 1);
 
     int status = 0;
     assert(::waitpid(child, &status, 0) == child);

@@ -1,5 +1,9 @@
 add_library(osdisplay STATIC
     src/compositor.cpp
+    src/input.cpp
+    src/input_bridge.cpp
+    src/trusted_overlay.cpp
+    src/trusted_mark.cpp
     src/buffer_linux.cpp
 )
 add_library(emnl::osdisplay ALIAS osdisplay)

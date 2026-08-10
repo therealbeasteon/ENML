@@ -27,6 +27,20 @@ namespace {
     return role == SurfaceRole::popup ? 2U : 1U;
 }
 
+[[nodiscard]] constexpr TrustedPresentation trusted_presentation_for(
+    SurfaceRole role) noexcept {
+    switch (role) {
+    case SurfaceRole::application:
+    case SurfaceRole::popup:
+        return TrustedPresentation::none;
+    case SurfaceRole::system_chrome:
+        return TrustedPresentation::system_chrome;
+    case SurfaceRole::secure_system:
+        return TrustedPresentation::secure_system;
+    }
+    return TrustedPresentation::none;
+}
+
 [[nodiscard]] constexpr bool same_owner(
     const os::core::PeerIdentity& left,
     const os::core::PeerIdentity& right) noexcept {
@@ -369,6 +383,7 @@ SceneSnapshot Compositor::scene_snapshot() const noexcept {
             .buffer_slot = slot.buffer_slot,
             .has_frame = slot.has_frame,
             .capture_allowed = slot.descriptor.role != SurfaceRole::secure_system,
+            .trusted_presentation = trusted_presentation_for(slot.descriptor.role),
         };
     }
     return snapshot;

@@ -71,14 +71,19 @@ void close_extra_descriptors(unsigned first_fd) noexcept {
     int control_fd,
     int service_fd,
     int state_directory_fd,
+    int private_capability_fd,
     const os::sandbox::SandboxPolicyV1& sandbox_policy) noexcept {
     const int control_temp = duplicate_cloexec(control_fd);
     const int service_temp = duplicate_cloexec(service_fd);
     const int state_temp = state_directory_fd >= 0
         ? duplicate_cloexec(state_directory_fd)
         : -1;
+    const int capability_temp = private_capability_fd >= 0
+        ? duplicate_cloexec(private_capability_fd)
+        : -1;
     if (control_temp < 0 || service_temp < 0 ||
-        (state_directory_fd >= 0 && state_temp < 0)) {
+        (state_directory_fd >= 0 && state_temp < 0) ||
+        (private_capability_fd >= 0 && capability_temp < 0)) {
         std::_Exit(120);
     }
 
@@ -90,19 +95,24 @@ void close_extra_descriptors(unsigned first_fd) noexcept {
         ::dup2(state_temp, os::service::service_state_directory_fd) < 0) {
         std::_Exit(121);
     }
+    if (private_capability_fd >= 0 &&
+        ::dup2(capability_temp, os::service::service_private_capability_fd) < 0) {
+        std::_Exit(121);
+    }
 
     (void)::close(control_temp);
     (void)::close(service_temp);
     if (state_temp >= 0) (void)::close(state_temp);
+    if (capability_temp >= 0) (void)::close(capability_temp);
 
-    if (state_directory_fd >= 0) {
-        close_extra_descriptors(
-            static_cast<unsigned>(os::service::service_state_directory_fd + 1));
-    } else {
+    if (state_directory_fd < 0) {
         (void)::close(os::service::service_state_directory_fd);
-        close_extra_descriptors(
-            static_cast<unsigned>(os::service::service_state_directory_fd));
     }
+    if (private_capability_fd < 0) {
+        (void)::close(os::service::service_private_capability_fd);
+    }
+    close_extra_descriptors(
+        static_cast<unsigned>(os::service::service_private_capability_fd + 1));
 
     auto sandbox_result = os::sandbox::apply_before_exec(executable_path, sandbox_policy);
     if (!sandbox_result) {
@@ -160,6 +170,10 @@ os::core::Result<void> Supervisor::start() noexcept {
             !S_ISDIR(metadata.st_mode)) {
             return service_error(os::core::errors::service::launch_failed);
         }
+    }
+    if (config_.private_capability_fd >= 0 &&
+        ::fcntl(config_.private_capability_fd, F_GETFD) < 0) {
+        return service_error(os::core::errors::service::launch_failed);
     }
     return spawn_service();
 }
@@ -301,6 +315,7 @@ os::core::Result<void> Supervisor::spawn_service() noexcept {
             control_pair[1].native_fd(),
             service_pair[1].native_fd(),
             config_.private_state_directory_fd,
+            config_.private_capability_fd,
             config_.descriptor.sandbox);
     }
 

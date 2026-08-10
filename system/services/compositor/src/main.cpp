@@ -80,7 +80,12 @@ int main() {
 
     os::display::SharedBufferPool buffers{service_generation};
     if (!buffers.valid()) return 14;
-    os::display::CompositorService service{compositor, buffers, identities};
+    os::display::CompositorService service{
+        compositor,
+        buffers,
+        identities,
+        os::display::input_service_principal,
+    };
 
     auto ready = os::service::send_ready(control, bootstrap.value().request_header);
     if (!ready) return 15;

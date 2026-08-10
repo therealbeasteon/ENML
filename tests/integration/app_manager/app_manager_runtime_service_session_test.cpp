@@ -18,6 +18,7 @@
 
 #include <os/app/manager.hpp>
 #include <os/app/principal_store.hpp>
+#include <os/collection/session.hpp>
 #include <os/core/native_handle.hpp>
 #include <os/keys/service.hpp>
 #include <os/package/analyzer.hpp>
@@ -38,6 +39,11 @@ constexpr os::core::PrincipalId storage_service_principal{
 constexpr os::core::PrincipalId key_service_principal{
     0x4B45595345525631ULL,
     0x53595354454D3031ULL,
+};
+constexpr os::core::PeerIdentity collection_consumer_peer{
+    .principal = os::collection::collection_consumer_principal,
+    .user = os::core::UserId{0U},
+    .process = os::core::ProcessId{0xC011EC7U},
 };
 
 pkg::ApplicationIdentity make_application() {
@@ -97,7 +103,13 @@ bool wait_for_file(
     os::app::ApplicationManager& manager,
     int directory_fd,
     const char* name) {
-    for (std::size_t attempt = 0U; attempt < 1200U; ++attempt) {
+    // This fixture deliberately stacks old-capability death observation,
+    // supervisor restart/readiness, policy republish and explicit application
+    // reacquisition. The child itself has two separately bounded retry phases,
+    // so the outer lifecycle observer must cover their combined worst-case plus
+    // scheduler variance. Keep the integration timeout bounded at 30 seconds;
+    // no production service timeout or authorization rule is relaxed here.
+    for (std::size_t attempt = 0U; attempt < 6000U; ++attempt) {
         auto maintained = manager.maintain();
         if (!maintained) {
             std::fprintf(
@@ -285,6 +297,100 @@ int main(int argc, char** argv) {
     const int data_fd = ::open(data_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     assert(data_fd >= 0);
 
+    // The child first asks its authenticated runtime session for a private
+    // runtime→application input endpoint. No target identity or fd is provided
+    // by the app in that request. Once the marker exists, App Manager owns the
+    // opposite sender endpoint for this exact PeerIdentity.
+    assert(wait_for_file(manager, data_fd, "m3-input-ready.bin"));
+
+    os::app::ApplicationInputEventV1 input_event{
+        .sequence = 41U,
+        .target = instance.identity,
+        .surface_id = 0x0000000900000001ULL,
+        .frame_sequence = 17U,
+        .surface_width_px = 360U,
+        .surface_height_px = 800U,
+        .local_x_px = 73,
+        .local_y_px = 99,
+        .pointer_id = 0U,
+        .phase = os::app::ApplicationPointerPhase::down,
+    };
+    assert(input_event.valid());
+
+    // Changing the target PeerIdentity cannot redirect the event to this
+    // instance merely because it is the only running application.
+    auto wrong_target = input_event;
+    wrong_target.target.process = os::core::ProcessId{instance.identity.process.value() + 1U};
+    auto wrong_delivery = manager.deliver_input_event(wrong_target);
+    assert(!wrong_delivery);
+    assert(wrong_delivery.error().domain == os::core::ErrorDomain::service);
+    assert(wrong_delivery.error().code == os::app::manager_errors::input_target_not_found);
+
+    assert(manager.deliver_input_event(input_event));
+
+    // App Manager retains monotonic delivery state independently of endpoint
+    // reacquisition; replay is rejected before another packet can be queued.
+    auto replay = manager.deliver_input_event(input_event);
+    assert(!replay);
+    assert(replay.error().domain == os::core::ErrorDomain::service);
+    assert(replay.error().code == os::app::manager_errors::input_event_replay);
+
+    assert(wait_for_file(manager, data_fd, "m3-input-delivered.bin"));
+
+    // Collection capability creation is bound to the same authenticated runtime
+    // session. The application did not provide target identity, consumer
+    // principal, session id, or native descriptor. The first manager-minted
+    // session is deterministic in this fresh fixture.
+    assert(wait_for_file(manager, data_fd, "m3-collection-ready.bin"));
+    constexpr std::uint64_t collection_session = 1U;
+
+    // Caller authorization precedes application/session lookup.
+    auto denied_collection = manager.take_collection_endpoint(
+        instance.identity,
+        instance.identity,
+        collection_session);
+    assert(!denied_collection);
+    assert(denied_collection.error().domain == os::core::ErrorDomain::service);
+    assert(denied_collection.error().code == os::app::manager_errors::collection_authority_denied);
+
+    auto wrong_collection = manager.take_collection_endpoint(
+        collection_consumer_peer,
+        instance.identity,
+        collection_session + 1U);
+    assert(!wrong_collection);
+    assert(wrong_collection.error().domain == os::core::ErrorDomain::service);
+    assert(wrong_collection.error().code == os::app::manager_errors::collection_endpoint_unavailable);
+
+    auto collection_endpoint = manager.take_collection_endpoint(
+        collection_consumer_peer,
+        instance.identity,
+        collection_session);
+    assert(collection_endpoint);
+    assert(collection_endpoint.value().valid());
+    assert(collection_endpoint.value().application == instance.identity);
+    assert(collection_endpoint.value().session_id == collection_session);
+
+    os::collection::CollectionSessionClient collection_client{
+        collection_endpoint.value().channel,
+        os::collection::CollectionSessionId{collection_endpoint.value().session_id},
+    };
+    std::array<std::byte, os::ipc::max_wire_packet_size> collection_scratch{};
+    auto collection_snapshot = collection_client.snapshot(collection_scratch);
+    assert(collection_snapshot);
+    assert(collection_snapshot.value().revision == os::ui::CollectionRevision{1U});
+    assert(collection_snapshot.value().item_count == 1U);
+
+    // App Manager transferred the consumer capability exactly once.
+    auto replayed_collection_claim = manager.take_collection_endpoint(
+        collection_consumer_peer,
+        instance.identity,
+        collection_session);
+    assert(!replayed_collection_claim);
+    assert(replayed_collection_claim.error().domain == os::core::ErrorDomain::service);
+    assert(
+        replayed_collection_claim.error().code ==
+        os::app::manager_errors::collection_endpoint_unavailable);
+
     // Service the child's post-READY session requests until it has observed the
     // initial Storage and Key generations. This marker is written only after an
     // unauthorized ServiceId was denied and both generation observations were
@@ -348,6 +454,9 @@ int main(int argc, char** argv) {
     assert(cleanup_data >= 0 && cleanup_keys >= 0 && cleanup_packages >= 0 && cleanup_principals >= 0);
 
     unlink_if_present(cleanup_data, "m2-10-initial.bin");
+    unlink_if_present(cleanup_data, "m3-input-ready.bin");
+    unlink_if_present(cleanup_data, "m3-input-delivered.bin");
+    unlink_if_present(cleanup_data, "m3-collection-ready.bin");
     unlink_if_present(cleanup_data, "m2-10-session-ready.bin");
     unlink_if_present(cleanup_data, "m2-10-key-reacquired.bin");
     unlink_if_present(cleanup_data, "m2-10-storage-heartbeat.bin");

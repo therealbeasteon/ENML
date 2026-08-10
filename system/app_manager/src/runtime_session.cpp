@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <utility>
 
+#include <fcntl.h>
 #include <poll.h>
 
 #include <os/core/error.hpp>
@@ -34,6 +35,21 @@ void close_on_send_failure(
     if (!result) session.close();
 }
 
+[[nodiscard]] bool set_nonblocking(os::ipc::Channel& channel) noexcept {
+    if (!channel.valid()) return false;
+    int flags = -1;
+    do {
+        flags = ::fcntl(channel.native_fd(), F_GETFL);
+    } while (flags < 0 && errno == EINTR);
+    if (flags < 0) return false;
+
+    int result = -1;
+    do {
+        result = ::fcntl(channel.native_fd(), F_SETFL, flags | O_NONBLOCK);
+    } while (result < 0 && errno == EINTR);
+    return result == 0;
+}
+
 } // namespace
 
 bool ApplicationManager::service_allowed(
@@ -55,7 +71,7 @@ ApplicationManager::service_runtime_session_once(InstanceSlot& slot) noexcept {
     }
 
     std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
-    auto request = receive_service_acquire_request(slot.service_session, scratch);
+    auto request = receive_runtime_session_request(slot.service_session, scratch);
     if (!request) {
         // A malformed packet or a dead peer is contained to this application's
         // private runtime session. It must not destabilize App Manager or any
@@ -87,9 +103,151 @@ ApplicationManager::service_runtime_session_once(InstanceSlot& slot) noexcept {
         return {};
     }
 
-    // The bootstrap service set is the application-visible allow-list for this
-    // session. ServiceBroker independently enforces the same process/service
-    // attachment, so a forged or future ServiceId cannot expand authority.
+    if (request.value().kind == RuntimeSessionRequestKind::acquire_input_events) {
+        // The application supplies no target identity or descriptor. App
+        // Manager creates a fresh pair only after authenticating the already-
+        // bound runtime session. Reacquisition atomically replaces the sender
+        // side so an old receiver becomes stale instead of coexisting forever.
+        // Sequence state intentionally survives reacquisition so replacing the
+        // transport capability cannot reopen the event replay window.
+        auto pair_result = os::ipc::Channel::create_local_pair();
+        if (!pair_result) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                pair_result.error());
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+        auto pair = std::move(pair_result).value();
+        if (!set_nonblocking(pair[0])) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                service_error(manager_errors::input_endpoint_unavailable));
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+        auto application_endpoint = pair[1].take_native_handle_for_transfer();
+        slot.input_event_sender = std::move(pair[0]);
+        auto sent = send_input_event_endpoint_response(
+            slot.service_session,
+            request.value().request_header,
+            application_endpoint);
+        if (!sent) slot.input_event_sender.close();
+        close_on_send_failure(slot.service_session, sent);
+        return {};
+    }
+
+    if (request.value().kind == RuntimeSessionRequestKind::acquire_accessibility) {
+        // Accessibility state lives in the application runtime, so App Manager
+        // creates a private pair after authenticating this exact application
+        // session. The application receives one endpoint and a fresh session
+        // number; the other endpoint is retained for a one-shot claim by the
+        // trusted accessibility principal. Reacquisition closes the previous
+        // service side and mints a new session, invalidating the old capability.
+        if (next_accessibility_session_id_ == 0U) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                service_error(manager_errors::accessibility_session_exhausted));
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+
+        auto pair_result = os::ipc::Channel::create_local_pair();
+        if (!pair_result) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                pair_result.error());
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+        auto pair = std::move(pair_result).value();
+        const std::uint64_t session_id = next_accessibility_session_id_;
+        ++next_accessibility_session_id_;
+
+        auto application_endpoint = pair[1].take_native_handle_for_transfer();
+        slot.accessibility_service_endpoint = std::move(pair[0]);
+        slot.accessibility_session_id = session_id;
+        auto sent = send_accessibility_endpoint_response(
+            slot.service_session,
+            request.value().request_header,
+            session_id,
+            application_endpoint);
+        if (!sent) {
+            slot.accessibility_service_endpoint.close();
+            slot.accessibility_session_id = 0U;
+        }
+        close_on_send_failure(slot.service_session, sent);
+        return {};
+    }
+
+    if (request.value().kind == RuntimeSessionRequestKind::acquire_collection) {
+        // Collection sessions are producer/application capabilities. The
+        // authenticated application supplies no target, session number,
+        // consumer principal or descriptor. App Manager allocates a fixed slot,
+        // mints a globally monotonic session id and retains the paired consumer
+        // endpoint for a later one-shot trusted-consumer claim.
+        if (next_collection_session_id_ == 0U) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                service_error(manager_errors::collection_session_exhausted));
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+
+        CollectionEndpointSlot* free_slot = nullptr;
+        for (auto& candidate : slot.collection_endpoints) {
+            if (candidate.session_id == 0U && !candidate.consumer_endpoint.valid()) {
+                free_slot = &candidate;
+                break;
+            }
+        }
+        if (free_slot == nullptr) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                service_error(manager_errors::collection_session_capacity));
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+
+        auto pair_result = os::ipc::Channel::create_local_pair();
+        if (!pair_result) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                pair_result.error());
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+        auto pair = std::move(pair_result).value();
+        const std::uint64_t session_id = next_collection_session_id_;
+        ++next_collection_session_id_;
+
+        auto application_endpoint = pair[1].take_native_handle_for_transfer();
+        free_slot->session_id = session_id;
+        free_slot->consumer_endpoint = std::move(pair[0]);
+        auto sent = send_collection_endpoint_response(
+            slot.service_session,
+            request.value().request_header,
+            session_id,
+            application_endpoint);
+        if (!sent) {
+            free_slot->consumer_endpoint.close();
+            free_slot->session_id = 0U;
+        }
+        close_on_send_failure(slot.service_session, sent);
+        return {};
+    }
+
+    // The bootstrap service set is the application-visible allow-list for
+    // service reacquisition. ServiceBroker independently enforces the same
+    // process/service attachment, so a forged or future ServiceId cannot expand
+    // authority.
     if (!service_allowed(slot, request.value().service)) {
         auto sent = os::ipc::send_rpc_error(
             slot.service_session,

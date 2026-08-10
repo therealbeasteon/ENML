@@ -13,6 +13,7 @@ enum class ErrorDomain : std::uint16_t {
     security = 6,
     key = 7,
     display = 8,
+    ui = 9,
 };
 
 struct Error final {

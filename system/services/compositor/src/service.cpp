@@ -189,6 +189,86 @@ namespace {
     return buffer;
 }
 
+[[nodiscard]] constexpr TrustedPresentation trusted_presentation_for_role(
+    SurfaceRole role) noexcept {
+    switch (role) {
+    case SurfaceRole::application:
+    case SurfaceRole::popup:
+        return TrustedPresentation::none;
+    case SurfaceRole::system_chrome:
+        return TrustedPresentation::system_chrome;
+    case SurfaceRole::secure_system:
+        return TrustedPresentation::secure_system;
+    }
+    return TrustedPresentation::none;
+}
+
+[[nodiscard]] os::core::Result<void> encode_input_hit(
+    os::ipc::Encoder& encoder,
+    const SurfaceInputHit& hit) noexcept {
+    if (!hit.valid() || hit.trusted_presentation != trusted_presentation_for_role(hit.role)) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    auto result = encoder.write_u64_le(hit.surface.value());
+    if (!result) return result.error();
+    result = encode_identity(encoder, hit.owner);
+    if (!result) return result.error();
+    result = encoder.write_u32_le(static_cast<std::uint32_t>(hit.role));
+    if (!result) return result.error();
+    result = encoder.write_u32_le(hit.surface_size.width);
+    if (!result) return result.error();
+    result = encoder.write_u32_le(hit.surface_size.height);
+    if (!result) return result.error();
+    result = encoder.write_u64_le(hit.frame_sequence);
+    if (!result) return result.error();
+    result = encoder.write_u32_le(std::bit_cast<std::uint32_t>(hit.local_x));
+    if (!result) return result.error();
+    result = encoder.write_u32_le(std::bit_cast<std::uint32_t>(hit.local_y));
+    if (!result) return result.error();
+    return encoder.write_u32_le(static_cast<std::uint32_t>(hit.trusted_presentation));
+}
+
+[[nodiscard]] os::core::Result<SurfaceInputHit> decode_input_hit(
+    os::ipc::Decoder& decoder) noexcept {
+    auto surface = decoder.read_u64_le();
+    if (!surface) return surface.error();
+    auto owner = decode_identity(decoder);
+    if (!owner) return owner.error();
+    auto role = decoder.read_u32_le();
+    if (!role) return role.error();
+    auto width = decoder.read_u32_le();
+    if (!width) return width.error();
+    auto height = decoder.read_u32_le();
+    if (!height) return height.error();
+    auto frame = decoder.read_u64_le();
+    if (!frame) return frame.error();
+    auto local_x = decoder.read_u32_le();
+    if (!local_x) return local_x.error();
+    auto local_y = decoder.read_u32_le();
+    if (!local_y) return local_y.error();
+    auto trusted = decoder.read_u32_le();
+    if (!trusted) return trusted.error();
+    if (role.value() < static_cast<std::uint32_t>(SurfaceRole::application) ||
+        role.value() > static_cast<std::uint32_t>(SurfaceRole::secure_system) ||
+        trusted.value() > static_cast<std::uint32_t>(TrustedPresentation::secure_system)) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    const SurfaceInputHit hit{
+        .surface = SurfaceId{surface.value()},
+        .owner = owner.value(),
+        .role = static_cast<SurfaceRole>(role.value()),
+        .surface_size = {width.value(), height.value()},
+        .frame_sequence = frame.value(),
+        .local_x = std::bit_cast<std::int32_t>(local_x.value()),
+        .local_y = std::bit_cast<std::int32_t>(local_y.value()),
+        .trusted_presentation = static_cast<TrustedPresentation>(trusted.value()),
+    };
+    if (!hit.valid() || hit.trusted_presentation != trusted_presentation_for_role(hit.role)) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    return hit;
+}
+
 [[nodiscard]] os::core::Result<void> require_empty_payload(
     const os::ipc::InboundMessage& message) noexcept {
     if (!message.payload().empty()) return service_error(os::core::errors::service::invalid_request);
@@ -510,6 +590,35 @@ os::core::Result<void> CompositorService::dispatch_once(
         if (!result) return result.error();
         return os::ipc::send_rpc_response(channel, message.header(), encoder.written());
     }
+    case compositor_op_input_hit_test: {
+        os::ipc::Decoder decoder{message.payload()};
+        auto global_x = decoder.read_u32_le();
+        if (!global_x) return fail(global_x.error());
+        auto global_y = decoder.read_u32_le();
+        if (!global_y) return fail(global_y.error());
+        auto end = decoder.require_end();
+        if (!end) return fail(end.error());
+        auto hit = input_authority_.hit_test(
+            context.value().peer,
+            std::bit_cast<std::int32_t>(global_x.value()),
+            std::bit_cast<std::int32_t>(global_y.value()));
+        if (!hit) return fail(hit.error());
+        std::array<std::byte, 72U> payload{};
+        os::ipc::Encoder encoder{payload};
+        auto encoded = encode_input_hit(encoder, hit.value());
+        if (!encoded) return encoded.error();
+        return os::ipc::send_rpc_response(channel, message.header(), encoder.written());
+    }
+    case compositor_op_input_validate: {
+        os::ipc::Decoder decoder{message.payload()};
+        auto hit = decode_input_hit(decoder);
+        if (!hit) return fail(hit.error());
+        auto end = decoder.require_end();
+        if (!end) return fail(end.error());
+        auto validated = input_authority_.validate_before_delivery(context.value().peer, hit.value());
+        if (!validated) return fail(validated.error());
+        return send_empty(channel, message.header());
+    }
     default:
         return fail(service_error(os::core::errors::service::unknown_operation));
     }
@@ -660,6 +769,54 @@ os::core::Result<FrameReceipt> CompositorClient::submit_frame(
         .sequence = sequence.value(),
         .deadline = {.next_vsync_ns = vsync.value(), .submission_deadline_ns = deadline.value()},
     };
+}
+
+os::core::Result<SurfaceInputHit> InputCompositorClient::hit_test(
+    std::int32_t global_x,
+    std::int32_t global_y,
+    os::core::MutableByteSpan scratch) noexcept {
+    if (connection_ == nullptr) return service_error(os::core::errors::service::invalid_request);
+    std::array<std::byte, 8U> payload{};
+    os::ipc::Encoder encoder{payload};
+    auto result = encoder.write_u32_le(std::bit_cast<std::uint32_t>(global_x));
+    if (!result) return result.error();
+    result = encoder.write_u32_le(std::bit_cast<std::uint32_t>(global_y));
+    if (!result) return result.error();
+    auto response = connection_->call(
+        compositor_service_id,
+        compositor_op_input_hit_test,
+        encoder.written(),
+        scratch);
+    if (!response) return response.error();
+    if (response.value().handle_count() != 0U) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    os::ipc::Decoder decoder{response.value().payload()};
+    auto hit = decode_input_hit(decoder);
+    if (!hit) return hit.error();
+    auto end = decoder.require_end();
+    if (!end) return end.error();
+    return hit.value();
+}
+
+os::core::Result<void> InputCompositorClient::validate_before_delivery(
+    const SurfaceInputHit& hit,
+    os::core::MutableByteSpan scratch) noexcept {
+    if (connection_ == nullptr) return service_error(os::core::errors::service::invalid_request);
+    std::array<std::byte, 72U> payload{};
+    os::ipc::Encoder encoder{payload};
+    auto encoded = encode_input_hit(encoder, hit);
+    if (!encoded) return encoded.error();
+    auto response = connection_->call(
+        compositor_service_id,
+        compositor_op_input_validate,
+        encoder.written(),
+        scratch);
+    if (!response) return response.error();
+    if (!response.value().payload().empty() || response.value().handle_count() != 0U) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    return {};
 }
 
 } // namespace os::display

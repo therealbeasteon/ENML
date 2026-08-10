@@ -49,6 +49,11 @@ struct ServiceLaunchConfig final {
     // restarts. When >=0, the child receives only a duplicate at private fd 5.
     // This is an internal service-construction mechanism, not application ABI.
     int private_state_directory_fd {-1};
+    // Optional borrowed trusted capability/channel retained across service
+    // restarts. When >=0, the child receives a duplicate at private fd 6. This
+    // descriptor is not exposed by Supervisor::connect() or ServiceBroker and
+    // therefore cannot be requested by an application.
+    int private_capability_fd {-1};
 };
 
 struct ServiceStatus final {
