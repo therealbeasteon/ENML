@@ -198,8 +198,10 @@ int main() {
     assert(inset_raster.value().shadows_drawn == 0U);
     assert(inset_raster.value().lit_edges_drawn == 1U);
     assert(inset_raster.value().shaded_edges_drawn == 1U);
-    assert(inset_pixels[6U * width + 8U] == os::ui::Rgba8{27U, 27U, 36U, 255U});
-    assert(inset_pixels[13U * width + 19U] == os::ui::Rgba8{72U, 70U, 83U, 255U});
+    const os::ui::Rgba8 inset_leading{27U, 27U, 36U, 255U};
+    const os::ui::Rgba8 inset_trailing{72U, 70U, 83U, 255U};
+    assert(inset_pixels[6U * width + 8U] == inset_leading);
+    assert(inset_pixels[13U * width + 19U] == inset_trailing);
     assert(inset_pixels[14U * width + 20U] == surface);
 
     // With smoothing removed, the same top-right sample's center falls outside
