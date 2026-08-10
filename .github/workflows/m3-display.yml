@@ -21,7 +21,7 @@ jobs:
           cmake --build --preset host-debug
           --target display_compositor_test display_input_hit_test display_input_authority_test
           display_shared_buffer_test display_generation_namespace_test display_trusted_overlay_test
-          compositor_service_integration_test input_service_transport_test
+          display_trusted_mark_test compositor_service_integration_test input_service_transport_test
           application_service_session_test application_input_event_test emnl_app_manager
           --parallel 2
       - name: Test display gates
@@ -38,7 +38,7 @@ jobs:
           cmake --build --preset host-asan
           --target display_compositor_test display_input_hit_test display_input_authority_test
           display_shared_buffer_test display_generation_namespace_test display_trusted_overlay_test
-          compositor_service_integration_test input_service_transport_test
+          display_trusted_mark_test compositor_service_integration_test input_service_transport_test
           application_service_session_test application_input_event_test emnl_app_manager
           --parallel 2
       - name: Test display gates with sanitizers
@@ -58,7 +58,7 @@ jobs:
           cmake --build build/m3-display-clang
           --target display_compositor_test display_input_hit_test display_input_authority_test
           display_shared_buffer_test display_generation_namespace_test display_trusted_overlay_test
-          compositor_service_integration_test input_service_transport_test
+          display_trusted_mark_test compositor_service_integration_test input_service_transport_test
           application_service_session_test application_input_event_test emnl_app_manager
           --parallel 2
       - name: Test display gates
@@ -77,7 +77,7 @@ jobs:
           cmake --build --preset host-debug
           --target display_compositor_test display_input_hit_test display_input_authority_test
           display_shared_buffer_test display_generation_namespace_test display_trusted_overlay_test
-          compositor_service_integration_test input_service_transport_test
+          display_trusted_mark_test compositor_service_integration_test input_service_transport_test
           application_service_session_test application_input_event_test emnl_app_manager
           --parallel 2
       - name: Test display gates natively
