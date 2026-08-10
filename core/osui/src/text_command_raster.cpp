@@ -63,6 +63,20 @@ namespace {
     return ink_height <= typography.line_height_q6;
 }
 
+[[nodiscard]] os::core::Result<FontLineMetrics> resolve_one_line_metrics(
+    const FontFaceDescriptor& face,
+    const ResolvedTextStyle& style,
+    FontLineMetricsBackend backend) noexcept {
+    FontLineMetrics resolved {};
+    if (!backend.resolve(backend.context, face, style.metrics, resolved)) {
+        return ui_error(errors::font_line_metrics_failed);
+    }
+    if (!line_metrics_valid(resolved, style.metrics)) {
+        return ui_error(errors::invalid_font_line_metrics);
+    }
+    return resolved;
+}
+
 [[nodiscard]] os::core::Result<FontLineMetrics> paragraph_line_metrics(
     const ResolvedTextStyle& style,
     const FontFaceSet& faces,
@@ -87,22 +101,25 @@ namespace {
 
         const FontFaceDescriptor* face = faces.find(family);
         if (face == nullptr) return ui_error(errors::invalid_font_face);
+        auto resolved = resolve_one_line_metrics(*face, style, backend);
+        if (!resolved) return resolved.error();
 
-        FontLineMetrics resolved {};
-        if (!backend.resolve(backend.context, *face, style.metrics, resolved)) {
-            return ui_error(errors::font_line_metrics_failed);
-        }
-        if (!line_metrics_valid(resolved, style.metrics)) {
-            return ui_error(errors::invalid_font_line_metrics);
-        }
-
-        combined.ascent_q6 = std::max(combined.ascent_q6, resolved.ascent_q6);
-        combined.descent_q6 = std::max(combined.descent_q6, resolved.descent_q6);
-        combined.line_gap_q6 = std::max(combined.line_gap_q6, resolved.line_gap_q6);
+        combined.ascent_q6 = std::max(combined.ascent_q6, resolved.value().ascent_q6);
+        combined.descent_q6 = std::max(combined.descent_q6, resolved.value().descent_q6);
+        combined.line_gap_q6 = std::max(combined.line_gap_q6, resolved.value().line_gap_q6);
         any = true;
     }
 
-    if (!any || !line_metrics_valid(combined, style.metrics)) {
+    // A paragraph containing only explicit hard separators legitimately has no
+    // glyphs but still owns line boxes. Resolve those boxes from the first
+    // semantic fallback face rather than inventing geometry or rejecting the
+    // blank paragraph after the shaping contract has already validated it.
+    if (!any) {
+        if (faces.count == 0U) return ui_error(errors::invalid_font_face);
+        return resolve_one_line_metrics(faces.faces[0], style, backend);
+    }
+
+    if (!line_metrics_valid(combined, style.metrics)) {
         return ui_error(errors::invalid_font_line_metrics);
     }
     return combined;
