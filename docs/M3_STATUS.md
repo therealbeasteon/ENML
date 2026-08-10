@@ -34,10 +34,19 @@ Implemented:
 - revision-bound accessibility snapshots/actions with stale-request rejection;
 - `AccessibilityBridgeAuthority` restricting privileged access to a trusted accessibility principal;
 - strong `AccessibilitySessionId` binding so a valid revision/node request cannot be replayed against another runtime session;
-- accessibility actions re-authorized through the same live `SemanticTree` invariants;
-- no OCR/framebuffer scraping, accessibility polling loop or dedicated accessibility worker.
+- bounded `core/osaccessibility` snapshot/action records and private `AccessibilitySessionServer`/`AccessibilitySessionClient` RPC;
+- authenticated App Manager accessibility broker control: caller identity is derived from packet `SCM_CREDENTIALS` through trusted runtime identity before target decoding/claim;
+- a real Supervisor-managed `system.accessibility` process with the canonical accessibility-service principal;
+- generic Supervisor private capability fd 6 used to inject only the App Manager broker channel into each service generation; the capability is not returned by `Supervisor::connect()` or the application `ServiceBroker`;
+- separate authenticated accessibility administration principal resolved through the service generation's `IdentityRegistry`;
+- fixed 16-session service table with persistent per-app RPC sequencing and dead-peer cleanup;
+- supervised integration proving claim → semantic snapshot → revision-bound focus action → real application `SemanticTree` change → release;
+- the same integration republishes the exact native administration sender under an ordinary principal and proves the already-open endpoint is still denied;
+- no OCR/framebuffer scraping, accessibility scanner, polling loop or dedicated worker.
 
-Editable accessibility text remains deferred until bounded caret/selection/text-input/IME semantics exist. Cross-process accessibility session transport remains to be implemented above this authority seam.
+Editable accessibility text remains deferred until bounded caret/selection/text-input/IME semantics exist. Later speech, braille, switch-control, live-region and secure-screen product policy must build above this semantic/session authority rather than bypass it.
+
+See `docs/M3_2_ACCESSIBILITY_BRIDGE.md` and `docs/M3_2_ACCESSIBILITY_TRANSPORT.md`.
 
 ### Collections
 
@@ -47,9 +56,19 @@ Implemented:
 - stable 64-bit `CollectionItemKey`, fixed recycler and stable slot retention across insertion/reordering;
 - strong revisions/snapshots, bounded mutation sets and stale/zero/duplicate-key rejection;
 - bounded revision/key-consistent content publication with primary/secondary semantic labels plus enabled/selected state;
-- conservative visible-window invalidation and no million-row eager prefetch/idle worker.
+- versioned `core/oscollection` snapshot/change/content records and private pull-only `CollectionSessionServer`/`CollectionSessionClient`;
+- private collection session namespace moved to `0x0000F016`, distinct from the supervised accessibility service namespace;
+- authenticated application runtime operation for minting producer collection capabilities with no app-supplied target, consumer principal, session id or descriptor;
+- fixed **8 unclaimed collection sessions per live application instance** and a monotonic nonzero App Manager session-id allocator;
+- App Manager retains each consumer endpoint only inside the exact live application instance;
+- one-shot trusted consumer handoff requires `collection_consumer_principal`, the exact live application `PeerIdentity` and exact runtime-minted session id;
+- wrong-principal, wrong-session and replayed-claim paths fail closed;
+- full runtime integration proves a real launched application acquires the capability, hosts a real collection session server, and the trusted consumer pulls a real revision/item-count snapshot;
+- conservative visible-window invalidation and no million-row eager prefetch, producer mutation queue or idle worker.
 
-The callback backend remains internal. Public app transport must be bounded record/message based rather than exposing implementation-owned function pointers.
+The in-process producer callbacks remain implementation detail. The later public semantic/OSIDL surface must preserve the record/message/session semantics rather than exposing function pointers. If the consumer moves to a separate privileged UI-host service, the existing one-shot App Manager claim seam still needs a kernel-credential-authenticated control wrapper rather than a serialized caller-principal field.
+
+See `docs/M3_2_COLLECTION_CONTENT.md` and `docs/M3_2_COLLECTION_TRANSPORT.md`.
 
 ### Rendering and ENML visual language
 
@@ -60,10 +79,14 @@ Implemented:
 - accessibility/capability/power quality fallbacks preserving hierarchy/state/contour identity;
 - immutable renderer snapshots, bounded deltas, deterministic `RenderCommandBuffer` and bounded `RenderDamagePlan`;
 - caller-owned opaque CPU raster with semantic palette, material tint, authored per-corner geometry, bounded depth/lighting and final focus/outline treatment;
-- deterministic fixed subpixel contour antialiasing without floating point, heap allocation, general path engine, shader compiler or background cache;
+- one renderer-private `PixelContour` lowering/evaluation path shared by material ownership, interior coverage, depth silhouette, focus boundary and complementary outside fringe;
+- normalized Q10 circle→squircle evaluation that keeps fourth-power intermediates bounded at maximum valid logical geometry without floating point or compiler-specific 128-bit arithmetic;
+- deterministic fixed 2×2 interior/outside coverage and coverage-aware opaque depth silhouettes without heap allocation, general path engine, shader compiler or background cache;
 - semantic-only changes can generate zero pixel damage, moved nodes damage old+new bounds, and pathological damage lists fall back explicitly to full redraw.
 
 Opaque figure/ground and state remain the identity baseline. Live backdrop/translucency must enhance ENML, not become the only reason it is recognizable.
+
+See `docs/M3_2_CONTOUR_ANTIALIAS.md`, `docs/M3_2_OPAQUE_RASTER_BASELINE.md` and `docs/M3_2_RENDER_DAMAGE.md`.
 
 ### Text/font/paragraph rendering
 
@@ -102,7 +125,7 @@ Implemented:
 - trusted and application receive-side monotonic sequence guards reject replay; trusted sequence state survives endpoint reacquisition;
 - retained App Manager sender is nonblocking so a stalled application cannot block trusted input/lifecycle work or create an unbounded userspace event backlog;
 - application receive stream rejects a structurally valid event addressed to another bootstrap identity;
-- brokered App Manager integration proves endpoint acquisition, wrong-owner denial, replay denial and exact event receipt before continuing existing service-restart/reacquisition checks;
+- brokered App Manager integration proves endpoint acquisition, wrong-owner denial, replay denial and exact event receipt before continuing service-restart/reacquisition checks;
 - no application-facing `/dev/input`, evdev structure, global scene state or input polling worker.
 
 The remaining input work is later hardware adapter/device ownership plus explicit multitouch/gesture/pointer-capture/keyboard/IME contracts. Those later pieces feed this authority chain; they do not replace it.
@@ -125,22 +148,29 @@ The actual ENML trust mark and private compositor rendering remain intentionally
 
 ### Validation status
 
-Head `d8994bd99fb28fca035331235964fe48f5374ad4` was fully green on both M3 matrices before the exact-owner application input-delivery tranche.
+Head `623face4e65964b2e8c31995244c502340a752d2` completed the full current workflow line successfully:
 
-The later application-delivery code has passed the current M3 Display/Compositor matrix, including app runtime-session/input-event focused gates. A legacy M1 workflow initially failed only because its broad `application_` CTest regex discovered the new M3-only input-event test without building that target; the CTest name has now been scoped out of the M1 regex while retaining the M3 display label/target. The **new exact current head must complete all required workflows successfully** before the PR leaves draft.
+- M0 CI;
+- M1 Package and App Foundation;
+- M2 Private Storage;
+- M2 Key Service;
+- M2 Service Broker;
+- M3 Semantic UI, including GCC, Clang, ASan/UBSan and native AArch64;
+- M3 Display/Compositor.
 
-M3 PR workflows use concurrency grouping so superseded validation is cancelled rather than accumulating an unbounded queue. Display feature-branch pushes are scoped to `pull_request`; push validation remains on `main`.
+That checkpoint includes the real supervised accessibility-service lifecycle and the authenticated App Manager collection-capability lifecycle. The Service Broker matrix exercises the launched-application collection handoff on GCC, Clang, sanitizers and native AArch64; the M3 UI matrix exercises the supervised accessibility service on all four UI runners.
+
+Later documentation-only commits must still pass the current-head CI requirement before PR #26 leaves draft. M3 PR workflows use concurrency grouping so superseded validation is cancelled rather than accumulating an unbounded queue.
 
 ### Remaining M3.2 work
 
-- implement authenticated cross-process accessibility session transport above `AccessibilityBridgeAuthority` without introducing an unbounded serialized tree or polling loop;
 - integrate/review a production renderer-private Unicode/font provider/shaper/raster backend;
-- improve contour quality toward bounded analytic/interior coverage and strengthen depth/lighting without obscuring focus/state;
-- connect collection content/change publication to bounded message/OSIDL records;
+- strengthen bounded material lighting/depth while keeping focus/state dominant and the shared contour contract authoritative;
 - connect `TrustedOverlaySnapshot` to private compositor rendering and design/usability-test the actual ENML trust mark;
+- if collection consumption moves into a separate privileged UI-host process, add authenticated kernel-credential control around the existing exact-owner claim seam;
 - continue compositor-deadline-aware scene transitions;
 - add later text-input/IME, keyboard traversal and gesture contracts without exposing raw hardware APIs;
-- freeze public semantic UI/OSIDL only after these invariants stabilize;
+- freeze the public semantic UI/OSIDL surface only after these invariants stabilize;
 - align the eventual Figma component system with the same semantic token vocabulary and evaluate accessibility/usability before freezing the visual language.
 
 Hardware DRM/KMS/GPU backends, production shader stacks, telephony/radio, verified boot/attestation, production TPM/TEE/HSM providers, recovery/update and full power-management integration remain later tracks and must not be faked inside M3.2.
