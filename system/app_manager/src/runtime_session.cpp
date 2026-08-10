@@ -92,6 +92,8 @@ ApplicationManager::service_runtime_session_once(InstanceSlot& slot) noexcept {
         // Manager creates a fresh pair only after authenticating the already-
         // bound runtime session. Reacquisition atomically replaces the sender
         // side so an old receiver becomes stale instead of coexisting forever.
+        // Sequence state intentionally survives reacquisition so replacing the
+        // transport capability cannot reopen the event replay window.
         auto pair_result = os::ipc::Channel::create_local_pair();
         if (!pair_result) {
             auto sent = os::ipc::send_rpc_error(
@@ -104,7 +106,6 @@ ApplicationManager::service_runtime_session_once(InstanceSlot& slot) noexcept {
         auto pair = std::move(pair_result).value();
         auto application_endpoint = pair[1].take_native_handle_for_transfer();
         slot.input_event_sender = std::move(pair[0]);
-        slot.last_input_event_sequence = 0U;
         auto sent = send_input_event_endpoint_response(
             slot.service_session,
             request.value().request_header,
