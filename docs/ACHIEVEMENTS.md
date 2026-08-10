@@ -153,8 +153,24 @@ font policy, final font assets and licensing, multitouch and gesture contracts.
 - [x] **M4.6** Private-storage confinement parser fuzzed, including an
       idempotence check that catches `parse()`/`view()` divergence — a
       confinement break with no memory-safety error attached.
+- [x] **M4.7** Budget coverage extended to `system.storage`, ceilings calibrated
+      from measured values, and measurements published as workflow annotations
+      so a gate result is diagnosable without permission to download raw logs.
+- [x] **M4.7** `system.storage` polls only live descriptors. It previously
+      handed `poll()` the full 65-entry table capacity, which fails with EINVAL
+      once `nfds` exceeds `RLIMIT_NOFILE` — and the default sandbox caps open
+      files at 32. The service could not run under its own default hardening
+      profile.
+- [x] **M4.7** `system.storage` and `system.keys` block on a single wait set.
+      Both previously polled control with a zero timeout and then dispatched
+      with a 10 ms timeout; neither wait could block, so an idle service woke
+      roughly 100 times a second forever. Measured 97/s before, 0/s after.
 - [ ] **M4.x** Leak detection enabled on the fuzz targets (blocked on triaging
       `osidlc` allocation behavior).
+- [ ] **M4.x** `system.keys` covered by a measured budget. Its idle fix is
+      argued from symmetry with the verified storage case, not from a
+      measurement; the service is gated behind `EMNL_BUILD_OPENSSL_TEST_PROVIDER`
+      and needs a state directory descriptor.
 - [ ] **M4.x** `KRG1` registry decoder fuzzed (blocked on a design decision:
       decode/IO separation versus a filesystem-backed harness).
 
@@ -168,12 +184,12 @@ stands, independent of milestone numbering.
 | # | Priority | Status | Evidence |
 | --- | --- | --- | --- |
 | 1 | Security by default and strong hardening | Strong, above the hardware line | Capability model, server-side rights, deterministic revocation, sandbox, adversarial tests, fail-closed `Result` |
-| 2 | Low resource consumption, small trusted components | Now measured | M4.2 budget gate; zero-allocation hot paths |
-| 3 | Performance, fast startup, responsiveness | Partially measured | `ready_ms` per service; no whole-system boot budget yet |
+| 2 | Low resource consumption, small trusted components | Now measured | M4.2/M4.7 budget gate over echo and storage; zero-allocation hot paths |
+| 3 | Performance, fast startup, responsiveness | Partially measured | Services reach READY in 1–2 ms; no whole-system boot budget yet |
 | 4 | Modular subsystem boundaries with explicit ownership | Strong | Per-subsystem `core/` libraries, typed service boundaries, `AGENTS.md` invariants |
 | 5 | Efficient, secure, developer-friendly APIs | Strong | OSIDL build-time generation, no runtime schema parser |
 | 6 | Hardware portability and clean adaptation boundaries | Partial | Native AArch64 and cross/QEMU gates; no board bring-up or driver model |
-| 7 | Low idle activity and power efficiency | Now measured | Idle-wakeup ceiling in M4.2; event-driven invariants in `AGENTS.md` |
+| 7 | Low idle activity and power efficiency | Measured, and it found real regressions | Idle-wakeup ceiling caught storage and keys spinning at ~100 Hz; both now measure 0/s |
 | 8 | Excellent, accessible phone UX | In progress | Semantic UI, accessibility bridge, trusted presentation |
 | 9 | Long-term maintainability and evolvability | Strong | Per-milestone invariant documents, exit criteria, honest non-goal records |
 
