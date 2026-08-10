@@ -40,6 +40,18 @@ target_link_options(rpc_error_fuzz PRIVATE
     -fsanitize=fuzzer,address,undefined
 )
 
+add_executable(storage_relative_path_fuzz storage/relative_path_fuzz.cpp)
+target_link_libraries(storage_relative_path_fuzz PRIVATE emnl::osstorage emnl_warnings)
+target_compile_options(storage_relative_path_fuzz PRIVATE
+    -fno-exceptions
+    -fno-rtti
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+)
+target_link_options(storage_relative_path_fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+)
+
 add_executable(package_manifest_fuzz package/manifest_analyzer_fuzz.cpp)
 target_link_libraries(package_manifest_fuzz PRIVATE emnl::ospkg emnl_warnings)
 target_compile_options(package_manifest_fuzz PRIVATE

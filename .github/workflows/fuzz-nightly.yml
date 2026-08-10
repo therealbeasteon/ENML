@@ -49,6 +49,8 @@ jobs:
             dictionary: fuzz/dict/osidl.dict
           - target: package_manifest_fuzz
             dictionary: ''
+          - target: storage_relative_path_fuzz
+            dictionary: fuzz/dict/storage_path.dict
     steps:
       - uses: actions/checkout@v4
 

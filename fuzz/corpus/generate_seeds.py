@@ -140,6 +140,47 @@ def package_manifest_seeds() -> dict[str, bytes]:
     }
 
 
+def storage_relative_path_seeds() -> dict[str, bytes]:
+    """Straddle the accept/reject boundary of the storage confinement parser.
+
+    Unlike the binary targets there is no magic to clear here, so the seeds are
+    chosen to sit next to each rejection rule rather than to get past a gate:
+    a mutator that starts from "a/../b" reaches the traversal check immediately.
+    """
+    # core/osstorage/include/os/storage/path.hpp
+    max_segment_bytes = 255
+    accepted = {
+        "single": "a",
+        "file": "file.txt",
+        "nested": "dir/file.txt",
+        "deep": "a/b/c/d/e",
+        "dotted_name": "archive.tar.gz",
+        "utf8_name": "документы/файл.txt",
+        "max_segment": "x" * max_segment_bytes,
+    }
+    rejected = {
+        "absolute": "/etc/passwd",
+        "parent": "..",
+        "current": ".",
+        "traversal": "a/../b",
+        "current_segment": "a/./b",
+        "empty_segment": "a//b",
+        "trailing_slash": "a/",
+        "leading_slash": "/a",
+        "backslash": "a\\b",
+        "over_max_segment": "x" * (max_segment_bytes + 1),
+    }
+
+    seeds = {name: value.encode("utf-8") for name, value in {**accepted, **rejected}.items()}
+    # Byte sequences that are not valid UTF-8 at all, plus an embedded NUL.
+    # These cannot be expressed as Python str, so they are added directly.
+    seeds["nul_embedded"] = b"a\x00b"
+    seeds["utf8_overlong"] = b"a/\xc0\xafb"
+    seeds["utf8_surrogate"] = b"a/\xed\xa0\x80"
+    seeds["utf8_truncated"] = b"a/\xe2\x82"
+    return seeds
+
+
 def write_seeds(root: pathlib.Path, target: str, seeds: dict[str, bytes]) -> int:
     directory = root / target
     directory.mkdir(parents=True, exist_ok=True)
@@ -158,6 +199,8 @@ def main(argv: list[str]) -> int:
     written += write_seeds(root, "ipc_decoder_fuzz", ipc_decoder_seeds())
     written += write_seeds(root, "rpc_error_fuzz", rpc_error_seeds())
     written += write_seeds(root, "package_manifest_fuzz", package_manifest_seeds())
+    written += write_seeds(
+        root, "storage_relative_path_fuzz", storage_relative_path_seeds())
 
     # osidlc seeds are the checked-in interface definitions themselves. They are
     # the only guaranteed-valid OSIDL in existence, so nothing synthetic here
