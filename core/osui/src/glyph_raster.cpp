@@ -1,5 +1,6 @@
 #include <os/ui/glyph_raster.hpp>
 
+#include <algorithm>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -118,10 +119,25 @@ namespace {
     return -(((-value) + divisor - 1) / divisor);
 }
 
+[[nodiscard]] constexpr std::int64_t ceil_div(
+    std::int64_t value,
+    std::int64_t divisor) noexcept {
+    if (value >= 0) return (value + divisor - 1) / divisor;
+    return -((-value) / divisor);
+}
+
 [[nodiscard]] std::int64_t scale_floor(
     std::int64_t q6,
     const RasterScale& scale) noexcept {
     return floor_div(
+        q6 * static_cast<std::int64_t>(scale.numerator),
+        static_cast<std::int64_t>(scale.denominator));
+}
+
+[[nodiscard]] std::int64_t scale_ceil(
+    std::int64_t q6,
+    const RasterScale& scale) noexcept {
+    return ceil_div(
         q6 * static_cast<std::int64_t>(scale.numerator),
         static_cast<std::int64_t>(scale.denominator));
 }
@@ -167,9 +183,47 @@ namespace {
         static_cast<std::int64_t>(origin.first_baseline_y_q6) <= bound;
 }
 
-} // namespace
+struct PixelClip final {
+    std::int64_t left {0};
+    std::int64_t top {0};
+    std::int64_t right {0};
+    std::int64_t bottom {0};
+};
 
-os::core::Result<GlyphRasterStats> rasterize_shaped_text_masks(
+[[nodiscard]] PixelClip full_target_clip(const RasterTarget& target) noexcept {
+    return PixelClip{
+        .left = 0,
+        .top = 0,
+        .right = static_cast<std::int64_t>(target.width),
+        .bottom = static_cast<std::int64_t>(target.height),
+    };
+}
+
+[[nodiscard]] PixelClip logical_clip(
+    const LogicalRect& bounds,
+    const RasterTarget& target) noexcept {
+    const std::int64_t right_q6 =
+        static_cast<std::int64_t>(bounds.x_q6) + bounds.width_q6;
+    const std::int64_t bottom_q6 =
+        static_cast<std::int64_t>(bounds.y_q6) + bounds.height_q6;
+    return PixelClip{
+        .left = std::max<std::int64_t>(0, scale_floor(bounds.x_q6, target.scale)),
+        .top = std::max<std::int64_t>(0, scale_floor(bounds.y_q6, target.scale)),
+        .right = std::min<std::int64_t>(
+            target.width, scale_ceil(right_q6, target.scale)),
+        .bottom = std::min<std::int64_t>(
+            target.height, scale_ceil(bottom_q6, target.scale)),
+    };
+}
+
+[[nodiscard]] bool inside_clip(
+    const PixelClip& clip,
+    std::int64_t x,
+    std::int64_t y) noexcept {
+    return x >= clip.left && x < clip.right && y >= clip.top && y < clip.bottom;
+}
+
+[[nodiscard]] os::core::Result<GlyphRasterStats> rasterize_masks_impl(
     const SemanticText& source,
     const ResolvedTextStyle& style,
     const ShapedText& shaped,
@@ -178,6 +232,7 @@ os::core::Result<GlyphRasterStats> rasterize_shaped_text_masks(
     const RasterTheme& theme,
     ColorRole color,
     TextRasterOrigin origin,
+    const PixelClip& clip,
     RasterTarget target) noexcept {
     if (!target_valid(target)) return ui_error(errors::invalid_raster_target);
     if (!theme_valid(theme) || !color_role_valid(color)) {
@@ -198,7 +253,10 @@ os::core::Result<GlyphRasterStats> rasterize_shaped_text_masks(
 
     GlyphRasterStats stats {};
     const Rgba8 foreground = theme.colors[color_index(color)];
-    if (foreground.alpha == 0U || shaped.glyph_count == 0U) return stats;
+    if (foreground.alpha == 0U || shaped.glyph_count == 0U ||
+        clip.left >= clip.right || clip.top >= clip.bottom) {
+        return stats;
+    }
 
     for (std::size_t line_index = 0U; line_index < shaped.line_count; ++line_index) {
         const ShapedLine& line = shaped.lines[line_index];
@@ -249,12 +307,14 @@ os::core::Result<GlyphRasterStats> rasterize_shaped_text_masks(
 
                 for (std::uint32_t mask_y = 0U; mask_y < mask.height; ++mask_y) {
                     const std::int64_t target_y = top + static_cast<std::int64_t>(mask_y);
-                    if (target_y < 0 || target_y >= static_cast<std::int64_t>(target.height)) {
+                    if (target_y < 0 || target_y >= static_cast<std::int64_t>(target.height) ||
+                        target_y < clip.top || target_y >= clip.bottom) {
                         continue;
                     }
                     for (std::uint32_t mask_x = 0U; mask_x < mask.width; ++mask_x) {
                         const std::int64_t target_x = left + static_cast<std::int64_t>(mask_x);
-                        if (target_x < 0 || target_x >= static_cast<std::int64_t>(target.width)) {
+                        if (target_x < 0 || target_x >= static_cast<std::int64_t>(target.width) ||
+                            !inside_clip(clip, target_x, target_y)) {
                             continue;
                         }
                         const std::size_t mask_index =
@@ -280,6 +340,58 @@ os::core::Result<GlyphRasterStats> rasterize_shaped_text_masks(
     }
 
     return stats;
+}
+
+} // namespace
+
+os::core::Result<GlyphRasterStats> rasterize_shaped_text_masks(
+    const SemanticText& source,
+    const ResolvedTextStyle& style,
+    const ShapedText& shaped,
+    const FontFaceSet& faces,
+    GlyphMaskProviderBackend provider,
+    const RasterTheme& theme,
+    ColorRole color,
+    TextRasterOrigin origin,
+    RasterTarget target) noexcept {
+    if (!target_valid(target)) return ui_error(errors::invalid_raster_target);
+    return rasterize_masks_impl(
+        source,
+        style,
+        shaped,
+        faces,
+        provider,
+        theme,
+        color,
+        origin,
+        full_target_clip(target),
+        target);
+}
+
+os::core::Result<GlyphRasterStats> rasterize_shaped_text_masks_clipped(
+    const SemanticText& source,
+    const ResolvedTextStyle& style,
+    const ShapedText& shaped,
+    const FontFaceSet& faces,
+    GlyphMaskProviderBackend provider,
+    const RasterTheme& theme,
+    ColorRole color,
+    TextRasterOrigin origin,
+    LogicalRect clip_bounds,
+    RasterTarget target) noexcept {
+    if (!target_valid(target)) return ui_error(errors::invalid_raster_target);
+    if (!clip_bounds.bounded()) return ui_error(errors::invalid_raster_command);
+    return rasterize_masks_impl(
+        source,
+        style,
+        shaped,
+        faces,
+        provider,
+        theme,
+        color,
+        origin,
+        logical_clip(clip_bounds, target),
+        target);
 }
 
 } // namespace os::ui
