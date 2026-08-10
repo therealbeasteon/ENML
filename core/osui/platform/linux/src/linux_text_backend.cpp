@@ -215,6 +215,7 @@ struct LinuxTextBackend::Impl final {
 
     FT_Library library {nullptr};
     std::array<FaceSlot, family_slot_count> slots {};
+    hb_buffer_t* shaping_buffer {nullptr};
     UBiDi* paragraph_bidi {nullptr};
     UBiDi* line_bidi {nullptr};
     UBreakIterator* line_breaker {nullptr};
@@ -230,6 +231,8 @@ struct LinuxTextBackend::Impl final {
         line_bidi = nullptr;
         if (paragraph_bidi != nullptr) ubidi_close(paragraph_bidi);
         paragraph_bidi = nullptr;
+        if (shaping_buffer != nullptr) hb_buffer_destroy(shaping_buffer);
+        shaping_buffer = nullptr;
 
         for (auto& slot : slots) {
             if (slot.hb_font != nullptr) hb_font_destroy(slot.hb_font);
@@ -324,33 +327,35 @@ struct LinuxTextBackend::Impl final {
         }
         FaceSlot* slot = slot_for(segment.family);
         if (slot == nullptr || slot->face == nullptr || slot->hb_font == nullptr ||
-            !size_face_logical(slot->face, style.metrics)) {
+            shaping_buffer == nullptr || !size_face_logical(slot->face, style.metrics)) {
             return false;
         }
         hb_ft_font_changed(slot->hb_font);
 
-        hb_buffer_t* buffer = hb_buffer_create();
-        if (buffer == nullptr || hb_buffer_allocation_successful(buffer) == 0) {
-            if (buffer != nullptr) hb_buffer_destroy(buffer);
-            return false;
-        }
+        // LinuxTextBackend is renderer-owned serialized state. Reusing one
+        // pre-created HarfBuzz buffer removes per-run buffer allocation/churn
+        // from the hot shaping path without adding a worker pool or global
+        // cache. A future parallel renderer must provide bounded per-worker
+        // backend state instead of concurrently entering this object.
+        hb_buffer_reset(shaping_buffer);
         hb_buffer_add_utf8(
-            buffer,
+            shaping_buffer,
             source.bytes.data(),
             static_cast<int>(source.length),
             static_cast<unsigned int>(segment.byte_start),
             static_cast<int>(segment.byte_end - segment.byte_start));
-        hb_buffer_set_direction(buffer, hb_direction(direction));
-        hb_buffer_set_cluster_level(buffer, HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
-        hb_buffer_guess_segment_properties(buffer);
-        hb_shape(slot->hb_font, buffer, nullptr, 0U);
+        hb_buffer_set_direction(shaping_buffer, hb_direction(direction));
+        hb_buffer_set_cluster_level(shaping_buffer, HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
+        hb_buffer_guess_segment_properties(shaping_buffer);
+        hb_shape(slot->hb_font, shaping_buffer, nullptr, 0U);
 
         unsigned int glyph_count = 0U;
-        const hb_glyph_info_t* infos = hb_buffer_get_glyph_infos(buffer, &glyph_count);
-        const hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer, &glyph_count);
+        const hb_glyph_info_t* infos =
+            hb_buffer_get_glyph_infos(shaping_buffer, &glyph_count);
+        const hb_glyph_position_t* positions =
+            hb_buffer_get_glyph_positions(shaping_buffer, &glyph_count);
         if (infos == nullptr || positions == nullptr || glyph_count == 0U ||
             output.glyph_count + glyph_count > output.glyphs.size()) {
-            hb_buffer_destroy(buffer);
             return false;
         }
 
@@ -363,7 +368,6 @@ struct LinuxTextBackend::Impl final {
             if (advance > max_logical_dimension_q6 ||
                 width_q6 > max_logical_dimension_q6 - advance ||
                 infos[index].cluster < segment.byte_start || infos[index].cluster >= segment.byte_end) {
-                hb_buffer_destroy(buffer);
                 return false;
             }
             output.glyphs[output.glyph_count] = ShapedGlyph{
@@ -387,7 +391,6 @@ struct LinuxTextBackend::Impl final {
             .direction = direction,
         };
         ++output.run_count;
-        hb_buffer_destroy(buffer);
         return true;
     }
 
@@ -891,6 +894,12 @@ LinuxTextBackend::LinuxTextBackend(const LinuxFontFiles& files) noexcept
         slot.weight = static_face_weight(slot.face);
         slot.hb_font = hb_ft_font_create_referenced(slot.face);
         if (slot.hb_font == nullptr) return;
+    }
+
+    impl_->shaping_buffer = hb_buffer_create();
+    if (impl_->shaping_buffer == nullptr ||
+        hb_buffer_allocation_successful(impl_->shaping_buffer) == 0) {
+        return;
     }
 
     UErrorCode status = U_ZERO_ERROR;
