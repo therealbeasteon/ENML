@@ -1,7 +1,9 @@
 #include <os/app/shell_lifecycle_control.hpp>
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 #include <utility>
 
 #include <os/core/error.hpp>
@@ -102,7 +104,7 @@ namespace {
 
 ShellLifecycleBackend shell_lifecycle_backend(ApplicationManager& manager) noexcept {
     return ShellLifecycleBackend{
-        .context = &manager,
+        .snapshot_context = &manager,
         .snapshot = manager_snapshot,
     };
 }
@@ -127,8 +129,8 @@ os::core::Result<void> ShellLifecycleControlServer::dispatch_once(
 
     // Authority is checked before operation/payload validation. An ordinary
     // process that happens to possess the endpoint gets one indistinguishable
-    // denial and cannot probe lifecycle shape, application count or protocol
-    // details through differential errors.
+    // denial and cannot probe lifecycle shape, application count, capability
+    // availability or protocol details through differential errors.
     if (context.value().peer.principal != os::core::shell_service_principal) {
         return os::ipc::send_rpc_error(
             channel,
@@ -136,23 +138,51 @@ os::core::Result<void> ShellLifecycleControlServer::dispatch_once(
             service_error(os::core::errors::service::access_denied));
     }
 
-    if (request_header.operation_id != shell_lifecycle_operation_snapshot ||
-        message.handle_count() != 0U || !message.payload().empty()) {
+    if (message.handle_count() != 0U || !message.payload().empty()) {
         return os::ipc::send_rpc_error(channel, request_header, protocol_error());
     }
 
-    auto snapshot = backend_.snapshot(backend_.context);
-    if (!snapshot) {
-        return os::ipc::send_rpc_error(channel, request_header, snapshot.error());
+    if (request_header.operation_id == shell_lifecycle_operation_snapshot) {
+        auto snapshot = backend_.snapshot(backend_.snapshot_context);
+        if (!snapshot) {
+            return os::ipc::send_rpc_error(channel, request_header, snapshot.error());
+        }
+        auto encoded = encode_snapshot(snapshot.value(), scratch);
+        if (!encoded) {
+            return os::ipc::send_rpc_error(channel, request_header, encoded.error());
+        }
+        return os::ipc::send_rpc_response(
+            channel,
+            request_header,
+            {scratch.data(), encoded.value()});
     }
-    auto encoded = encode_snapshot(snapshot.value(), scratch);
-    if (!encoded) {
-        return os::ipc::send_rpc_error(channel, request_header, encoded.error());
+
+    if (request_header.operation_id == shell_lifecycle_operation_take_compositor) {
+        if (backend_.take_compositor_capability == nullptr) {
+            return os::ipc::send_rpc_error(
+                channel,
+                request_header,
+                service_error(os::core::errors::service::not_supported));
+        }
+        auto capability = backend_.take_compositor_capability(
+            backend_.compositor_context);
+        if (!capability) {
+            return os::ipc::send_rpc_error(channel, request_header, capability.error());
+        }
+        if (!capability.value().valid()) {
+            return os::ipc::send_rpc_error(channel, request_header, protocol_error());
+        }
+        std::array<os::core::NativeHandle, 1U> handles{
+            std::move(capability).value(),
+        };
+        return os::ipc::send_rpc_response(
+            channel,
+            request_header,
+            {},
+            std::span<const os::core::NativeHandle>{handles.data(), handles.size()});
     }
-    return os::ipc::send_rpc_response(
-        channel,
-        request_header,
-        {scratch.data(), encoded.value()});
+
+    return os::ipc::send_rpc_error(channel, request_header, protocol_error());
 }
 
 } // namespace os::app
