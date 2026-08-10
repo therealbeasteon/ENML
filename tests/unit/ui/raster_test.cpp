@@ -6,6 +6,7 @@
 #include <cstdint>
 
 #include <os/core/error.hpp>
+#include <os/ui/detail/contour_geometry.hpp>
 #include <os/ui/error.hpp>
 
 namespace {
@@ -173,6 +174,35 @@ int main() {
         circular_commands, theme, circular_target);
     assert(circular_raster);
     assert(circular_pixels[4U * width + 26U] == surface);
+
+    // The shared normalized evaluator must remain well-defined at the maximum
+    // valid logical contour and the highest supported raster numerator. The
+    // old direct fourth-power formulation could wrap uint64_t here. The outer
+    // corner is empty while the adjacent body sample remains fully covered.
+    os::ui::RenderCommand extreme{};
+    extreme.source = os::ui::UiNodeId{3U};
+    extreme.bounds = os::ui::LogicalRect{
+        .x_q6 = 0,
+        .y_q6 = 0,
+        .width_q6 = os::ui::max_logical_dimension_q6,
+        .height_q6 = os::ui::max_logical_dimension_q6,
+    };
+    const std::uint32_t maximum_radius_q6 = os::ui::max_logical_dimension_q6 / 2U;
+    extreme.contour.radii = os::ui::CornerRadii{
+        .top_left_q6 = maximum_radius_q6,
+        .top_right_q6 = maximum_radius_q6,
+        .bottom_right_q6 = maximum_radius_q6,
+        .bottom_left_q6 = maximum_radius_q6,
+    };
+    extreme.contour.smoothing_percent = 100U;
+    const auto extreme_contour = os::ui::raster_detail::pixel_contour(
+        extreme,
+        os::ui::RasterScale{16U, 1U});
+    assert(os::ui::raster_detail::coverage_2x2(extreme_contour, 0, 0) == 0U);
+    assert(os::ui::raster_detail::coverage_2x2(
+        extreme_contour,
+        extreme_contour.top_left_radius,
+        0) == 255U);
 
     auto bad_target = target;
     bad_target.pixel_count = 1U;
