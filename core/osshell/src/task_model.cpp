@@ -1,5 +1,7 @@
 #include <os/shell/task_model.hpp>
 
+#include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <limits>
@@ -15,6 +17,83 @@ namespace {
     return left.instance == right.instance &&
         left.application == right.application &&
         left.owner == right.owner;
+}
+
+[[nodiscard]] bool exact_task(const ShellTask& left, const ShellTask& right) noexcept {
+    return exact_task_identity(left, right) &&
+        left.root_surface == right.root_surface &&
+        left.activation_serial == right.activation_serial;
+}
+
+[[nodiscard]] bool scene_role_valid(os::display::SurfaceRole role) noexcept {
+    switch (role) {
+    case os::display::SurfaceRole::application:
+    case os::display::SurfaceRole::popup:
+    case os::display::SurfaceRole::system_chrome:
+    case os::display::SurfaceRole::secure_system:
+        return true;
+    }
+    return false;
+}
+
+[[nodiscard]] bool trust_matches_role(const os::display::SceneEntry& entry) noexcept {
+    switch (entry.surface.role) {
+    case os::display::SurfaceRole::application:
+    case os::display::SurfaceRole::popup:
+        return entry.trusted_presentation == os::display::TrustedPresentation::none;
+    case os::display::SurfaceRole::system_chrome:
+        return entry.trusted_presentation == os::display::TrustedPresentation::system_chrome;
+    case os::display::SurfaceRole::secure_system:
+        return entry.trusted_presentation == os::display::TrustedPresentation::secure_system;
+    }
+    return false;
+}
+
+[[nodiscard]] bool scene_entry_valid(const os::display::SceneEntry& entry) noexcept {
+    if (!entry.surface.valid() || !scene_role_valid(entry.surface.role) ||
+        !trust_matches_role(entry)) {
+        return false;
+    }
+    if (entry.surface.role == os::display::SurfaceRole::popup) {
+        return os::display::valid_display_object_value(entry.surface.parent.value());
+    }
+    return entry.surface.parent.value() == 0U;
+}
+
+[[nodiscard]] const ShellTask* find_task(
+    const std::array<ShellTask, max_shell_tasks>& tasks,
+    std::size_t count,
+    os::core::ApplicationInstanceId instance) noexcept {
+    const std::size_t limit = std::min(count, tasks.size());
+    for (std::size_t index = 0U; index < limit; ++index) {
+        if (tasks[index].instance == instance) return &tasks[index];
+    }
+    return nullptr;
+}
+
+[[nodiscard]] bool desired_contains(
+    const std::array<ShellTask, max_shell_tasks>& tasks,
+    std::size_t count,
+    os::core::ApplicationInstanceId instance) noexcept {
+    return find_task(tasks, count, instance) != nullptr;
+}
+
+void sort_by_instance(
+    std::array<ShellTask, max_shell_tasks>& tasks,
+    std::size_t count) noexcept {
+    // Fixed-capacity insertion sort: at most 16 records, no allocator and no
+    // dependency on publisher slot order. Stable task ordering prevents a
+    // lifecycle snapshot's internal table layout from becoming shell UI state.
+    for (std::size_t index = 1U; index < count; ++index) {
+        ShellTask value = tasks[index];
+        std::size_t cursor = index;
+        while (cursor > 0U &&
+               tasks[cursor - 1U].instance.value() > value.instance.value()) {
+            tasks[cursor] = tasks[cursor - 1U];
+            --cursor;
+        }
+        tasks[cursor] = value;
+    }
 }
 
 } // namespace
@@ -58,6 +137,9 @@ os::core::Result<void> ShellTaskModel::publish(ShellTask task) noexcept {
             }
         }
         if (existing->root_surface == task.root_surface) return {};
+        if (task.root_surface.value() < existing->root_surface.value()) {
+            return shell_error(errors::stale_scene_snapshot);
+        }
         auto revision = advance_revision();
         if (!revision) return revision.error();
         existing->root_surface = task.root_surface;
@@ -77,6 +159,120 @@ os::core::Result<void> ShellTaskModel::publish(ShellTask task) noexcept {
     auto revision = advance_revision();
     if (!revision) return revision.error();
     tasks_[task_count_++] = task;
+    return {};
+}
+
+os::core::Result<void> ShellTaskModel::reconcile(
+    const ShellApplicationSnapshot& applications,
+    const os::display::SceneSnapshot& scene) noexcept {
+    if (applications.revision == 0U || applications.count > applications.applications.size()) {
+        return shell_error(errors::invalid_lifecycle_snapshot);
+    }
+    if (applications.revision < last_lifecycle_revision_) {
+        return shell_error(errors::stale_lifecycle_snapshot);
+    }
+    if (scene.count > scene.entries.size()) {
+        return shell_error(errors::invalid_scene_snapshot);
+    }
+
+    for (std::size_t index = 0U; index < applications.count; ++index) {
+        const ShellApplicationRecord& record = applications.applications[index];
+        if (!record.valid()) return shell_error(errors::invalid_lifecycle_snapshot);
+        for (std::size_t earlier = 0U; earlier < index; ++earlier) {
+            const ShellApplicationRecord& previous = applications.applications[earlier];
+            if (previous.instance == record.instance || previous.owner == record.owner) {
+                return shell_error(errors::invalid_lifecycle_snapshot);
+            }
+        }
+    }
+
+    for (std::size_t index = 0U; index < scene.count; ++index) {
+        const os::display::SceneEntry& entry = scene.entries[index];
+        if (!scene_entry_valid(entry)) return shell_error(errors::invalid_scene_snapshot);
+        for (std::size_t earlier = 0U; earlier < index; ++earlier) {
+            if (scene.entries[earlier].surface.id == entry.surface.id) {
+                return shell_error(errors::invalid_scene_snapshot);
+            }
+        }
+    }
+
+    std::array<ShellTask, max_shell_tasks> desired{};
+    std::size_t desired_count = 0U;
+    for (std::size_t application_index = 0U;
+         application_index < applications.count;
+         ++application_index) {
+        const ShellApplicationRecord& record = applications.applications[application_index];
+        const os::display::SceneEntry* root = nullptr;
+        for (std::size_t scene_index = 0U; scene_index < scene.count; ++scene_index) {
+            const os::display::SceneEntry& entry = scene.entries[scene_index];
+            if (entry.surface.role != os::display::SurfaceRole::application ||
+                entry.surface.owner != record.owner) {
+                continue;
+            }
+            if (root != nullptr) return shell_error(errors::invalid_scene_snapshot);
+            root = &entry;
+        }
+
+        // Lifecycle without a root surface is not yet a shell task. Conversely,
+        // application surfaces with no exact App Manager record are ignored.
+        // Neither source can mint a task alone.
+        if (root == nullptr) continue;
+        if (desired_count >= desired.size()) return shell_error(errors::task_capacity);
+
+        ShellTask joined{
+            .instance = record.instance,
+            .application = record.application,
+            .owner = record.owner,
+            .root_surface = root->surface.id,
+        };
+        if (const ShellTask* existing = find(record.instance); existing != nullptr) {
+            if (!exact_task_identity(*existing, joined)) {
+                return shell_error(errors::task_conflict);
+            }
+            if (joined.root_surface.value() < existing->root_surface.value()) {
+                return shell_error(errors::stale_scene_snapshot);
+            }
+            joined.activation_serial = existing->activation_serial;
+        }
+
+        for (std::size_t earlier = 0U; earlier < desired_count; ++earlier) {
+            if (desired[earlier].root_surface == joined.root_surface ||
+                desired[earlier].owner == joined.owner) {
+                return shell_error(errors::invalid_scene_snapshot);
+            }
+        }
+        desired[desired_count++] = joined;
+    }
+
+    sort_by_instance(desired, desired_count);
+
+    bool changed = desired_count != task_count_;
+    if (!changed) {
+        for (std::size_t index = 0U; index < desired_count; ++index) {
+            const ShellTask* existing = find_task(tasks_, task_count_, desired[index].instance);
+            if (existing == nullptr || !exact_task(*existing, desired[index])) {
+                changed = true;
+                break;
+            }
+        }
+    }
+
+    if (!changed) {
+        last_lifecycle_revision_ = applications.revision;
+        return {};
+    }
+
+    auto revision = advance_revision();
+    if (!revision) return revision.error();
+
+    tasks_ = desired;
+    task_count_ = desired_count;
+    last_lifecycle_revision_ = applications.revision;
+    if (active_instance_.value() != 0U &&
+        !desired_contains(tasks_, task_count_, active_instance_)) {
+        active_instance_ = {};
+        view_ = ShellView::home;
+    }
     return {};
 }
 
