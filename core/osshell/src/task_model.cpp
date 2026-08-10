@@ -82,8 +82,8 @@ void sort_by_instance(
     std::array<ShellTask, max_shell_tasks>& tasks,
     std::size_t count) noexcept {
     // Fixed-capacity insertion sort: at most 16 records, no allocator and no
-    // dependency on publisher slot order. Stable task ordering prevents a
-    // lifecycle snapshot's internal table layout from becoming shell UI state.
+    // dependency on publisher slot order. Stable task ordering prevents an
+    // App Manager table layout from becoming shell-visible task order.
     for (std::size_t index = 1U; index < count; ++index) {
         ShellTask value = tasks[index];
         std::size_t cursor = index;
@@ -148,9 +148,6 @@ os::core::Result<void> ShellTaskModel::publish(ShellTask task) noexcept {
 
     if (task_count_ >= tasks_.size()) return shell_error(errors::task_capacity);
     for (std::size_t index = 0U; index < task_count_; ++index) {
-        // One live exact process/root surface maps to one shell task. Multiple
-        // instances of the same signed application remain allowed when App
-        // Manager deliberately launches them as distinct PeerIdentity values.
         if (tasks_[index].owner == task.owner || tasks_[index].root_surface == task.root_surface) {
             return shell_error(errors::task_conflict);
         }
@@ -163,7 +160,7 @@ os::core::Result<void> ShellTaskModel::publish(ShellTask task) noexcept {
 }
 
 os::core::Result<void> ShellTaskModel::reconcile(
-    const ShellApplicationSnapshot& applications,
+    const os::app::ApplicationLifecycleSnapshot& applications,
     const os::display::SceneSnapshot& scene) noexcept {
     if (applications.revision == 0U || applications.count > applications.applications.size()) {
         return shell_error(errors::invalid_lifecycle_snapshot);
@@ -176,11 +173,11 @@ os::core::Result<void> ShellTaskModel::reconcile(
     }
 
     for (std::size_t index = 0U; index < applications.count; ++index) {
-        const ShellApplicationRecord& record = applications.applications[index];
+        const os::app::ApplicationLifecycleRecord& record = applications.applications[index];
         if (!record.valid()) return shell_error(errors::invalid_lifecycle_snapshot);
         for (std::size_t earlier = 0U; earlier < index; ++earlier) {
-            const ShellApplicationRecord& previous = applications.applications[earlier];
-            if (previous.instance == record.instance || previous.owner == record.owner) {
+            const os::app::ApplicationLifecycleRecord& previous = applications.applications[earlier];
+            if (previous.instance == record.instance || previous.identity == record.identity) {
                 return shell_error(errors::invalid_lifecycle_snapshot);
             }
         }
@@ -201,28 +198,28 @@ os::core::Result<void> ShellTaskModel::reconcile(
     for (std::size_t application_index = 0U;
          application_index < applications.count;
          ++application_index) {
-        const ShellApplicationRecord& record = applications.applications[application_index];
+        const os::app::ApplicationLifecycleRecord& record =
+            applications.applications[application_index];
         const os::display::SceneEntry* root = nullptr;
         for (std::size_t scene_index = 0U; scene_index < scene.count; ++scene_index) {
             const os::display::SceneEntry& entry = scene.entries[scene_index];
             if (entry.surface.role != os::display::SurfaceRole::application ||
-                entry.surface.owner != record.owner) {
+                entry.surface.owner != record.identity) {
                 continue;
             }
             if (root != nullptr) return shell_error(errors::invalid_scene_snapshot);
             root = &entry;
         }
 
-        // Lifecycle without a root surface is not yet a shell task. Conversely,
-        // application surfaces with no exact App Manager record are ignored.
-        // Neither source can mint a task alone.
+        // Neither trusted source can mint a complete shell task by itself.
+        // Lifecycle without a root waits; an orphan compositor root is ignored.
         if (root == nullptr) continue;
         if (desired_count >= desired.size()) return shell_error(errors::task_capacity);
 
         ShellTask joined{
             .instance = record.instance,
             .application = record.application,
-            .owner = record.owner,
+            .owner = record.identity,
             .root_surface = root->surface.id,
         };
         if (const ShellTask* existing = find(record.instance); existing != nullptr) {
@@ -341,9 +338,6 @@ os::core::Result<void> ShellTaskModel::show_overview() noexcept {
     if (view_ == ShellView::overview) return {};
     auto revision = advance_revision();
     if (!revision) return revision.error();
-    // Preserve active_instance_ as the last foreground application so overview
-    // can return to it without guessing from task order. The compositor commit
-    // layer decides which surfaces are actually visible while overview is up.
     view_ = ShellView::overview;
     return {};
 }
