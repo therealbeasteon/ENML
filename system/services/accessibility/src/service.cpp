@@ -121,6 +121,14 @@ const AccessibilityServiceRuntime::SessionSlot* AccessibilityServiceRuntime::fin
     return nullptr;
 }
 
+void AccessibilityServiceRuntime::clear(SessionSlot& slot) noexcept {
+    slot.client.reset();
+    slot.channel.close();
+    slot.occupied = false;
+    slot.session_id = 0U;
+    slot.application = {};
+}
+
 std::size_t AccessibilityServiceRuntime::session_count() const noexcept {
     std::size_t count = 0U;
     for (const auto& slot : sessions_) {
@@ -165,6 +173,7 @@ os::core::Result<AccessibilityBrokerClaimMetadata> AccessibilityServiceRuntime::
     free_slot->session_id = endpoint.session_id;
     free_slot->application = endpoint.application;
     free_slot->channel = std::move(endpoint.channel);
+    free_slot->client.emplace(free_slot->channel);
     return metadata;
 }
 
@@ -173,17 +182,16 @@ os::core::Result<void> AccessibilityServiceRuntime::snapshot(
     os::ui::AccessibilitySessionSnapshot& output,
     os::core::MutableByteSpan scratch) noexcept {
     auto* slot = find(application);
-    if (slot == nullptr || !slot->channel.valid()) {
+    if (slot == nullptr || !slot->channel.valid() || !slot->client.has_value()) {
         return service_error(service_errors::unknown_session);
     }
 
-    AccessibilitySessionClient client{slot->channel};
-    auto result = client.snapshot(
+    auto result = slot->client->snapshot(
         os::ui::AccessibilitySessionId{slot->session_id},
         output,
         scratch);
     if (!result && peer_died(result.error())) {
-        *slot = SessionSlot{};
+        clear(*slot);
     }
     return result;
 }
@@ -196,11 +204,10 @@ os::core::Result<os::ui::UiEvent> AccessibilityServiceRuntime::dispatch_action(
         return service_error(service_errors::malformed_request);
     }
     auto* slot = find(request.application);
-    if (slot == nullptr || !slot->channel.valid()) {
+    if (slot == nullptr || !slot->channel.valid() || !slot->client.has_value()) {
         return service_error(service_errors::unknown_session);
     }
 
-    AccessibilitySessionClient client{slot->channel};
     const os::ui::AccessibilitySessionActionRequest session_request{
         .session = os::ui::AccessibilitySessionId{slot->session_id},
         .request = os::ui::AccessibilityActionRequest{
@@ -209,9 +216,9 @@ os::core::Result<os::ui::UiEvent> AccessibilityServiceRuntime::dispatch_action(
             .action = request.action,
         },
     };
-    auto result = client.dispatch_action(session_request, scratch);
+    auto result = slot->client->dispatch_action(session_request, scratch);
     if (!result && peer_died(result.error())) {
-        *slot = SessionSlot{};
+        clear(*slot);
     }
     return result;
 }
@@ -220,7 +227,7 @@ os::core::Result<void> AccessibilityServiceRuntime::release(
     os::core::PeerIdentity application) noexcept {
     auto* slot = find(application);
     if (slot == nullptr) return service_error(service_errors::unknown_session);
-    *slot = SessionSlot{};
+    clear(*slot);
     return {};
 }
 
