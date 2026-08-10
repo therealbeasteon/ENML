@@ -139,6 +139,51 @@ ApplicationManager::service_runtime_session_once(InstanceSlot& slot) noexcept {
         return {};
     }
 
+    if (request.value().kind == RuntimeSessionRequestKind::acquire_accessibility) {
+        // Accessibility state lives in the application runtime, so App Manager
+        // creates a private pair after authenticating this exact application
+        // session. The application receives one endpoint and a fresh session
+        // number; the other endpoint is retained for a one-shot claim by the
+        // trusted accessibility principal. Reacquisition closes the previous
+        // service side and mints a new session, invalidating the old capability.
+        if (next_accessibility_session_id_ == 0U) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                service_error(manager_errors::accessibility_session_exhausted));
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+
+        auto pair_result = os::ipc::Channel::create_local_pair();
+        if (!pair_result) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                pair_result.error());
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+        auto pair = std::move(pair_result).value();
+        const std::uint64_t session_id = next_accessibility_session_id_;
+        ++next_accessibility_session_id_;
+
+        auto application_endpoint = pair[1].take_native_handle_for_transfer();
+        slot.accessibility_service_endpoint = std::move(pair[0]);
+        slot.accessibility_session_id = session_id;
+        auto sent = send_accessibility_endpoint_response(
+            slot.service_session,
+            request.value().request_header,
+            session_id,
+            application_endpoint);
+        if (!sent) {
+            slot.accessibility_service_endpoint.close();
+            slot.accessibility_session_id = 0U;
+        }
+        close_on_send_failure(slot.service_session, sent);
+        return {};
+    }
+
     // The bootstrap service set is the application-visible allow-list for
     // service reacquisition. ServiceBroker independently enforces the same
     // process/service attachment, so a forged or future ServiceId cannot expand
