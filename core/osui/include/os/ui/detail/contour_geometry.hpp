@@ -241,4 +241,13 @@ struct PixelContour final {
         !contains_center(contour, x, y - 1);
 }
 
+[[nodiscard]] inline bool trailing_boundary_center(
+    const PixelContour& contour,
+    std::int64_t x,
+    std::int64_t y) noexcept {
+    if (!boundary_center(contour, x, y)) return false;
+    return !contains_center(contour, x + 1, y) ||
+        !contains_center(contour, x, y + 1);
+}
+
 } // namespace os::ui::raster_detail
