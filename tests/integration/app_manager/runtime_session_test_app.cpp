@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <os/app/bootstrap.hpp>
+#include <os/app/input_event.hpp>
 #include <os/app/service_session.hpp>
 #include <os/core/error.hpp>
 #include <os/core/native_handle.hpp>
@@ -119,11 +120,14 @@ int main() {
     auto storage_root = std::move(root_result).value();
 
     auto initial_path = os::storage::RelativePath::parse("m2-10-initial.bin");
+    auto input_ready_path = os::storage::RelativePath::parse("m3-input-ready.bin");
+    auto input_delivered_path = os::storage::RelativePath::parse("m3-input-delivered.bin");
     auto session_ready_path = os::storage::RelativePath::parse("m2-10-session-ready.bin");
     auto key_reacquired_path = os::storage::RelativePath::parse("m2-10-key-reacquired.bin");
     auto heartbeat_path = os::storage::RelativePath::parse("m2-10-storage-heartbeat.bin");
     auto storage_reacquired_path = os::storage::RelativePath::parse("m2-10-storage-reacquired.bin");
-    if (!initial_path || !session_ready_path || !key_reacquired_path ||
+    if (!initial_path || !input_ready_path || !input_delivered_path ||
+        !session_ready_path || !key_reacquired_path ||
         !heartbeat_path || !storage_reacquired_path) {
         return 17;
     }
@@ -160,6 +164,49 @@ int main() {
     if (!ready) return 21;
 
     os::app::PlatformServiceSession runtime{bootstrap_channel};
+
+    // Acquire a separate runtime→application event capability. The request
+    // contains no target ProcessId/PrincipalId/surface: App Manager binds the
+    // fresh socketpair to this already-authenticated runtime session.
+    auto input_endpoint_result = runtime.acquire_input_events(scratch);
+    if (!input_endpoint_result) return 60;
+    auto input_endpoint = std::move(input_endpoint_result).value();
+    os::app::ApplicationInputEventStream input_stream{
+        input_endpoint,
+        request.record.identity,
+    };
+    if (!input_stream.valid()) return 61;
+
+    const std::array<std::byte, 1U> input_ready_marker{std::byte{0xE1}};
+    if (!storage_root.atomic_replace(
+            input_ready_path.value(),
+            input_ready_marker,
+            scratch)) {
+        return 62;
+    }
+
+    auto delivered_input = input_stream.receive(scratch);
+    if (!delivered_input) return 63;
+    if (delivered_input.value().sequence != 41U ||
+        delivered_input.value().target != request.record.identity ||
+        delivered_input.value().surface_id != 0x0000000900000001ULL ||
+        delivered_input.value().frame_sequence != 17U ||
+        delivered_input.value().surface_width_px != 360U ||
+        delivered_input.value().surface_height_px != 800U ||
+        delivered_input.value().local_x_px != 73 ||
+        delivered_input.value().local_y_px != 99 ||
+        delivered_input.value().pointer_id != 0U ||
+        delivered_input.value().phase != os::app::ApplicationPointerPhase::down) {
+        return 64;
+    }
+
+    const std::array<std::byte, 1U> input_delivered_marker{std::byte{0xE2}};
+    if (!storage_root.atomic_replace(
+            input_delivered_path.value(),
+            input_delivered_marker,
+            scratch)) {
+        return 65;
+    }
 
     // The bootstrap-v2 service set is a strict allow-list. The runtime session
     // cannot be used as a general service bus or to expand application policy.
