@@ -104,6 +104,7 @@ bool line_metrics(
 
 struct GlyphContext final {
     std::array<std::uint8_t, 6U> coverage {{255U, 255U, 255U, 255U, 255U, 255U}};
+    std::int16_t bearing_x_px {0};
 };
 
 bool glyph_provider(
@@ -124,7 +125,7 @@ bool glyph_provider(
         .width = 2U,
         .height = 3U,
         .stride = 2U,
-        .bearing_x_px = 0,
+        .bearing_x_px = state->bearing_x_px,
         .bearing_top_px = 2,
     };
     return true;
@@ -225,9 +226,31 @@ int main() {
     // leading is placed above the ink, so the baseline is y=18 and the 2px
     // top bearing starts the mask at y=16.
     const auto foreground = theme.colors[color_index(os::ui::ColorRole::text_primary)];
+    const auto surface = theme.colors[color_index(os::ui::ColorRole::surface)];
     assert(pixels[16U * width + 4U] == foreground);
     assert(pixels[18U * width + 5U] == foreground);
     assert(pixels[16U * width + 7U] == foreground);
+
+    // Backend ink bearings are allowed to overhang the advance origin, but a
+    // RenderContentKind::text node is not allowed to paint into its sibling
+    // region. Move both fake masks 2px left: the first glyph is now entirely
+    // left of the node's x=4dp clip and stays on the root surface, while the
+    // second glyph remains inside and still paints.
+    std::array<os::ui::Rgba8, width * height> clipped_pixels{};
+    auto clipped_target = target;
+    clipped_target.pixels = clipped_pixels.data();
+    clipped_target.pixel_count = clipped_pixels.size();
+    glyph_context.bearing_x_px = -2;
+    auto clipped_frame = os::ui::rasterize_opaque_frame_with_text(
+        buffer, backend, theme, clipped_target);
+    assert(clipped_frame);
+    assert(clipped_frame.value().text.glyphs_seen == 2U);
+    assert(clipped_frame.value().text.glyphs_drawn == 1U);
+    assert(clipped_frame.value().text.pixel_writes == 6U);
+    assert(clipped_pixels[16U * width + 2U] == surface);
+    assert(clipped_pixels[16U * width + 3U] == surface);
+    assert(clipped_pixels[16U * width + 5U] == foreground);
+    glyph_context.bearing_x_px = 0;
 
     auto no_metrics = backend;
     no_metrics.line_metrics = {};
