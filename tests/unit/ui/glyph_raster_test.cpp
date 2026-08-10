@@ -137,6 +137,10 @@ int main() {
         .scale = {1U, os::ui::logical_units_per_dp},
     };
     MaskContext masks{};
+    const os::ui::TextRasterOrigin origin{
+        .baseline_x_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(2U)),
+        .first_baseline_y_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(5U)),
+    };
     auto raster = os::ui::rasterize_shaped_text_masks(
         text.value(),
         style.value(),
@@ -145,10 +149,7 @@ int main() {
         os::ui::GlyphMaskProviderBackend{.context = &masks, .resolve = glyph_provider},
         theme,
         os::ui::ColorRole::text_primary,
-        os::ui::TextRasterOrigin{
-            .baseline_x_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(2U)),
-            .first_baseline_y_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(5U)),
-        },
+        origin,
         target);
     assert(raster);
     assert(raster.value().glyphs_seen == 2U);
@@ -163,6 +164,50 @@ int main() {
     assert(pixels[4U * width + 3U] == background);
     assert(pixels[5U * width + 2U] == foreground);
     assert(pixels[5U * width + 3U] == foreground);
+
+    // A semantic text command must own a real paint rectangle, not merely a
+    // shaping width. A glyph mask/bearing that overhangs the node is clipped to
+    // that node before target memory is touched. This protects sibling pixels
+    // without requiring an offscreen text surface.
+    std::array<os::ui::Rgba8, width * height> clipped_pixels{};
+    for (auto& pixel : clipped_pixels) pixel = background;
+    auto clipped_target = target;
+    clipped_target.pixels = clipped_pixels.data();
+    clipped_target.pixel_count = clipped_pixels.size();
+    const os::ui::LogicalRect clip{
+        .x_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(3U)),
+        .y_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(4U)),
+        .width_q6 = os::ui::logical_from_dp(1U),
+        .height_q6 = os::ui::logical_from_dp(2U),
+    };
+    auto clipped = os::ui::rasterize_shaped_text_masks_clipped(
+        text.value(),
+        style.value(),
+        shaped,
+        faces,
+        os::ui::GlyphMaskProviderBackend{.context = &masks, .resolve = glyph_provider},
+        theme,
+        os::ui::ColorRole::text_primary,
+        origin,
+        clip,
+        clipped_target);
+    assert(clipped);
+    assert(clipped.value().glyphs_seen == 2U);
+    assert(clipped.value().masks_resolved == 2U);
+    assert(clipped.value().glyphs_drawn == 1U);
+    assert(clipped.value().pixel_writes == 1U);
+    assert(clipped_pixels[5U * width + 3U] == foreground);
+    assert(clipped_pixels[3U * width + 3U] == background);
+    assert(clipped_pixels[5U * width + 2U] == background);
+
+    auto invalid_clip = clip;
+    invalid_clip.width_q6 = 0U;
+    auto bad_clip = os::ui::rasterize_shaped_text_masks_clipped(
+        text.value(), style.value(), shaped, faces,
+        os::ui::GlyphMaskProviderBackend{.context = &masks, .resolve = glyph_provider},
+        theme, os::ui::ColorRole::text_primary, origin, invalid_clip, clipped_target);
+    assert(!bad_clip);
+    expect_ui_error(bad_clip.error(), os::ui::errors::invalid_raster_command);
 
     auto unavailable = os::ui::rasterize_shaped_text_masks(
         text.value(), style.value(), shaped, faces, {}, theme,
