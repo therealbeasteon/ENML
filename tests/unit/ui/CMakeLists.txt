@@ -27,3 +27,24 @@ add_emnl_ui_test(ui_input_transform_test input_transform_test.cpp)
 add_emnl_ui_test(ui_input_routing_test input_routing_test.cpp)
 add_emnl_ui_test(ui_accessibility_bridge_test accessibility_bridge_test.cpp)
 add_emnl_ui_test(ui_motion_timeline_test motion_timeline_test.cpp)
+
+if(EMNL_BUILD_LINUX_TEXT_BACKEND)
+    find_file(EMNL_TEST_FONT_FILE
+        NAMES DejaVuSans.ttf
+        PATHS /usr/share/fonts/truetype/dejavu
+        NO_DEFAULT_PATH
+        REQUIRED
+    )
+    add_executable(ui_linux_text_backend_test linux_text_backend_test.cpp)
+    target_link_libraries(ui_linux_text_backend_test
+        PRIVATE emnl::osui_linux_text_backend emnl_warnings
+    )
+    target_compile_definitions(ui_linux_text_backend_test PRIVATE
+        EMNL_TEST_FONT_PATH="${EMNL_TEST_FONT_FILE}"
+    )
+    target_compile_options(ui_linux_text_backend_test PRIVATE
+        $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+    )
+    add_test(NAME ui_linux_text_backend_test COMMAND ui_linux_text_backend_test)
+    set_tests_properties(ui_linux_text_backend_test PROPERTIES LABELS "m3-ui")
+endif()
