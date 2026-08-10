@@ -19,23 +19,29 @@ target_compile_options(budget_support PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
 
+# One generic harness drives every budget. Adding a service is a data change in
+# budget.hpp plus a registration below, never a change to the measurement code.
 add_executable(service_budget_test service_budget_test.cpp)
 target_link_libraries(service_budget_test PRIVATE
     budget_support
     emnl::supervisor
-    emnl::echo_generated
     emnl_warnings
 )
 target_compile_options(service_budget_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
-add_dependencies(service_budget_test system_echo)
 
-add_test(
-    NAME service_budget_echo_test
-    COMMAND service_budget_test $<TARGET_FILE:system_echo> system.echo
-)
-set_tests_properties(service_budget_echo_test PROPERTIES
-    LABELS "budget"
-    SKIP_RETURN_CODE 77
-)
+function(add_emnl_budget_test budget_name service_target)
+    add_dependencies(service_budget_test ${service_target})
+    add_test(
+        NAME service_budget_${budget_name}
+        COMMAND service_budget_test $<TARGET_FILE:${service_target}> ${budget_name}
+    )
+    set_tests_properties(service_budget_${budget_name} PROPERTIES
+        LABELS "budget"
+        SKIP_RETURN_CODE 77
+    )
+endfunction()
+
+add_emnl_budget_test(system.echo system_echo)
+add_emnl_budget_test(system.storage system.storage)

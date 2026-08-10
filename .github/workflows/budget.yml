@@ -21,7 +21,7 @@ jobs:
       - name: Build
         run: cmake --build --preset host-debug --parallel 2
       - name: Enforce resource budgets
-        run: ctest --preset host-debug --output-on-failure -L '^budget$'
+        run: .github/scripts/run-budgets.sh 'x86-64'
 
   budget-arm64-native:
     runs-on: ubuntu-24.04-arm
@@ -36,4 +36,4 @@ jobs:
       - name: Build
         run: cmake --build --preset host-debug --parallel 2
       - name: Enforce resource budgets on AArch64
-        run: ctest --preset host-debug --output-on-failure -L '^budget$'
+        run: .github/scripts/run-budgets.sh 'AArch64'
