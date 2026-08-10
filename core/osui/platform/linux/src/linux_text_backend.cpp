@@ -12,12 +12,47 @@
 #include FT_TRUETYPE_TABLES_H
 #include <hb-ft.h>
 #include <hb.h>
+#include <unicode/ubidi.h>
+#include <unicode/ubrk.h>
+#include <unicode/utypes.h>
 
 namespace os::ui::platform {
 namespace {
 
 inline constexpr std::size_t family_slot_count = 5U;
 inline constexpr FT_F26Dot6 default_face_size_26_6 = 16L * 64L;
+inline constexpr std::size_t max_utf16_units = max_semantic_text_bytes;
+inline constexpr std::size_t max_break_points = max_semantic_text_bytes + 1U;
+
+struct Utf16Text final {
+    std::array<UChar, max_utf16_units> units {};
+    // A non-negative entry marks a real Unicode scalar boundary and maps the
+    // UTF-16 offset back to the original UTF-8 byte offset. The interior of a
+    // surrogate pair remains -1 so a malformed backend split cannot be hidden.
+    std::array<std::int32_t, max_utf16_units + 1U> byte_boundary {};
+    std::int32_t length {0};
+};
+
+struct BreakPoint final {
+    std::int32_t utf16_offset {0};
+    bool hard {false};
+};
+
+struct BreakPointSet final {
+    std::array<BreakPoint, max_break_points> points {};
+    std::size_t count {0U};
+};
+
+struct FamilySegment final {
+    std::uint16_t byte_start {0U};
+    std::uint16_t byte_end {0U};
+    FontFamilyRole family {FontFamilyRole::interface};
+};
+
+struct FamilySegments final {
+    std::array<FamilySegment, max_shaped_runs> segments {};
+    std::size_t count {0U};
+};
 
 [[nodiscard]] constexpr std::size_t family_index(FontFamilyRole family) noexcept {
     switch (family) {
@@ -30,10 +65,12 @@ inline constexpr FT_F26Dot6 default_face_size_26_6 = 16L * 64L;
     return family_slot_count;
 }
 
-[[nodiscard]] constexpr TextDirection text_direction(hb_direction_t direction) noexcept {
-    return HB_DIRECTION_IS_BACKWARD(direction)
-        ? TextDirection::right_to_left
-        : TextDirection::left_to_right;
+[[nodiscard]] constexpr TextDirection text_direction(UBiDiDirection direction) noexcept {
+    return direction == UBIDI_RTL ? TextDirection::right_to_left : TextDirection::left_to_right;
+}
+
+[[nodiscard]] constexpr hb_direction_t hb_direction(TextDirection direction) noexcept {
+    return direction == TextDirection::right_to_left ? HB_DIRECTION_RTL : HB_DIRECTION_LTR;
 }
 
 [[nodiscard]] bool decode_utf8_scalar(
@@ -62,6 +99,48 @@ inline constexpr FT_F26Dot6 default_face_size_26_6 = 16L * 64L;
         value = (value << 6U) | static_cast<std::uint32_t>(next & 0x3FU);
     }
     scalar = value;
+    return true;
+}
+
+[[nodiscard]] bool utf16_from_utf8(
+    const SemanticText& source,
+    Utf16Text& output) noexcept {
+    output = {};
+    output.byte_boundary.fill(-1);
+    output.byte_boundary[0] = 0;
+
+    std::size_t byte_offset = 0U;
+    std::size_t utf16_offset = 0U;
+    while (byte_offset < static_cast<std::size_t>(source.length)) {
+        std::uint32_t scalar = 0U;
+        std::size_t width = 0U;
+        if (!decode_utf8_scalar(source, byte_offset, scalar, width) || scalar > 0x10FFFFU ||
+            (scalar >= 0xD800U && scalar <= 0xDFFFU)) {
+            return false;
+        }
+
+        output.byte_boundary[utf16_offset] = static_cast<std::int32_t>(byte_offset);
+        if (scalar <= 0xFFFFU) {
+            if (utf16_offset >= output.units.size()) return false;
+            output.units[utf16_offset] = static_cast<UChar>(scalar);
+            ++utf16_offset;
+        } else {
+            if (utf16_offset + 2U > output.units.size()) return false;
+            const std::uint32_t adjusted = scalar - 0x10000U;
+            output.units[utf16_offset] = static_cast<UChar>(0xD800U + (adjusted >> 10U));
+            output.units[utf16_offset + 1U] = static_cast<UChar>(
+                0xDC00U + (adjusted & 0x3FFU));
+            ++utf16_offset;
+            // The offset between the surrogate halves intentionally remains an
+            // invalid byte boundary.
+            output.byte_boundary[utf16_offset] = -1;
+            ++utf16_offset;
+        }
+        byte_offset += width;
+        output.byte_boundary[utf16_offset] = static_cast<std::int32_t>(byte_offset);
+    }
+
+    output.length = static_cast<std::int32_t>(utf16_offset);
     return true;
 }
 
@@ -108,6 +187,21 @@ inline constexpr FT_F26Dot6 default_face_size_26_6 = 16L * 64L;
     return static_cast<std::uint16_t>(weight);
 }
 
+[[nodiscard]] constexpr bool line_separator(UChar value) noexcept {
+    return value == static_cast<UChar>('\n') || value == static_cast<UChar>('\r') ||
+        value == static_cast<UChar>(0x2028U) || value == static_cast<UChar>(0x2029U);
+}
+
+[[nodiscard]] std::int32_t trim_line_terminator(
+    const Utf16Text& text,
+    std::int32_t start,
+    std::int32_t limit) noexcept {
+    while (limit > start && line_separator(text.units[static_cast<std::size_t>(limit - 1)])) {
+        --limit;
+    }
+    return limit;
+}
+
 } // namespace
 
 struct LinuxTextBackend::Impl final {
@@ -121,9 +215,22 @@ struct LinuxTextBackend::Impl final {
 
     FT_Library library {nullptr};
     std::array<FaceSlot, family_slot_count> slots {};
+    UBiDi* paragraph_bidi {nullptr};
+    UBiDi* line_bidi {nullptr};
+    UBreakIterator* line_breaker {nullptr};
+    UBreakIterator* grapheme_breaker {nullptr};
     bool ready {false};
 
     ~Impl() {
+        if (grapheme_breaker != nullptr) ubrk_close(grapheme_breaker);
+        grapheme_breaker = nullptr;
+        if (line_breaker != nullptr) ubrk_close(line_breaker);
+        line_breaker = nullptr;
+        if (line_bidi != nullptr) ubidi_close(line_bidi);
+        line_bidi = nullptr;
+        if (paragraph_bidi != nullptr) ubidi_close(paragraph_bidi);
+        paragraph_bidi = nullptr;
+
         for (auto& slot : slots) {
             if (slot.hb_font != nullptr) hb_font_destroy(slot.hb_font);
             slot.hb_font = nullptr;
@@ -164,6 +271,279 @@ struct LinuxTextBackend::Impl final {
         return style.fallback.families[0];
     }
 
+    [[nodiscard]] bool family_segments(
+        const SemanticText& source,
+        const ResolvedTextStyle& style,
+        std::uint16_t byte_start,
+        std::uint16_t byte_end,
+        FamilySegments& output) const noexcept {
+        output = {};
+        std::size_t offset = byte_start;
+        const std::size_t limit = byte_end;
+        while (offset < limit) {
+            std::uint32_t scalar = 0U;
+            std::size_t scalar_width = 0U;
+            if (!decode_utf8_scalar(source, offset, scalar, scalar_width) ||
+                offset + scalar_width > limit) {
+                return false;
+            }
+            const FontFamilyRole family = family_for_scalar(scalar, style);
+            const std::size_t segment_start = offset;
+            offset += scalar_width;
+            while (offset < limit) {
+                std::uint32_t next_scalar = 0U;
+                std::size_t next_width = 0U;
+                if (!decode_utf8_scalar(source, offset, next_scalar, next_width) ||
+                    offset + next_width > limit) {
+                    return false;
+                }
+                if (family_for_scalar(next_scalar, style) != family) break;
+                offset += next_width;
+            }
+            if (output.count >= output.segments.size()) return false;
+            output.segments[output.count++] = FamilySegment{
+                .byte_start = static_cast<std::uint16_t>(segment_start),
+                .byte_end = static_cast<std::uint16_t>(offset),
+                .family = family,
+            };
+        }
+        return output.count != 0U;
+    }
+
+    [[nodiscard]] bool shape_family_segment(
+        const SemanticText& source,
+        const ResolvedTextStyle& style,
+        const FontFaceSet& faces,
+        const FamilySegment& segment,
+        TextDirection direction,
+        ShapedText& output,
+        std::uint64_t& width_q6) noexcept {
+        if (faces.find(segment.family) == nullptr || segment.byte_start >= segment.byte_end ||
+            output.run_count >= output.runs.size()) {
+            return false;
+        }
+        FaceSlot* slot = slot_for(segment.family);
+        if (slot == nullptr || slot->face == nullptr || slot->hb_font == nullptr ||
+            !size_face_logical(slot->face, style.metrics)) {
+            return false;
+        }
+        hb_ft_font_changed(slot->hb_font);
+
+        hb_buffer_t* buffer = hb_buffer_create();
+        if (buffer == nullptr || hb_buffer_allocation_successful(buffer) == 0) {
+            if (buffer != nullptr) hb_buffer_destroy(buffer);
+            return false;
+        }
+        hb_buffer_add_utf8(
+            buffer,
+            source.bytes.data(),
+            static_cast<int>(source.length),
+            static_cast<unsigned int>(segment.byte_start),
+            static_cast<int>(segment.byte_end - segment.byte_start));
+        hb_buffer_set_direction(buffer, hb_direction(direction));
+        hb_buffer_set_cluster_level(buffer, HB_BUFFER_CLUSTER_LEVEL_MONOTONE_CHARACTERS);
+        hb_buffer_guess_segment_properties(buffer);
+        hb_shape(slot->hb_font, buffer, nullptr, 0U);
+
+        unsigned int glyph_count = 0U;
+        const hb_glyph_info_t* infos = hb_buffer_get_glyph_infos(buffer, &glyph_count);
+        const hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer, &glyph_count);
+        if (infos == nullptr || positions == nullptr || glyph_count == 0U ||
+            output.glyph_count + glyph_count > output.glyphs.size()) {
+            hb_buffer_destroy(buffer);
+            return false;
+        }
+
+        const std::size_t first_glyph = output.glyph_count;
+        for (unsigned int index = 0U; index < glyph_count; ++index) {
+            const std::int64_t signed_advance = positions[index].x_advance;
+            const std::uint64_t advance = signed_advance < 0
+                ? static_cast<std::uint64_t>(-signed_advance)
+                : static_cast<std::uint64_t>(signed_advance);
+            if (advance > max_logical_dimension_q6 ||
+                width_q6 > max_logical_dimension_q6 - advance ||
+                infos[index].cluster < segment.byte_start || infos[index].cluster >= segment.byte_end) {
+                hb_buffer_destroy(buffer);
+                return false;
+            }
+            output.glyphs[output.glyph_count] = ShapedGlyph{
+                .glyph_id = infos[index].codepoint,
+                .cluster_byte_offset = static_cast<std::uint16_t>(infos[index].cluster),
+                .advance_q6 = static_cast<std::uint32_t>(advance),
+                .offset_x_q6 = positions[index].x_offset,
+                .offset_y_q6 = positions[index].y_offset,
+                .family = segment.family,
+            };
+            ++output.glyph_count;
+            width_q6 += advance;
+        }
+
+        output.runs[output.run_count] = ShapedRun{
+            .first_glyph = static_cast<std::uint16_t>(first_glyph),
+            .glyph_count = static_cast<std::uint16_t>(glyph_count),
+            .text_byte_start = segment.byte_start,
+            .text_byte_length = static_cast<std::uint16_t>(segment.byte_end - segment.byte_start),
+            .family = segment.family,
+            .direction = direction,
+        };
+        ++output.run_count;
+        hb_buffer_destroy(buffer);
+        return true;
+    }
+
+    [[nodiscard]] bool shape_visual_line(
+        const SemanticText& source,
+        const ResolvedTextStyle& style,
+        const FontFaceSet& faces,
+        const Utf16Text& utf16,
+        std::int32_t line_start,
+        std::int32_t line_limit,
+        ShapedText& output,
+        std::uint64_t& width_q6) noexcept {
+        output = {};
+        output.line_height_q6 = style.metrics.line_height_q6;
+        width_q6 = 0U;
+        if (line_start < 0 || line_limit <= line_start || line_limit > utf16.length ||
+            utf16.byte_boundary[static_cast<std::size_t>(line_start)] < 0 ||
+            utf16.byte_boundary[static_cast<std::size_t>(line_limit)] < 0) {
+            return false;
+        }
+
+        UErrorCode status = U_ZERO_ERROR;
+        ubidi_setLine(paragraph_bidi, line_start, line_limit, line_bidi, &status);
+        if (U_FAILURE(status)) return false;
+        const std::int32_t run_count = ubidi_countRuns(line_bidi, &status);
+        if (U_FAILURE(status) || run_count <= 0 ||
+            static_cast<std::size_t>(run_count) > max_shaped_runs) {
+            return false;
+        }
+
+        const std::int32_t line_length = line_limit - line_start;
+        for (std::int32_t visual_index = 0; visual_index < run_count; ++visual_index) {
+            std::int32_t logical_start = 0;
+            std::int32_t logical_length = 0;
+            const UBiDiDirection bidi_direction = ubidi_getVisualRun(
+                line_bidi,
+                visual_index,
+                &logical_start,
+                &logical_length);
+            if (logical_start < 0 || logical_length <= 0 ||
+                logical_start + logical_length > line_length) {
+                return false;
+            }
+            const std::int32_t absolute_start = line_start + logical_start;
+            const std::int32_t absolute_end = absolute_start + logical_length;
+            const std::int32_t byte_start_i32 =
+                utf16.byte_boundary[static_cast<std::size_t>(absolute_start)];
+            const std::int32_t byte_end_i32 =
+                utf16.byte_boundary[static_cast<std::size_t>(absolute_end)];
+            if (byte_start_i32 < 0 || byte_end_i32 <= byte_start_i32 ||
+                byte_end_i32 > source.length) {
+                return false;
+            }
+
+            FamilySegments segments {};
+            if (!family_segments(
+                    source,
+                    style,
+                    static_cast<std::uint16_t>(byte_start_i32),
+                    static_cast<std::uint16_t>(byte_end_i32),
+                    segments)) {
+                return false;
+            }
+            const TextDirection direction = text_direction(bidi_direction);
+            if (direction == TextDirection::left_to_right) {
+                for (std::size_t index = 0U; index < segments.count; ++index) {
+                    if (!shape_family_segment(
+                            source, style, faces, segments.segments[index], direction, output, width_q6)) {
+                        return false;
+                    }
+                }
+            } else {
+                for (std::size_t index = segments.count; index > 0U; --index) {
+                    if (!shape_family_segment(
+                            source, style, faces, segments.segments[index - 1U], direction, output, width_q6)) {
+                        return false;
+                    }
+                }
+            }
+        }
+
+        if (output.glyph_count == 0U) return false;
+        output.lines[0] = ShapedLine{
+            .first_glyph = 0U,
+            .glyph_count = static_cast<std::uint16_t>(output.glyph_count),
+        };
+        output.line_count = 1U;
+        return true;
+    }
+
+    [[nodiscard]] bool collect_breaks(
+        const Utf16Text& utf16,
+        ParagraphWrapMode wrap,
+        BreakPointSet& output) noexcept {
+        output = {};
+        if (wrap == ParagraphWrapMode::no_wrap) {
+            output.points[0] = BreakPoint{.utf16_offset = utf16.length, .hard = true};
+            output.count = 1U;
+            return true;
+        }
+
+        UBreakIterator* iterator = wrap == ParagraphWrapMode::grapheme
+            ? grapheme_breaker
+            : line_breaker;
+        if (iterator == nullptr) return false;
+        UErrorCode status = U_ZERO_ERROR;
+        ubrk_setText(iterator, utf16.units.data(), utf16.length, &status);
+        if (U_FAILURE(status)) return false;
+        (void)ubrk_first(iterator);
+        for (std::int32_t boundary = ubrk_next(iterator);
+             boundary != UBRK_DONE;
+             boundary = ubrk_next(iterator)) {
+            if (boundary <= 0 || boundary > utf16.length ||
+                utf16.byte_boundary[static_cast<std::size_t>(boundary)] < 0 ||
+                output.count >= output.points.size()) {
+                return false;
+            }
+            const std::int32_t rule_status = ubrk_getRuleStatus(iterator);
+            const bool hard = wrap == ParagraphWrapMode::word &&
+                rule_status >= UBRK_LINE_HARD && rule_status < UBRK_LINE_HARD_LIMIT;
+            output.points[output.count++] = BreakPoint{
+                .utf16_offset = boundary,
+                .hard = hard,
+            };
+        }
+        return output.count != 0U &&
+            output.points[output.count - 1U].utf16_offset == utf16.length;
+    }
+
+    [[nodiscard]] bool append_line(
+        const ShapedText& line,
+        ShapedText& paragraph) noexcept {
+        if (line.line_count != 1U || line.glyph_count == 0U ||
+            paragraph.line_count >= paragraph.lines.size() ||
+            paragraph.glyph_count + line.glyph_count > paragraph.glyphs.size() ||
+            paragraph.run_count + line.run_count > paragraph.runs.size()) {
+            return false;
+        }
+        const std::size_t glyph_base = paragraph.glyph_count;
+        for (std::size_t index = 0U; index < line.glyph_count; ++index) {
+            paragraph.glyphs[paragraph.glyph_count++] = line.glyphs[index];
+        }
+        for (std::size_t index = 0U; index < line.run_count; ++index) {
+            ShapedRun run = line.runs[index];
+            const std::size_t adjusted = glyph_base + run.first_glyph;
+            if (adjusted > std::numeric_limits<std::uint16_t>::max()) return false;
+            run.first_glyph = static_cast<std::uint16_t>(adjusted);
+            paragraph.runs[paragraph.run_count++] = run;
+        }
+        paragraph.lines[paragraph.line_count++] = ShapedLine{
+            .first_glyph = static_cast<std::uint16_t>(glyph_base),
+            .glyph_count = static_cast<std::uint16_t>(line.glyph_count),
+        };
+        return true;
+    }
+
     [[nodiscard]] static bool resolve_font(
         void* context,
         FontFamilyRole family,
@@ -185,114 +565,215 @@ struct LinuxTextBackend::Impl final {
         return true;
     }
 
+    [[nodiscard]] static bool shape_paragraph(
+        void* context,
+        const SemanticText& source,
+        const ResolvedTextStyle& style,
+        const FontFaceSet& faces,
+        const ParagraphConstraints& constraints,
+        ShapedText& output) noexcept {
+        auto* self = static_cast<Impl*>(context);
+        if (self == nullptr || !self->ready || !semantic_text_valid(source) ||
+            style.fallback.count == 0U || constraints.max_width_q6 == 0U ||
+            constraints.max_lines == 0U || source.empty()) {
+            return false;
+        }
+
+        Utf16Text utf16 {};
+        if (!utf16_from_utf8(source, utf16) || utf16.length <= 0) return false;
+
+        UBiDiLevel paragraph_level = UBIDI_DEFAULT_LTR;
+        switch (constraints.base_direction) {
+        case ParagraphBaseDirection::auto_detect:
+            paragraph_level = UBIDI_DEFAULT_LTR;
+            break;
+        case ParagraphBaseDirection::left_to_right:
+            paragraph_level = 0U;
+            break;
+        case ParagraphBaseDirection::right_to_left:
+            paragraph_level = 1U;
+            break;
+        default:
+            return false;
+        }
+
+        UErrorCode status = U_ZERO_ERROR;
+        ubidi_setPara(
+            self->paragraph_bidi,
+            utf16.units.data(),
+            utf16.length,
+            paragraph_level,
+            nullptr,
+            &status);
+        if (U_FAILURE(status)) return false;
+
+        BreakPointSet breaks {};
+        if (!self->collect_breaks(utf16, constraints.wrap, breaks)) return false;
+
+        output = {};
+        output.line_height_q6 = style.metrics.line_height_q6;
+        std::int32_t line_start = 0;
+        std::size_t break_index = 0U;
+        bool truncated = false;
+
+        while (line_start < utf16.length) {
+            if (output.line_count >= constraints.max_lines) {
+                truncated = true;
+                break;
+            }
+
+            while (break_index < breaks.count &&
+                   breaks.points[break_index].utf16_offset <= line_start) {
+                ++break_index;
+            }
+            if (break_index >= breaks.count) return false;
+
+            std::int32_t chosen_consumed = -1;
+            ShapedText chosen_line {};
+            bool chose_hard = false;
+
+            if (constraints.wrap == ParagraphWrapMode::no_wrap) {
+                const std::int32_t shape_limit = trim_line_terminator(
+                    utf16, line_start, utf16.length);
+                if (shape_limit <= line_start) return false;
+                std::uint64_t width = 0U;
+                if (!self->shape_visual_line(
+                        source, style, faces, utf16, line_start, shape_limit, chosen_line, width)) {
+                    return false;
+                }
+                chosen_consumed = utf16.length;
+            } else {
+                for (std::size_t candidate_index = break_index;
+                     candidate_index < breaks.count;
+                     ++candidate_index) {
+                    const BreakPoint candidate = breaks.points[candidate_index];
+                    const std::int32_t shape_limit = trim_line_terminator(
+                        utf16, line_start, candidate.utf16_offset);
+                    if (shape_limit <= line_start) return false;
+
+                    ShapedText candidate_line {};
+                    std::uint64_t candidate_width = 0U;
+                    if (!self->shape_visual_line(
+                            source,
+                            style,
+                            faces,
+                            utf16,
+                            line_start,
+                            shape_limit,
+                            candidate_line,
+                            candidate_width)) {
+                        return false;
+                    }
+                    if (candidate_width > constraints.max_width_q6) break;
+                    chosen_consumed = candidate.utf16_offset;
+                    chosen_line = candidate_line;
+                    chose_hard = candidate.hard;
+                    if (candidate.hard || candidate.utf16_offset == utf16.length) break;
+                }
+
+                // A line-break opportunity can be wider than the viewport for
+                // a long token. Fall back to Unicode grapheme boundaries only
+                // as an emergency fit mechanism; the fallback is still bounded
+                // and never splits a surrogate pair or UTF-8 scalar.
+                if (chosen_consumed < 0 && constraints.wrap == ParagraphWrapMode::word) {
+                    BreakPointSet graphemes {};
+                    if (!self->collect_breaks(utf16, ParagraphWrapMode::grapheme, graphemes)) {
+                        return false;
+                    }
+                    for (std::size_t candidate_index = 0U;
+                         candidate_index < graphemes.count;
+                         ++candidate_index) {
+                        const std::int32_t candidate = graphemes.points[candidate_index].utf16_offset;
+                        if (candidate <= line_start) continue;
+                        const std::int32_t shape_limit = trim_line_terminator(
+                            utf16, line_start, candidate);
+                        if (shape_limit <= line_start) return false;
+                        ShapedText candidate_line {};
+                        std::uint64_t candidate_width = 0U;
+                        if (!self->shape_visual_line(
+                                source,
+                                style,
+                                faces,
+                                utf16,
+                                line_start,
+                                shape_limit,
+                                candidate_line,
+                                candidate_width)) {
+                            return false;
+                        }
+                        if (candidate_width > constraints.max_width_q6) break;
+                        chosen_consumed = candidate;
+                        chosen_line = candidate_line;
+                        if (candidate == utf16.length) break;
+                    }
+                }
+
+                if (chosen_consumed < 0) {
+                    // Produce the smallest complete grapheme even when it does
+                    // not fit. The core paragraph validator will turn this into
+                    // paragraph_layout_limit rather than silently dropping text.
+                    BreakPointSet graphemes {};
+                    if (!self->collect_breaks(utf16, ParagraphWrapMode::grapheme, graphemes)) {
+                        return false;
+                    }
+                    for (std::size_t candidate_index = 0U;
+                         candidate_index < graphemes.count;
+                         ++candidate_index) {
+                        const std::int32_t candidate = graphemes.points[candidate_index].utf16_offset;
+                        if (candidate <= line_start) continue;
+                        const std::int32_t shape_limit = trim_line_terminator(
+                            utf16, line_start, candidate);
+                        if (shape_limit <= line_start) return false;
+                        std::uint64_t ignored_width = 0U;
+                        if (!self->shape_visual_line(
+                                source,
+                                style,
+                                faces,
+                                utf16,
+                                line_start,
+                                shape_limit,
+                                chosen_line,
+                                ignored_width)) {
+                            return false;
+                        }
+                        chosen_consumed = candidate;
+                        break;
+                    }
+                }
+            }
+
+            if (chosen_consumed <= line_start || !self->append_line(chosen_line, output)) {
+                return false;
+            }
+            line_start = chosen_consumed;
+            while (break_index < breaks.count &&
+                   breaks.points[break_index].utf16_offset <= line_start) {
+                ++break_index;
+            }
+            if (chose_hard) continue;
+        }
+
+        // Ellipsis needs an explicit synthetic-glyph/source-cluster contract so
+        // assistive semantics and renderer clusters cannot diverge. Until that
+        // contract exists, fail closed rather than drawing an untracked glyph.
+        if (truncated && constraints.overflow == ParagraphOverflowMode::ellipsis) return false;
+        return output.glyph_count != 0U && output.line_count != 0U;
+    }
+
     [[nodiscard]] static bool shape_text(
         void* context,
         const SemanticText& source,
         const ResolvedTextStyle& style,
         const FontFaceSet& faces,
         ShapedText& output) noexcept {
-        auto* self = static_cast<Impl*>(context);
-        if (self == nullptr || !self->ready || !semantic_text_valid(source) ||
-            style.fallback.count == 0U || source.empty()) {
-            if (self != nullptr && self->ready && source.empty()) {
-                output = ShapedText{};
-                output.line_height_q6 = style.metrics.line_height_q6;
-                return true;
-            }
-            return false;
-        }
-
-        output = ShapedText{};
-        output.line_height_q6 = style.metrics.line_height_q6;
-
-        std::size_t segment_start = 0U;
-        while (segment_start < static_cast<std::size_t>(source.length)) {
-            std::uint32_t scalar = 0U;
-            std::size_t scalar_width = 0U;
-            if (!decode_utf8_scalar(source, segment_start, scalar, scalar_width)) return false;
-            const FontFamilyRole family = self->family_for_scalar(scalar, style);
-            if (faces.find(family) == nullptr) return false;
-
-            std::size_t segment_end = segment_start + scalar_width;
-            while (segment_end < static_cast<std::size_t>(source.length)) {
-                std::uint32_t next_scalar = 0U;
-                std::size_t next_width = 0U;
-                if (!decode_utf8_scalar(source, segment_end, next_scalar, next_width)) return false;
-                if (self->family_for_scalar(next_scalar, style) != family) break;
-                segment_end += next_width;
-            }
-
-            FaceSlot* slot = self->slot_for(family);
-            if (slot == nullptr || slot->face == nullptr || slot->hb_font == nullptr ||
-                !size_face_logical(slot->face, style.metrics)) {
-                return false;
-            }
-            hb_ft_font_changed(slot->hb_font);
-
-            hb_buffer_t* buffer = hb_buffer_create();
-            if (buffer == nullptr || hb_buffer_allocation_successful(buffer) == 0) {
-                if (buffer != nullptr) hb_buffer_destroy(buffer);
-                return false;
-            }
-            hb_buffer_add_utf8(
-                buffer,
-                source.bytes.data(),
-                static_cast<int>(source.length),
-                static_cast<unsigned int>(segment_start),
-                static_cast<int>(segment_end - segment_start));
-            hb_buffer_guess_segment_properties(buffer);
-            hb_shape(slot->hb_font, buffer, nullptr, 0U);
-
-            unsigned int glyph_count = 0U;
-            const hb_glyph_info_t* infos = hb_buffer_get_glyph_infos(buffer, &glyph_count);
-            const hb_glyph_position_t* positions = hb_buffer_get_glyph_positions(buffer, &glyph_count);
-            if (infos == nullptr || positions == nullptr || glyph_count == 0U ||
-                output.glyph_count + glyph_count > output.glyphs.size() ||
-                output.run_count >= output.runs.size()) {
-                hb_buffer_destroy(buffer);
-                return false;
-            }
-
-            const std::size_t first_glyph = output.glyph_count;
-            for (unsigned int index = 0U; index < glyph_count; ++index) {
-                const hb_position_t advance = positions[index].x_advance;
-                if (advance < 0 ||
-                    static_cast<std::uint64_t>(advance) > max_logical_dimension_q6 ||
-                    infos[index].cluster >= source.length) {
-                    hb_buffer_destroy(buffer);
-                    return false;
-                }
-                output.glyphs[output.glyph_count] = ShapedGlyph{
-                    .glyph_id = infos[index].codepoint,
-                    .cluster_byte_offset = static_cast<std::uint16_t>(infos[index].cluster),
-                    .advance_q6 = static_cast<std::uint32_t>(advance),
-                    .offset_x_q6 = positions[index].x_offset,
-                    .offset_y_q6 = positions[index].y_offset,
-                    .family = family,
-                };
-                ++output.glyph_count;
-            }
-
-            output.runs[output.run_count] = ShapedRun{
-                .first_glyph = static_cast<std::uint16_t>(first_glyph),
-                .glyph_count = static_cast<std::uint16_t>(glyph_count),
-                .text_byte_start = static_cast<std::uint16_t>(segment_start),
-                .text_byte_length = static_cast<std::uint16_t>(segment_end - segment_start),
-                .family = family,
-                .direction = text_direction(hb_buffer_get_direction(buffer)),
-            };
-            ++output.run_count;
-            hb_buffer_destroy(buffer);
-            segment_start = segment_end;
-        }
-
-        if (output.glyph_count == 0U) return false;
-        output.lines[0] = ShapedLine{
-            .first_glyph = 0U,
-            .glyph_count = static_cast<std::uint16_t>(output.glyph_count),
+        const ParagraphConstraints constraints{
+            .max_width_q6 = max_logical_dimension_q6,
+            .max_lines = 1U,
+            .wrap = ParagraphWrapMode::no_wrap,
+            .overflow = ParagraphOverflowMode::clip,
+            .base_direction = ParagraphBaseDirection::auto_detect,
         };
-        output.line_count = 1U;
-        return true;
+        return shape_paragraph(context, source, style, faces, constraints, output);
     }
 
     [[nodiscard]] static bool resolve_line_metrics(
@@ -411,6 +892,23 @@ LinuxTextBackend::LinuxTextBackend(const LinuxFontFiles& files) noexcept
         slot.hb_font = hb_ft_font_create_referenced(slot.face);
         if (slot.hb_font == nullptr) return;
     }
+
+    UErrorCode status = U_ZERO_ERROR;
+    impl_->paragraph_bidi = ubidi_openSized(
+        static_cast<std::int32_t>(max_utf16_units),
+        static_cast<std::int32_t>(max_shaped_runs),
+        &status);
+    impl_->line_bidi = ubidi_openSized(
+        static_cast<std::int32_t>(max_utf16_units),
+        static_cast<std::int32_t>(max_shaped_runs),
+        &status);
+    impl_->line_breaker = ubrk_open(UBRK_LINE, nullptr, nullptr, 0, &status);
+    impl_->grapheme_breaker = ubrk_open(UBRK_CHARACTER, nullptr, nullptr, 0, &status);
+    if (U_FAILURE(status) || impl_->paragraph_bidi == nullptr || impl_->line_bidi == nullptr ||
+        impl_->line_breaker == nullptr || impl_->grapheme_breaker == nullptr) {
+        return;
+    }
+
     impl_->ready = true;
 }
 
@@ -435,6 +933,12 @@ FontAwareTextShaperBackend LinuxTextBackend::text_shaper() noexcept {
         : FontAwareTextShaperBackend{};
 }
 
+FontAwareParagraphShaperBackend LinuxTextBackend::paragraph_shaper() noexcept {
+    return valid()
+        ? FontAwareParagraphShaperBackend{.context = impl_, .shape = Impl::shape_paragraph}
+        : FontAwareParagraphShaperBackend{};
+}
+
 FontLineMetricsBackend LinuxTextBackend::line_metrics() noexcept {
     return valid()
         ? FontLineMetricsBackend{.context = impl_, .resolve = Impl::resolve_line_metrics}
@@ -445,6 +949,15 @@ GlyphMaskProviderBackend LinuxTextBackend::glyph_masks() noexcept {
     return valid()
         ? GlyphMaskProviderBackend{.context = impl_, .resolve = Impl::resolve_glyph_mask}
         : GlyphMaskProviderBackend{};
+}
+
+TextCommandRasterBackend LinuxTextBackend::command_backend() noexcept {
+    return TextCommandRasterBackend{
+        .fonts = font_provider(),
+        .paragraphs = paragraph_shaper(),
+        .line_metrics = line_metrics(),
+        .glyphs = glyph_masks(),
+    };
 }
 
 } // namespace os::ui::platform
