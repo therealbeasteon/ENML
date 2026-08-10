@@ -4,6 +4,7 @@
 #include <bit>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 #include <os/core/error.hpp>
 #include <os/ipc/constants.hpp>
