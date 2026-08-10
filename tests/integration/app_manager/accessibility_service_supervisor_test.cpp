@@ -23,6 +23,10 @@ constexpr os::core::PrincipalId application_principal{
     0x4153434150500001ULL,
     0x0000000000000001ULL,
 };
+constexpr os::core::PrincipalId ordinary_principal{
+    0x4153434F52440001ULL,
+    0x0000000000000001ULL,
+};
 constexpr os::core::PeerIdentity application_peer{
     .principal = application_principal,
     .user = os::core::UserId{88U},
@@ -266,6 +270,19 @@ int main(int argc, char** argv) {
     assert(WIFEXITED(app_status));
     assert(WEXITSTATUS(app_status) == 0);
 
+    // Replace the exact same native sender's published identity with an
+    // ordinary principal. The already-open Supervisor capability is not enough:
+    // the service must reject the request before touching the now-gone broker.
     assert(supervisor.unregister_process(admin_record.value().peer.process));
+    auto ordinary_record = supervisor.register_process(
+        ::getpid(),
+        ordinary_principal,
+        os::core::UserId{0U});
+    assert(ordinary_record);
+    auto denied = client.claim(application_peer, scratch);
+    assert(!denied);
+    assert(denied.error().domain == os::core::ErrorDomain::service);
+    assert(denied.error().code == os::accessibility::service_errors::authority_denied);
+    assert(supervisor.unregister_process(ordinary_record.value().peer.process));
     return 0;
 }
