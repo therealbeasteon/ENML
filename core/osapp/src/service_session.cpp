@@ -44,10 +44,26 @@ encode_service_payload(
 }
 
 [[nodiscard]] os::core::Result<void>
-encode_input_endpoint_payload(os::ipc::Encoder& encoder) noexcept {
+encode_empty_capability_payload(
+    os::ipc::Encoder& encoder,
+    std::uint16_t payload_size) noexcept {
     auto result = encoder.write_u16_le(application_service_session_version_v1);
     if (!result) return result.error();
-    return encoder.write_u16_le(application_input_endpoint_payload_size_v1);
+    return encoder.write_u16_le(payload_size);
+}
+
+[[nodiscard]] os::core::Result<void>
+encode_accessibility_endpoint_payload(
+    os::ipc::Encoder& encoder,
+    std::uint64_t session_id) noexcept {
+    if (session_id == 0U) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    auto result = encode_empty_capability_payload(
+        encoder,
+        application_accessibility_endpoint_payload_size_v1);
+    if (!result) return result.error();
+    return encoder.write_u64_le(session_id);
 }
 
 struct DecodedServicePayload final {
@@ -85,8 +101,10 @@ decode_service_payload(os::core::ByteSpan payload) noexcept {
 }
 
 [[nodiscard]] os::core::Result<void>
-decode_input_endpoint_payload(os::core::ByteSpan payload) noexcept {
-    if (payload.size() != application_input_endpoint_payload_size_v1) {
+decode_empty_capability_payload(
+    os::core::ByteSpan payload,
+    std::uint16_t expected_size) noexcept {
+    if (payload.size() != expected_size) {
         return service_error(os::core::errors::service::invalid_request);
     }
     os::ipc::Decoder decoder{payload};
@@ -96,10 +114,31 @@ decode_input_endpoint_payload(os::core::ByteSpan payload) noexcept {
     if (!size) return size.error();
     auto end = decoder.require_end();
     if (!end || version.value() != application_service_session_version_v1 ||
-        size.value() != application_input_endpoint_payload_size_v1) {
+        size.value() != expected_size) {
         return service_error(os::core::errors::service::invalid_request);
     }
     return {};
+}
+
+[[nodiscard]] os::core::Result<std::uint64_t>
+decode_accessibility_endpoint_payload(os::core::ByteSpan payload) noexcept {
+    if (payload.size() != application_accessibility_endpoint_payload_size_v1) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    os::ipc::Decoder decoder{payload};
+    auto version = decoder.read_u16_le();
+    if (!version) return version.error();
+    auto size = decoder.read_u16_le();
+    if (!size) return size.error();
+    auto session = decoder.read_u64_le();
+    if (!session) return session.error();
+    auto end = decoder.require_end();
+    if (!end || version.value() != application_service_session_version_v1 ||
+        size.value() != application_accessibility_endpoint_payload_size_v1 ||
+        session.value() == 0U) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    return session.value();
 }
 
 [[nodiscard]] bool runtime_request_header_valid(const os::ipc::InboundMessage& message) noexcept {
@@ -115,7 +154,8 @@ decode_input_endpoint_payload(os::core::ByteSpan payload) noexcept {
         header.request_id.value() != 0U &&
         header.handle_count == 0U && message.handle_count() == 0U &&
         (header.operation_id == application_service_session_operation_acquire ||
-         header.operation_id == application_service_session_operation_acquire_input_events);
+         header.operation_id == application_service_session_operation_acquire_input_events ||
+         header.operation_id == application_service_session_operation_acquire_accessibility);
 }
 
 [[nodiscard]] os::core::Result<os::ipc::Channel>
@@ -191,7 +231,9 @@ PlatformServiceSession::acquire_input_events(
     os::core::MutableByteSpan receive_buffer) noexcept {
     std::array<std::byte, application_input_endpoint_payload_size_v1> payload{};
     os::ipc::Encoder encoder{payload};
-    auto encoded = encode_input_endpoint_payload(encoder);
+    auto encoded = encode_empty_capability_payload(
+        encoder,
+        application_input_endpoint_payload_size_v1);
     if (!encoded) return encoded.error();
 
     auto call = connection_.call(
@@ -201,11 +243,44 @@ PlatformServiceSession::acquire_input_events(
         receive_buffer);
     if (!call) return call.error();
     auto response = std::move(call).value();
-    auto payload_valid = decode_input_endpoint_payload(response.payload());
+    auto payload_valid = decode_empty_capability_payload(
+        response.payload(),
+        application_input_endpoint_payload_size_v1);
     if (!payload_valid) return payload_valid.error();
     return take_single_channel_response(
         std::move(response),
         application_service_session_operation_acquire_input_events);
+}
+
+os::core::Result<PlatformAccessibilityEndpoint>
+PlatformServiceSession::acquire_accessibility(
+    os::core::MutableByteSpan receive_buffer) noexcept {
+    std::array<std::byte, application_input_endpoint_payload_size_v1> payload{};
+    os::ipc::Encoder encoder{payload};
+    auto encoded = encode_empty_capability_payload(
+        encoder,
+        application_input_endpoint_payload_size_v1);
+    if (!encoded) return encoded.error();
+
+    auto call = connection_.call(
+        application_service_session_id,
+        application_service_session_operation_acquire_accessibility,
+        encoder.written(),
+        receive_buffer);
+    if (!call) return call.error();
+    auto response = std::move(call).value();
+    auto session = decode_accessibility_endpoint_payload(response.payload());
+    if (!session) return session.error();
+    auto channel = take_single_channel_response(
+        std::move(response),
+        application_service_session_operation_acquire_accessibility);
+    if (!channel) return channel.error();
+
+    PlatformAccessibilityEndpoint endpoint{};
+    endpoint.session_id = session.value();
+    endpoint.channel = std::move(channel).value();
+    if (!endpoint.valid()) return ipc_error(os::ipc::errors::protocol_violation);
+    return endpoint;
 }
 
 os::core::Result<RuntimeSessionRequestV1>
@@ -232,11 +307,15 @@ receive_runtime_session_request(
         };
     }
 
-    auto decoded = decode_input_endpoint_payload(message.payload());
+    auto decoded = decode_empty_capability_payload(
+        message.payload(),
+        application_input_endpoint_payload_size_v1);
     if (!decoded) return decoded.error();
     return RuntimeSessionRequestV1{
         .request_header = header,
-        .kind = RuntimeSessionRequestKind::acquire_input_events,
+        .kind = header.operation_id == application_service_session_operation_acquire_input_events
+            ? RuntimeSessionRequestKind::acquire_input_events
+            : RuntimeSessionRequestKind::acquire_accessibility,
         .service = {},
         .known_generation = 0U,
         .sender = message.sender_credentials(),
@@ -298,7 +377,31 @@ send_input_event_endpoint_response(
     }
     std::array<std::byte, application_input_endpoint_payload_size_v1> payload{};
     os::ipc::Encoder encoder{payload};
-    auto encoded = encode_input_endpoint_payload(encoder);
+    auto encoded = encode_empty_capability_payload(
+        encoder,
+        application_input_endpoint_payload_size_v1);
+    if (!encoded) return encoded.error();
+    return os::ipc::send_rpc_response(
+        channel,
+        request_header,
+        encoder.written(),
+        std::span<const os::core::NativeHandle>{&endpoint, 1U});
+}
+
+os::core::Result<void>
+send_accessibility_endpoint_response(
+    os::ipc::Channel& channel,
+    const os::ipc::WireHeaderV1& request_header,
+    std::uint64_t session_id,
+    const os::core::NativeHandle& endpoint) noexcept {
+    if (request_header.service_id != application_service_session_id ||
+        request_header.operation_id != application_service_session_operation_acquire_accessibility ||
+        request_header.request_id.value() == 0U || session_id == 0U || !endpoint.valid()) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    std::array<std::byte, application_accessibility_endpoint_payload_size_v1> payload{};
+    os::ipc::Encoder encoder{payload};
+    auto encoded = encode_accessibility_endpoint_payload(encoder, session_id);
     if (!encoded) return encoded.error();
     return os::ipc::send_rpc_response(
         channel,
