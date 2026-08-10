@@ -49,6 +49,11 @@ struct ServiceLaunchConfig final {
     // restarts. When >=0, the child receives only a duplicate at private fd 5.
     // This is an internal service-construction mechanism, not application ABI.
     int private_state_directory_fd {-1};
+    // Optional borrowed trusted capability/channel retained across service
+    // restarts. When >=0, the child receives a duplicate at private fd 6. This
+    // descriptor is not exposed by Supervisor::connect() or ServiceBroker and
+    // therefore cannot be requested by an application.
+    int private_capability_fd {-1};
 };
 
 struct ServiceStatus final {
@@ -160,11 +165,24 @@ private:
     [[nodiscard]] os::core::Result<void>
     publish_process_to_service(ProcessEntry& entry) noexcept;
 
-    [[nodiscard]] ProcessEntry* find_process_by_pid(pid_t native_pid) noexcept;
-    [[nodiscard]] const ProcessEntry* find_process_by_pid(pid_t native_pid) const noexcept;
-    [[nodiscard]] ProcessEntry* find_process_by_id(os::core::ProcessId process_id) noexcept;
-    void remove_process_entry(os::core::ProcessId process_id) noexcept;
-    void prune_dead_processes() noexcept;
+    [[nodiscard]] LaunchTarget*
+    find_target(const os::package::PackageGenerationRecord& package) noexcept;
+    [[nodiscard]] const LaunchTarget*
+    find_target(const os::package::PackageGenerationRecord& package) const noexcept;
+    [[nodiscard]] LaunchTarget*
+    find_target(
+        const os::package::ApplicationIdentity& application,
+        os::package::PackageGenerationId generation) noexcept;
+    [[nodiscard]] const LaunchTarget*
+    find_target(
+        const os::package::ApplicationIdentity& application,
+        os::package::PackageGenerationId generation) const noexcept;
+    [[nodiscard]] ApplicationProfile*
+    find_profile(const os::package::ApplicationIdentity& application, os::core::UserId user) noexcept;
+    [[nodiscard]] const ApplicationProfile*
+    find_profile(const os::package::ApplicationIdentity& application, os::core::UserId user) const noexcept;
+    [[nodiscard]] InstanceSlot* find_instance(os::core::ApplicationInstanceId instance_id) noexcept;
+    [[nodiscard]] const InstanceSlot* find_instance(os::core::ApplicationInstanceId instance_id) const noexcept;
 };
 
 } // namespace os::supervisor
