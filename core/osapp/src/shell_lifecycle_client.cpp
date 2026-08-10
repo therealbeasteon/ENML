@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <utility>
 
 #include <os/core/error.hpp>
 #include <os/ipc/decoder.hpp>
@@ -122,6 +123,27 @@ os::core::Result<ApplicationLifecycleSnapshot> ShellLifecycleControlClient::snap
     if (!response) return response.error();
     if (response.value().handle_count() != 0U) return protocol_error();
     return decode_snapshot(response.value().payload());
+}
+
+os::core::Result<os::ipc::Channel>
+ShellLifecycleControlClient::take_compositor_capability(
+    os::core::MutableByteSpan scratch) noexcept {
+    auto response = connection_.call(
+        shell_lifecycle_control_service_id,
+        shell_lifecycle_operation_take_compositor,
+        {},
+        scratch);
+    if (!response) return response.error();
+
+    auto message = std::move(response).value();
+    if (!message.payload().empty() || message.handle_count() != 1U) {
+        return protocol_error();
+    }
+    auto handle = message.take_handle(0U);
+    if (!handle) return handle.error();
+    auto channel = os::ipc::Channel::adopt(std::move(handle).value());
+    if (!channel) return channel.error();
+    return std::move(channel).value();
 }
 
 } // namespace os::app
