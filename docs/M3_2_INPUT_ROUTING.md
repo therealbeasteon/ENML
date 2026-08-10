@@ -1,6 +1,6 @@
 # M3.2 — bounded semantic input routing
 
-This slice establishes the first deterministic physical-surface-to-semantic-action path for ENML UI while preserving compositor authority and keeping raw hardware input private.
+This slice establishes the deterministic physical-surface-to-semantic-action path for ENML UI while preserving compositor authority and keeping raw hardware input private.
 
 ## Purpose
 
@@ -12,16 +12,19 @@ The input path is deliberately split across subsystem boundaries:
 → authenticated compositor RPC
 → global display point inside the compositor
 → compositor-authorized `SurfaceInputHit`
+→ immediate pre-delivery hit revalidation
+→ exact-owner App Manager delivery
+→ private application event capability
 → surface-local pixel point
 → bounded logical viewport transform
 → semantic `LogicalPoint`
 → semantic hit routing/action authorization
 
-This keeps display ownership, coordinate normalization and semantic action authority separate instead of building one privileged catch-all input/UI service.
+This keeps display ownership, target-process ownership, coordinate normalization and semantic action authority separate instead of building one privileged catch-all input/UI service.
 
 ## Authenticated compositor transport
 
-The supervised compositor now exposes two narrowly scoped privileged operations on its existing authenticated RPC endpoint:
+The supervised compositor exposes two narrowly scoped privileged operations on its existing authenticated RPC endpoint:
 
 - `compositor_op_input_hit_test` asks the compositor to choose the target for one global display-space point;
 - `compositor_op_input_validate` revalidates the returned owner/surface/frame tuple immediately before downstream delivery.
@@ -32,7 +35,7 @@ An ordinary application principal can possess a brokered compositor endpoint and
 
 The wire representation of `SurfaceInputHit` is fixed and bounded. It carries generation-scoped surface identity, exact owner, role, surface size, frame sequence, local point and compositor-derived trusted-presentation classification. Decoding rejects malformed enum values, invalid local coordinates and role/trust-classification inconsistencies before the hit is re-authorized against live compositor state.
 
-The integration gate uses a real `SOCK_SEQPACKET` channel across `fork()`, so request authorization observes kernel packet credentials rather than a caller-provided PID field. It proves both the trusted-principal success path and ordinary-principal denial path. The transport remains synchronous/event-driven and creates no input worker or polling loop.
+The compositor integration gate uses a real `SOCK_SEQPACKET` channel across `fork()`, so request authorization observes kernel packet credentials rather than a caller-provided PID field. It proves both the trusted-principal success path and ordinary-principal denial path. The transport remains synchronous/event-driven and creates no input worker or polling loop.
 
 ## Compositor-owned surface targeting
 
@@ -48,11 +51,23 @@ The result contains only the data a trusted delivery bridge needs:
 - surface-local x/y coordinates;
 - compositor-derived trusted-presentation classification.
 
-The result intentionally does not need to be forwarded wholesale to applications. A platform input service can use owner/surface/frame identity for authorization and deliver only the permitted surface-local semantic event to the target process.
-
 Tying the hit to `frame_sequence` lets delivery policy reason about the exact UI frame the compositor considered visible when the event was targeted. Buffer invalidation removes `has_frame`, so a surface whose presented pixels were revoked cannot continue receiving hits for an image the compositor no longer presents.
 
 `validate_input_hit()` closes the hit-test-to-delivery TOCTOU window without holding a permanent compositor lock: a hidden/moved surface, changed frame, revoked buffer, changed owner/role/size or otherwise stale presentation is rejected before delivery.
+
+## Exact-owner application delivery
+
+The target-process leg is now implemented as a private runtime capability; see `docs/M3_2_INPUT_DELIVERY.md`.
+
+An application asks its already-authenticated post-READY runtime session for an input event endpoint. The request carries no target `PeerIdentity`, `ApplicationInstanceId`, `SurfaceId` or native descriptor. App Manager first checks the packet's kernel `SCM_CREDENTIALS` against the `ServiceBroker` record already bound to that live application, then creates a fresh `SOCK_SEQPACKET` pair and transfers only the application side.
+
+Trusted delivery uses `ApplicationInputEventV1`, preserving the exact compositor-issued owner/surface/frame identity plus surface dimensions and local coordinates. `ApplicationManager::deliver_input_event()` chooses the live instance by exact `PeerIdentity`; it does not accept an application-selected instance/target identifier as authority. A changed target identity therefore fails rather than falling through to whichever application happens to be running.
+
+The retained runtime sender is nonblocking and uses the kernel's bounded socket queue. A stalled application cannot make lifecycle/input work block indefinitely or cause an unbounded userspace input backlog. Endpoint failure closes the sender and requires explicit reacquisition.
+
+Both App Manager and `ApplicationInputEventStream` enforce monotonic event sequences. App-side receive additionally checks that the event target equals the exact bootstrap `PeerIdentity`. Sequence state on the trusted side survives endpoint reacquisition so replacing a transport capability does not reopen the replay window.
+
+The brokered App Manager integration fixture proves endpoint acquisition, exact-owner routing, wrong-owner denial, replay denial and exact event receipt before continuing its existing Key/Storage restart tests.
 
 ## Physical-to-logical normalization
 
@@ -107,16 +122,15 @@ The current path:
 - performs no input polling inside `osdisplay`/`osui`;
 - owns no background gesture recognizer;
 - operates over the existing bounded 64-surface compositor scene and 256-node semantic snapshot;
-- uses fixed-size RPC payloads for privileged target/validation requests;
+- uses fixed-size records for compositor targeting and application event delivery;
+- uses a bounded nonblocking kernel socket queue rather than an unbounded userspace event list;
 - performs input work only when the platform has an input event to route.
 
 ## Security boundary
 
-The authenticated compositor transport now protects the global-scene targeting seam, but this is still not the complete hardware input service.
+The global-scene targeting transport and target-process delivery transport are now explicit, authenticated/bound seams. The compositor does not accept a caller-supplied target `SurfaceId` for hit testing, and App Manager does not accept an application-supplied runtime target for delivery.
 
-The remaining platform input service must keep `/dev/input`, seat/device state and calibration private, obtain its runtime principal from trusted supervisor lifecycle state, preserve surface generation/owner/frame identity through delivery, and ensure an event cannot be redirected to another process by application-supplied target IDs.
-
-The compositor does not accept a caller-supplied target `SurfaceId` for hit testing. It chooses the target from authoritative scene state and revalidates the exact result before delivery.
+The remaining platform hardware input service must keep `/dev/input`, seat/device state and calibration private and obtain its runtime principal from trusted supervisor lifecycle state. It feeds the target/revalidation/delivery path above rather than bypassing it.
 
 ## Visual/UX relationship
 
@@ -135,7 +149,6 @@ This slice does not yet provide:
 - scrolling physics;
 - keyboard/navigation focus traversal;
 - IME/text-edit input;
-- hardware key mapping;
-- final target-process event transport from the trusted input service into the owning application runtime.
+- hardware key mapping.
 
 Those must be added as bounded, explicit platform contracts rather than smuggled into the semantic UI layer.
