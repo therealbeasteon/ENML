@@ -49,6 +49,8 @@ private:
 
 struct LifecycleFixture final {
     std::uint32_t calls {0U};
+    std::uint32_t compositor_calls {0U};
+    os::ipc::Channel compositor_capability {};
 };
 
 [[nodiscard]] os::core::Result<os::app::ApplicationLifecycleSnapshot> lifecycle_snapshot(
@@ -63,6 +65,18 @@ struct LifecycleFixture final {
     os::app::ApplicationLifecycleSnapshot snapshot{};
     snapshot.revision = 41U;
     return snapshot;
+}
+
+[[nodiscard]] os::core::Result<os::core::NativeHandle> take_compositor_capability(
+    void* context) noexcept {
+    auto* fixture = static_cast<LifecycleFixture*>(context);
+    if (fixture == nullptr || !fixture->compositor_capability.valid()) {
+        return os::core::make_error(
+            os::core::ErrorDomain::service,
+            os::core::errors::service::not_supported);
+    }
+    ++fixture->compositor_calls;
+    return fixture->compositor_capability.take_native_handle_for_transfer();
 }
 
 os::supervisor::ServiceLaunchConfig shell_config(
@@ -138,15 +152,22 @@ int main(int argc, char** argv) {
 
     // The Supervisor has already duplicated the private endpoint into the shell
     // at fd 6. Drop the parent's source endpoint so only the real shell process
-    // remains on the client side of this authority channel.
+    // remains on the client side of this bootstrap authority channel.
     lifecycle_pair[1].close();
+
+    auto compositor_pair_result = os::ipc::Channel::create_local_pair();
+    assert(compositor_pair_result);
+    auto compositor_pair = std::move(compositor_pair_result).value();
 
     ShellIdentityResolver resolver{};
     resolver.expect(supervisor.status().native_pid, supervisor.status().identity);
     LifecycleFixture lifecycle{};
+    lifecycle.compositor_capability = std::move(compositor_pair[1]);
     const os::app::ShellLifecycleBackend backend{
         .context = &lifecycle,
         .snapshot = lifecycle_snapshot,
+        .compositor_context = &lifecycle,
+        .take_compositor_capability = take_compositor_capability,
     };
     os::app::ShellLifecycleControlServer server{backend, resolver};
     assert(server.valid());
@@ -156,9 +177,18 @@ int main(int argc, char** argv) {
     assert(dispatched);
     assert(lifecycle.calls == 1U);
 
-    // Let the shell consume the lifecycle reply and enter its blocking trusted
-    // control loop. It must remain alive without a timer or public shell-admin
-    // request loop.
+    // The same authenticated bootstrap channel transfers one move-only private
+    // compositor-control endpoint. A second Supervisor-private fd is not needed,
+    // and the shell still does not receive a public compositor-admin endpoint.
+    dispatched = server.dispatch_once(lifecycle_pair[0], scratch);
+    assert(dispatched);
+    assert(lifecycle.compositor_calls == 1U);
+    assert(!lifecycle.compositor_capability.valid());
+    assert(compositor_pair[0].valid());
+
+    // Let the shell consume both replies and enter its blocking trusted control
+    // loop. If either semantic snapshot decoding or compositor-handle adoption
+    // failed, the process exits and maintain() observes that failure here.
     ::usleep(20'000U);
     assert(supervisor.maintain());
     assert(supervisor.status().state == os::supervisor::ServiceState::running);
