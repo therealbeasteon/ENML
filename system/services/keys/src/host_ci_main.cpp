@@ -98,28 +98,48 @@ int main() {
     std::array<std::byte, os::ipc::max_wire_packet_size> control_buffer{};
     std::array<std::byte, os::ipc::max_wire_packet_size> request_buffer{};
 
+    // One blocking wait covering the control channel and every live service
+    // descriptor. Polling control with a zero timeout and then giving
+    // dispatch_once a 10 ms timeout means neither wait can block, which turns
+    // an idle service into a ~100 Hz spin. See the same fix in system.storage.
+    std::array<int, os::keys::KeyService::max_wait_descriptors> service_fds{};
+    std::array<pollfd, 1U + os::keys::KeyService::max_wait_descriptors> waits{};
+
     for (;;) {
-        pollfd control_poll{.fd = control.native_fd(), .events = POLLIN, .revents = 0};
+        const auto service_count =
+            service.collect_wait_descriptors(service_fds.data(), service_fds.size());
+        const auto wait_count = service_count + 1U;
+
+        waits[0] = pollfd{.fd = control.native_fd(), .events = POLLIN, .revents = 0};
+        for (std::size_t index = 0U; index < service_count; ++index) {
+            waits[index + 1U] =
+                pollfd{.fd = service_fds[index], .events = POLLIN, .revents = 0};
+        }
+
         int polled = -1;
         do {
-            polled = ::poll(&control_poll, 1, 0);
+            polled = ::poll(waits.data(), static_cast<nfds_t>(wait_count), -1);
         } while (polled < 0 && errno == EINTR);
         if (polled < 0) return 17;
 
-        if ((control_poll.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 &&
-            (control_poll.revents & POLLIN) == 0) {
+        const auto control_revents = waits[0].revents;
+        if ((control_revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 &&
+            (control_revents & POLLIN) == 0) {
             return 0;
         }
-        if ((control_poll.revents & POLLIN) != 0) {
+        if ((control_revents & POLLIN) != 0) {
             auto routed = router.dispatch_once(control, control_buffer);
             if (!routed) {
                 if (peer_died(routed.error())) return 0;
                 report_fatal("control", routed.error());
                 return 18;
             }
+            continue;
         }
 
-        auto dispatched = service.dispatch_once(request_buffer, 10);
+        // A service descriptor woke us. dispatch_once re-checks without
+        // blocking and serves whichever endpoint is ready.
+        auto dispatched = service.dispatch_once(request_buffer, 0);
         if (!dispatched) {
             if (peer_died(dispatched.error())) return 0;
             report_fatal("public", dispatched.error());

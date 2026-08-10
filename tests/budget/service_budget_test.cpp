@@ -9,10 +9,6 @@
 #include <budget/budget.hpp>
 #include <budget/measure.hpp>
 
-#include "echo_client.generated.hpp"
-
-namespace generated = os::test::echo;
-
 namespace {
 
 // CTest treats 77 as "skipped". A kernel or emulator that cannot report VmRSS
@@ -62,10 +58,12 @@ int main(int argc, char** argv) {
     // surface as a failure, not be silently replaced by a fresh instance whose
     // counters restart at zero.
     const os::supervisor::ServiceDescriptorV1 descriptor{
-        .service_id = generated::EchoClient::service_id,
-        .principal_id = os::core::PrincipalId{0x53595354454D0000ULL, 0x000000000000F001ULL},
+        .service_id = os::core::ServiceId{limits.service_id},
+        .principal_id = os::core::PrincipalId{limits.principal_high, limits.principal_low},
         .user_id = os::core::UserId{0U},
-        .name = "system.echo",
+        // argv[2] is the budget name and is already null-terminated; the table's
+        // string_view is not, and ServiceDescriptorV1 takes a C string.
+        .name = argv[2],
         .restart_policy = os::supervisor::RestartPolicy::never,
         .restart_delay_ms = 10U,
         .max_restarts_in_window = 0U,
@@ -106,6 +104,22 @@ int main(int argc, char** argv) {
     }
 
     const auto ready_ms = ready_at.value() - spawn_at.value();
+
+    // Hold a client endpoint open for the whole measurement.
+    //
+    // A supervised service with no peer attached is not the state worth
+    // measuring: real services sit idle with clients connected, and idle cost
+    // under that condition is the number the budget is about. It is also not a
+    // state every service tolerates - system.storage's dispatch loop fails with
+    // a storage io_failure when polled with no peer on its endpoint, so
+    // measuring without connecting would be measuring a service on its way out.
+    auto client_result = supervisor.connect();
+    if (!client_result) {
+        std::fprintf(stderr, "could not attach a client endpoint\n");
+        (void)supervisor.terminate(SIGKILL);
+        return 1;
+    }
+    auto client_endpoint = std::move(client_result).value();
 
     auto first_sample = budget::sample_process(status.native_pid);
     if (!first_sample) {

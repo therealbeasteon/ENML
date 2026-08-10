@@ -256,6 +256,23 @@ public:
         PrivateRootRegistry& roots) noexcept
         : endpoint_(&endpoint), identity_resolver_(&identity_resolver), roots_(&roots) {}
 
+    // Descriptors this service can contribute to a caller-owned wait set: the
+    // public endpoint plus one per live object endpoint.
+    static constexpr std::size_t max_wait_descriptors = max_storage_objects + 1U;
+
+    // Writes the service's currently live descriptors into `out` and returns
+    // how many were written. Raw descriptors rather than pollfd keep this
+    // header free of platform headers; the caller builds its own wait set.
+    //
+    // This exists so a host can block on one wait covering both its own
+    // channels and the service's. Without it a host has two independent wait
+    // points, cannot block on either, and degenerates into a timed spin that
+    // never lets the process become quiet.
+    [[nodiscard]] std::size_t
+    collect_wait_descriptors(int* out, std::size_t capacity) const noexcept;
+
+    // `timeout_ms` of 0 is the correct choice when the caller has already
+    // blocked on a shared wait set and only needs the ready descriptor served.
     [[nodiscard]] os::core::Result<void>
     dispatch_once(os::core::MutableByteSpan receive_buffer, int timeout_ms) noexcept;
 

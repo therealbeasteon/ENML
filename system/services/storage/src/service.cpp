@@ -626,6 +626,26 @@ std::size_t StorageService::live_object_count() const noexcept {
     return count;
 }
 
+std::size_t
+StorageService::collect_wait_descriptors(int* out, std::size_t capacity) const noexcept {
+    if (out == nullptr || capacity == 0U || endpoint_ == nullptr || !endpoint_->valid()) {
+        return 0U;
+    }
+
+    std::size_t count = 0U;
+    out[count] = endpoint_->native_fd();
+    ++count;
+
+    for (std::size_t index = 0U; index < objects_.size() && count < capacity; ++index) {
+        if (!objects_[index].occupied) {
+            continue;
+        }
+        out[count] = objects_[index].endpoint.native_fd();
+        ++count;
+    }
+    return count;
+}
+
 os::core::Result<void>
 StorageService::dispatch_once(
     os::core::MutableByteSpan receive_buffer,
@@ -637,24 +657,40 @@ StorageService::dispatch_once(
     if (!scratch_result) return scratch_result.error();
     if (timeout_ms < -1) return os::core::core_error(os::core::errors::core::invalid_argument);
 
+    // Only live descriptors are handed to the kernel. Passing the full table
+    // capacity is not merely wasteful: poll() fails with EINVAL when nfds
+    // exceeds RLIMIT_NOFILE, and the default service sandbox caps open files
+    // at 32 while this table is max_storage_objects + 1 = 65. Polling the
+    // whole table therefore made the service unable to run under its own
+    // default hardening profile.
     std::array<pollfd, max_storage_objects + 1U> descriptors{};
-    for (auto& descriptor : descriptors) {
-        descriptor.fd = -1;
-        descriptor.events = POLLIN;
-        descriptor.revents = 0;
-    }
-    descriptors[0].fd = endpoint_->native_fd();
+    // Maps each compacted poll slot back to its object slot. Index 0 is the
+    // main endpoint and owns no object.
+    std::array<std::size_t, max_storage_objects + 1U> slot_objects{};
+
+    std::size_t live = 0U;
+    descriptors[live].fd = endpoint_->native_fd();
+    descriptors[live].events = POLLIN;
+    descriptors[live].revents = 0;
+    slot_objects[live] = 0U;
+    ++live;
+
     for (std::size_t index = 0U; index < objects_.size(); ++index) {
-        if (objects_[index].occupied) {
-            descriptors[index + 1U].fd = objects_[index].endpoint.native_fd();
+        if (!objects_[index].occupied) {
+            continue;
         }
+        descriptors[live].fd = objects_[index].endpoint.native_fd();
+        descriptors[live].events = POLLIN;
+        descriptors[live].revents = 0;
+        slot_objects[live] = index;
+        ++live;
     }
 
     int poll_result = -1;
     do {
         poll_result = ::poll(
             descriptors.data(),
-            static_cast<nfds_t>(descriptors.size()),
+            static_cast<nfds_t>(live),
             timeout_ms);
     } while (poll_result < 0 && errno == EINTR);
     if (poll_result < 0) return storage_error(errors::io_failure);
@@ -667,8 +703,9 @@ StorageService::dispatch_once(
         return ipc_error(os::ipc::errors::peer_died);
     }
 
-    for (std::size_t index = 0U; index < objects_.size(); ++index) {
-        const auto revents = descriptors[index + 1U].revents;
+    for (std::size_t slot = 1U; slot < live; ++slot) {
+        const auto revents = descriptors[slot].revents;
+        const auto index = slot_objects[slot];
         if ((revents & POLLIN) != 0) {
             return dispatch_object(index, receive_buffer);
         }
