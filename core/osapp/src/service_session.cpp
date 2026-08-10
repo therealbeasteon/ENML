@@ -27,7 +27,7 @@ namespace {
 }
 
 [[nodiscard]] os::core::Result<void>
-encode_payload(
+encode_service_payload(
     os::ipc::Encoder& encoder,
     os::core::ServiceId service,
     std::uint64_t generation) noexcept {
@@ -43,13 +43,20 @@ encode_payload(
     return encoder.write_u64_le(generation);
 }
 
-struct DecodedPayload final {
+[[nodiscard]] os::core::Result<void>
+encode_input_endpoint_payload(os::ipc::Encoder& encoder) noexcept {
+    auto result = encoder.write_u16_le(application_service_session_version_v1);
+    if (!result) return result.error();
+    return encoder.write_u16_le(application_input_endpoint_payload_size_v1);
+}
+
+struct DecodedServicePayload final {
     os::core::ServiceId service {};
     std::uint64_t generation {0U};
 };
 
-[[nodiscard]] os::core::Result<DecodedPayload>
-decode_payload(os::core::ByteSpan payload) noexcept {
+[[nodiscard]] os::core::Result<DecodedServicePayload>
+decode_service_payload(os::core::ByteSpan payload) noexcept {
     if (payload.size() != application_service_session_payload_size_v1) {
         return service_error(os::core::errors::service::invalid_request);
     }
@@ -71,10 +78,63 @@ decode_payload(os::core::ByteSpan payload) noexcept {
         service.value() == 0U) {
         return service_error(os::core::errors::service::invalid_request);
     }
-    return DecodedPayload{
+    return DecodedServicePayload{
         .service = os::core::ServiceId{service.value()},
         .generation = generation.value(),
     };
+}
+
+[[nodiscard]] os::core::Result<void>
+decode_input_endpoint_payload(os::core::ByteSpan payload) noexcept {
+    if (payload.size() != application_input_endpoint_payload_size_v1) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    os::ipc::Decoder decoder{payload};
+    auto version = decoder.read_u16_le();
+    if (!version) return version.error();
+    auto size = decoder.read_u16_le();
+    if (!size) return size.error();
+    auto end = decoder.require_end();
+    if (!end || version.value() != application_service_session_version_v1 ||
+        size.value() != application_input_endpoint_payload_size_v1) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    return {};
+}
+
+[[nodiscard]] bool runtime_request_header_valid(const os::ipc::InboundMessage& message) noexcept {
+    const auto& header = message.header();
+    return has_flag(header.flags, os::ipc::WireFlag::request) &&
+        !has_flag(header.flags, os::ipc::WireFlag::response) &&
+        !has_flag(header.flags, os::ipc::WireFlag::event) &&
+        !has_flag(header.flags, os::ipc::WireFlag::error) &&
+        !has_flag(header.flags, os::ipc::WireFlag::oneway) &&
+        !has_flag(header.flags, os::ipc::WireFlag::cancellable) &&
+        !has_flag(header.flags, os::ipc::WireFlag::has_handles) &&
+        header.service_id == application_service_session_id &&
+        header.request_id.value() != 0U &&
+        header.handle_count == 0U && message.handle_count() == 0U &&
+        (header.operation_id == application_service_session_operation_acquire ||
+         header.operation_id == application_service_session_operation_acquire_input_events);
+}
+
+[[nodiscard]] os::core::Result<os::ipc::Channel>
+take_single_channel_response(
+    os::ipc::InboundMessage&& response,
+    std::uint32_t expected_operation) noexcept {
+    const auto& header = response.header();
+    if (header.service_id != application_service_session_id ||
+        header.operation_id != expected_operation ||
+        !has_flag(header.flags, os::ipc::WireFlag::response) ||
+        !has_flag(header.flags, os::ipc::WireFlag::has_handles) ||
+        header.handle_count != 1U || response.handle_count() != 1U) {
+        return ipc_error(os::ipc::errors::protocol_violation);
+    }
+    auto handle = response.take_handle(0U);
+    if (!handle) return handle.error();
+    auto channel = os::ipc::Channel::adopt(std::move(handle).value());
+    if (!channel) return channel.error();
+    return std::move(channel).value();
 }
 
 } // namespace
@@ -90,7 +150,7 @@ PlatformServiceSession::acquire(
 
     std::array<std::byte, application_service_session_payload_size_v1> payload{};
     os::ipc::Encoder encoder{payload};
-    auto encoded = encode_payload(encoder, service, known_generation);
+    auto encoded = encode_service_payload(encoder, service, known_generation);
     if (!encoded) return encoded.error();
 
     auto call = connection_.call(
@@ -107,7 +167,7 @@ PlatformServiceSession::acquire(
         return ipc_error(os::ipc::errors::protocol_violation);
     }
 
-    auto decoded = decode_payload(response.payload());
+    auto decoded = decode_service_payload(response.payload());
     if (!decoded) return decoded.error();
     if (decoded.value().service != service || decoded.value().generation == 0U) {
         return ipc_error(os::ipc::errors::protocol_violation);
@@ -126,38 +186,77 @@ PlatformServiceSession::acquire(
     return endpoint;
 }
 
-os::core::Result<ServiceAcquireRequestV1>
-receive_service_acquire_request(
+os::core::Result<os::ipc::Channel>
+PlatformServiceSession::acquire_input_events(
+    os::core::MutableByteSpan receive_buffer) noexcept {
+    std::array<std::byte, application_input_endpoint_payload_size_v1> payload{};
+    os::ipc::Encoder encoder{payload};
+    auto encoded = encode_input_endpoint_payload(encoder);
+    if (!encoded) return encoded.error();
+
+    auto call = connection_.call(
+        application_service_session_id,
+        application_service_session_operation_acquire_input_events,
+        encoder.written(),
+        receive_buffer);
+    if (!call) return call.error();
+    auto response = std::move(call).value();
+    auto payload_valid = decode_input_endpoint_payload(response.payload());
+    if (!payload_valid) return payload_valid.error();
+    return take_single_channel_response(
+        std::move(response),
+        application_service_session_operation_acquire_input_events);
+}
+
+os::core::Result<RuntimeSessionRequestV1>
+receive_runtime_session_request(
     os::ipc::Channel& channel,
     os::core::MutableByteSpan receive_buffer) noexcept {
     auto received = channel.receive(receive_buffer);
     if (!received) return received.error();
     auto message = std::move(received).value();
-    const auto& header = message.header();
-
-    const bool valid_header =
-        has_flag(header.flags, os::ipc::WireFlag::request) &&
-        !has_flag(header.flags, os::ipc::WireFlag::response) &&
-        !has_flag(header.flags, os::ipc::WireFlag::event) &&
-        !has_flag(header.flags, os::ipc::WireFlag::error) &&
-        !has_flag(header.flags, os::ipc::WireFlag::oneway) &&
-        !has_flag(header.flags, os::ipc::WireFlag::cancellable) &&
-        !has_flag(header.flags, os::ipc::WireFlag::has_handles) &&
-        header.service_id == application_service_session_id &&
-        header.operation_id == application_service_session_operation_acquire &&
-        header.request_id.value() != 0U &&
-        header.handle_count == 0U && message.handle_count() == 0U;
-    if (!valid_header) {
+    if (!runtime_request_header_valid(message)) {
         return ipc_error(os::ipc::errors::protocol_violation);
     }
 
-    auto decoded = decode_payload(message.payload());
+    const auto& header = message.header();
+    if (header.operation_id == application_service_session_operation_acquire) {
+        auto decoded = decode_service_payload(message.payload());
+        if (!decoded) return decoded.error();
+        return RuntimeSessionRequestV1{
+            .request_header = header,
+            .kind = RuntimeSessionRequestKind::acquire_service,
+            .service = decoded.value().service,
+            .known_generation = decoded.value().generation,
+            .sender = message.sender_credentials(),
+        };
+    }
+
+    auto decoded = decode_input_endpoint_payload(message.payload());
     if (!decoded) return decoded.error();
-    return ServiceAcquireRequestV1{
+    return RuntimeSessionRequestV1{
         .request_header = header,
-        .service = decoded.value().service,
-        .known_generation = decoded.value().generation,
+        .kind = RuntimeSessionRequestKind::acquire_input_events,
+        .service = {},
+        .known_generation = 0U,
         .sender = message.sender_credentials(),
+    };
+}
+
+os::core::Result<ServiceAcquireRequestV1>
+receive_service_acquire_request(
+    os::ipc::Channel& channel,
+    os::core::MutableByteSpan receive_buffer) noexcept {
+    auto request = receive_runtime_session_request(channel, receive_buffer);
+    if (!request) return request.error();
+    if (request.value().kind != RuntimeSessionRequestKind::acquire_service) {
+        return ipc_error(os::ipc::errors::protocol_violation);
+    }
+    return ServiceAcquireRequestV1{
+        .request_header = request.value().request_header,
+        .service = request.value().service,
+        .known_generation = request.value().known_generation,
+        .sender = request.value().sender,
     };
 }
 
@@ -177,9 +276,30 @@ send_service_acquire_response(
 
     std::array<std::byte, application_service_session_payload_size_v1> payload{};
     os::ipc::Encoder encoder{payload};
-    auto encoded = encode_payload(encoder, service, generation);
+    auto encoded = encode_service_payload(encoder, service, generation);
     if (!encoded) return encoded.error();
 
+    return os::ipc::send_rpc_response(
+        channel,
+        request_header,
+        encoder.written(),
+        std::span<const os::core::NativeHandle>{&endpoint, 1U});
+}
+
+os::core::Result<void>
+send_input_event_endpoint_response(
+    os::ipc::Channel& channel,
+    const os::ipc::WireHeaderV1& request_header,
+    const os::core::NativeHandle& endpoint) noexcept {
+    if (request_header.service_id != application_service_session_id ||
+        request_header.operation_id != application_service_session_operation_acquire_input_events ||
+        request_header.request_id.value() == 0U || !endpoint.valid()) {
+        return service_error(os::core::errors::service::invalid_request);
+    }
+    std::array<std::byte, application_input_endpoint_payload_size_v1> payload{};
+    os::ipc::Encoder encoder{payload};
+    auto encoded = encode_input_endpoint_payload(encoder);
+    if (!encoded) return encoded.error();
     return os::ipc::send_rpc_response(
         channel,
         request_header,
