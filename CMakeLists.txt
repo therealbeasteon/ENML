@@ -51,6 +51,7 @@ add_subdirectory(system/services/echo)
 add_subdirectory(system/services/storage)
 add_subdirectory(system/services/keys)
 add_subdirectory(system/services/compositor)
+add_subdirectory(system/services/accessibility)
 add_subdirectory(system/supervisor)
 add_subdirectory(system/app_manager)
 
