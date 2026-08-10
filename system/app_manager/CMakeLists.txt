@@ -9,6 +9,7 @@ add_library(emnl_app_manager STATIC
     src/accessibility_broker.cpp
     src/accessibility_control.cpp
     src/collection_broker.cpp
+    src/shell_lifecycle_control.cpp
 )
 
 add_library(emnl::app_manager ALIAS emnl_app_manager)
