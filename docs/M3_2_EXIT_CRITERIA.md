@@ -2,6 +2,8 @@
 
 This checklist defines what “good enough to merge M3.2” means. It is intentionally narrower than “the whole phone OS is finished”: M3.2 should leave ENML with a trustworthy, bounded semantic UI/render/input/accessibility foundation that later hardware, telephony, update, power and production graphics milestones can build on without redesigning the core contracts.
 
+**Implementation authority:** references teach principles; ENML determines implementation; external systems are not the design specification.
+
 ## Must be true before M3.2 leaves draft
 
 ### Semantic UI and accessibility
@@ -50,12 +52,15 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 - an opaque/economy CPU path can render meaningful ENML geometry, hierarchy, focus/state and visible text without live backdrop effects;
 - typography uses renderer-owned font/shaping/glyph seams with validated bounded output;
 - production Unicode/font integration is selected and reviewed before claiming production text support;
+- fallback family selection does not split one Unicode grapheme into unrelated font runs;
 - authored swept/continuous contours retain their identity when premium effects are reduced;
 - contour edge quality is acceptable at phone-scale densities without requiring an unbounded general path engine;
 - all CPU material/depth/focus/fringe passes share one bounded physical contour interpretation so geometry does not drift between renderer stages;
 - depth/lighting remains bounded and cannot erase focus/state cues;
 - live translucency/backdrop is enabled only after opaque figure/ground and state remain clear;
-- the actual trusted-system visual mark is compositor-owned and cannot be requested or counterfeited by application surfaces.
+- the actual trusted-system visual pass is compositor-owned and cannot be requested or granted authority by application surfaces;
+- visual imitation of the mark by an application is never treated as trusted authority; real trust remains bound to compositor-authorized role, ordering, capture and input state;
+- trust-attribution state changes have bounded old/new mark damage so a future partial hardware compositor does not need to convert every trusted-mark transition into a full-screen redraw.
 
 ### Performance, power and security
 
@@ -78,9 +83,17 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 
 ## Allowed to remain later work
 
-M3.2 does not need to pretend to finish raw hardware input-device discovery, full gesture/multitouch policy, DRM/KMS/GPU hardware backends, production shader stacks, telephony/radio, verified boot/attestation, production TEE/HSM/TPM providers, recovery/update, complete suspend/resume/power management, final app SDK/marketplace policy or every final ENML visual asset.
+M3.2 does not need to pretend to finish raw hardware input-device discovery, full gesture/multitouch policy, DRM/KMS/GPU hardware backends, production shader stacks, telephony/radio, verified boot/attestation, production TEE/HSM/TPM providers, recovery/update, complete suspend/resume/power management, final app SDK/marketplace policy, editable-text/IME behavior, synthetic generated-overflow semantics, final font assets or every final ENML visual asset.
 
 Those are later milestones. M3.2 is complete when the semantic UI, renderer, text, input, accessibility, collection and trusted-presentation contracts are stable enough that those later layers do not need to bypass or replace them.
+
+## Exit-review evidence
+
+Validated checkpoint `2edcd41961f30a52afc89d3c6e55d3acf194ed24` satisfied the complete current workflow line: M0; M1; M2 Private Storage; M2 Key Service; M2 Service Broker; M3 Semantic UI on GCC/Clang/ASan+UBSan/native AArch64; and M3 Display/Compositor on GCC/Clang/ASan+UBSan/native AArch64.
+
+That checkpoint includes grapheme-safe font fallback, semantic glyph paint clipping, the concrete production-oriented Linux text adapter, compositor-owned trusted-mark rasterization and bounded trusted-mark damage planning. Documentation-only commits after that checkpoint must themselves be green before the PR leaves draft.
+
+The one initial GCC Service Broker teardown failure on that checkpoint passed on an unchanged rerun while Clang, sanitizers and native AArch64 passed the original attempt. No authorization, lifetime or timeout requirement was loosened to obtain the passing result.
 
 ## Reference discipline
 
