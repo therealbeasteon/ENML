@@ -16,6 +16,7 @@
 namespace {
 
 constexpr os::core::ServiceId storage_service{0x0000F020U};
+constexpr std::uint64_t accessibility_session_id = 0xA110U;
 
 } // namespace
 
@@ -33,6 +34,9 @@ int main() {
     auto input_pair_result = os::ipc::Channel::create_local_pair();
     assert(input_pair_result);
     auto input_pair = std::move(input_pair_result).value();
+    auto accessibility_pair_result = os::ipc::Channel::create_local_pair();
+    assert(accessibility_pair_result);
+    auto accessibility_pair = std::move(accessibility_pair_result).value();
 
     const pid_t child = ::fork();
     assert(child >= 0);
@@ -45,6 +49,8 @@ int main() {
         endpoint_pair[1].close();
         input_pair[0].close();
         input_pair[1].close();
+        accessibility_pair[0].close();
+        accessibility_pair[1].close();
 
         os::app::PlatformServiceSession session{pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
@@ -69,6 +75,14 @@ int main() {
         assert(input_channel.valid());
         assert(::recv(input_channel.native_fd(), &marker, 1U, 0) == 1);
         assert(marker == std::byte{0x6B});
+
+        auto accessibility = session.acquire_accessibility(scratch);
+        assert(accessibility);
+        auto accessibility_endpoint = std::move(accessibility).value();
+        assert(accessibility_endpoint.valid());
+        assert(accessibility_endpoint.session_id == accessibility_session_id);
+        assert(::recv(accessibility_endpoint.channel.native_fd(), &marker, 1U, 0) == 1);
+        assert(marker == std::byte{0x7C});
         std::_Exit(0);
     }
 
@@ -110,6 +124,30 @@ int main() {
 
     const std::byte input_marker{0x6B};
     assert(::send(input_pair[1].native_fd(), &input_marker, 1U, MSG_NOSIGNAL) == 1);
+
+    auto accessibility_request = os::app::receive_runtime_session_request(pair[0], scratch);
+    assert(accessibility_request);
+    assert(
+        accessibility_request.value().kind ==
+        os::app::RuntimeSessionRequestKind::acquire_accessibility);
+    assert(accessibility_request.value().service.value() == 0U);
+    assert(accessibility_request.value().known_generation == 0U);
+    assert(accessibility_request.value().sender.process_id == static_cast<std::int64_t>(child));
+
+    auto accessibility_transfer = accessibility_pair[0].take_native_handle_for_transfer();
+    assert(accessibility_transfer.valid());
+    assert(os::app::send_accessibility_endpoint_response(
+        pair[0],
+        accessibility_request.value().request_header,
+        accessibility_session_id,
+        accessibility_transfer));
+
+    const std::byte accessibility_marker{0x7C};
+    assert(::send(
+        accessibility_pair[1].native_fd(),
+        &accessibility_marker,
+        1U,
+        MSG_NOSIGNAL) == 1);
 
     int status = 0;
     assert(::waitpid(child, &status, 0) == child);
