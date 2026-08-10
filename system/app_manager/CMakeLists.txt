@@ -4,6 +4,7 @@ add_library(emnl_app_manager STATIC
     src/storage_integration.cpp
     src/key_integration.cpp
     src/runtime_session.cpp
+    src/input_delivery.cpp
 )
 
 add_library(emnl::app_manager ALIAS emnl_app_manager)
