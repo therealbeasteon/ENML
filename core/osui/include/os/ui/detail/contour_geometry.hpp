@@ -138,7 +138,7 @@ struct PixelContour final {
     const std::uint64_t dy = magnitude(y4 - center_y4);
     if (dx > radius || dy > radius) return false;
 
-    inline constexpr std::uint64_t coordinate_scale = 1024U;
+    constexpr std::uint64_t coordinate_scale = 1024U;
     const std::uint64_t x_q10 =
         (dx * coordinate_scale + radius / 2U) / radius;
     const std::uint64_t y_q10 =
