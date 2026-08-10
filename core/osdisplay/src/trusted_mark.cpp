@@ -37,23 +37,6 @@ namespace {
         presentation == TrustedPresentation::secure_system;
 }
 
-[[nodiscard]] bool entry_valid(
-    const TrustedOverlayEntry& entry,
-    const TrustedMarkRasterTarget& target) noexcept {
-    if (!valid_display_object_value(entry.surface.value()) ||
-        !presentation_valid(entry.presentation) || !entry.bounds.nonempty() ||
-        entry.frame_sequence == 0U || entry.bounds.x < 0 || entry.bounds.y < 0) {
-        return false;
-    }
-    const std::uint64_t right =
-        static_cast<std::uint64_t>(static_cast<std::uint32_t>(entry.bounds.x)) +
-        static_cast<std::uint64_t>(entry.bounds.width);
-    const std::uint64_t bottom =
-        static_cast<std::uint64_t>(static_cast<std::uint32_t>(entry.bounds.y)) +
-        static_cast<std::uint64_t>(entry.bounds.height);
-    return right <= target.width && bottom <= target.height;
-}
-
 [[nodiscard]] std::size_t pixel_index(
     const TrustedMarkRasterTarget& target,
     std::uint32_t x,
@@ -114,22 +97,19 @@ void draw_diagonal(
 
 void draw_mark(
     const TrustedOverlayEntry& entry,
+    Rect mark_bounds,
     const TrustedMarkTheme& theme,
     TrustedMarkRasterTarget target,
     TrustedMarkRasterStats& stats) noexcept {
-    const std::uint32_t available = std::min(entry.bounds.width, entry.bounds.height);
-    if (available == 0U) return;
-
     const bool secure = entry.presentation == TrustedPresentation::secure_system;
-    const std::uint32_t preferred_length = secure ? 18U : 14U;
-    const std::uint32_t length = std::min(available, preferred_length);
+    const std::uint32_t length = mark_bounds.width;
+    if (length == 0U) return;
     const std::uint32_t foundation_thickness =
         length >= 10U ? 3U : (length >= 5U ? 2U : 1U);
     const std::uint32_t core_thickness = length >= 7U ? 2U : 1U;
-    const std::uint32_t right =
-        static_cast<std::uint32_t>(entry.bounds.x) + entry.bounds.width;
-    const std::uint32_t top = static_cast<std::uint32_t>(entry.bounds.y);
-    const std::uint32_t left = right - length;
+    const std::uint32_t left = static_cast<std::uint32_t>(mark_bounds.x);
+    const std::uint32_t top = static_cast<std::uint32_t>(mark_bounds.y);
+    const std::uint32_t right = left + length;
     const TrustedMarkRgba8 core = secure ? theme.secure_system : theme.system_chrome;
 
     // Opaque contrast cradle. Because this pass runs after client composition,
@@ -187,7 +167,119 @@ void draw_mark(
     ++stats.marks_drawn;
 }
 
+[[nodiscard]] bool same_attribution(
+    const TrustedOverlayEntry& left,
+    const TrustedOverlayEntry& right) noexcept {
+    // frame_sequence intentionally does not participate: client-frame changes
+    // are handled by normal client damage and the final trust pass. Attribution
+    // damage exists only when the mark's compositor-owned placement/kind changes.
+    return left.presentation == right.presentation && left.bounds == right.bounds;
+}
+
+[[nodiscard]] const TrustedOverlayEntry* find_surface(
+    const TrustedOverlaySnapshot& overlay,
+    SurfaceId surface) noexcept {
+    const std::size_t limit = std::min(overlay.count, overlay.entries.size());
+    for (std::size_t index = 0U; index < limit; ++index) {
+        if (overlay.entries[index].surface == surface) return &overlay.entries[index];
+    }
+    return nullptr;
+}
+
+[[nodiscard]] bool append_unique_damage(
+    TrustedMarkDamagePlan& plan,
+    Rect rect) noexcept {
+    for (std::size_t index = 0U; index < plan.count; ++index) {
+        if (plan.rects[index] == rect) return true;
+    }
+    if (plan.count >= plan.rects.size()) return false;
+    plan.rects[plan.count++] = rect;
+    return true;
+}
+
+[[nodiscard]] bool overlay_valid_and_unique(
+    const TrustedOverlaySnapshot& overlay,
+    PixelSize display_size) noexcept {
+    if (overlay.count > overlay.entries.size()) return false;
+    for (std::size_t index = 0U; index < overlay.count; ++index) {
+        if (!trusted_mark_bounds(overlay.entries[index], display_size)) return false;
+        for (std::size_t earlier = 0U; earlier < index; ++earlier) {
+            if (overlay.entries[earlier].surface == overlay.entries[index].surface) return false;
+        }
+    }
+    return true;
+}
+
 } // namespace
+
+os::core::Result<Rect> trusted_mark_bounds(
+    const TrustedOverlayEntry& entry,
+    PixelSize display_size) noexcept {
+    if (!display_size.valid() || !valid_display_object_value(entry.surface.value()) ||
+        !presentation_valid(entry.presentation) || !entry.bounds.nonempty() ||
+        entry.frame_sequence == 0U || entry.bounds.x < 0 || entry.bounds.y < 0) {
+        return display_error(errors::invalid_trusted_overlay);
+    }
+
+    const std::uint64_t bounds_left = static_cast<std::uint32_t>(entry.bounds.x);
+    const std::uint64_t bounds_top = static_cast<std::uint32_t>(entry.bounds.y);
+    const std::uint64_t right = bounds_left + entry.bounds.width;
+    const std::uint64_t bottom = bounds_top + entry.bounds.height;
+    if (right > display_size.width || bottom > display_size.height) {
+        return display_error(errors::invalid_trusted_overlay);
+    }
+
+    const std::uint32_t available = std::min(entry.bounds.width, entry.bounds.height);
+    if (available == 0U) return display_error(errors::invalid_trusted_overlay);
+    const bool secure = entry.presentation == TrustedPresentation::secure_system;
+    const std::uint32_t preferred_length = secure ? 18U : 14U;
+    const std::uint32_t length = std::min(available, preferred_length);
+    const std::uint32_t right_u32 = static_cast<std::uint32_t>(right);
+    return Rect{
+        .x = static_cast<std::int32_t>(right_u32 - length),
+        .y = entry.bounds.y,
+        .width = length,
+        .height = length,
+    };
+}
+
+os::core::Result<TrustedMarkDamagePlan> plan_trusted_mark_damage(
+    const TrustedOverlaySnapshot& previous,
+    const TrustedOverlaySnapshot& current,
+    PixelSize display_size) noexcept {
+    if (!overlay_valid_and_unique(previous, display_size) ||
+        !overlay_valid_and_unique(current, display_size)) {
+        return display_error(errors::invalid_trusted_overlay);
+    }
+
+    TrustedMarkDamagePlan plan{};
+    for (std::size_t index = 0U; index < previous.count; ++index) {
+        const TrustedOverlayEntry& old_entry = previous.entries[index];
+        const TrustedOverlayEntry* new_entry = find_surface(current, old_entry.surface);
+        if (new_entry != nullptr && same_attribution(old_entry, *new_entry)) continue;
+
+        auto old_bounds = trusted_mark_bounds(old_entry, display_size);
+        if (!old_bounds || !append_unique_damage(plan, old_bounds.value())) {
+            return display_error(errors::invalid_trusted_overlay);
+        }
+        if (new_entry != nullptr) {
+            auto new_bounds = trusted_mark_bounds(*new_entry, display_size);
+            if (!new_bounds || !append_unique_damage(plan, new_bounds.value())) {
+                return display_error(errors::invalid_trusted_overlay);
+            }
+        }
+    }
+
+    for (std::size_t index = 0U; index < current.count; ++index) {
+        const TrustedOverlayEntry& new_entry = current.entries[index];
+        if (find_surface(previous, new_entry.surface) != nullptr) continue;
+        auto new_bounds = trusted_mark_bounds(new_entry, display_size);
+        if (!new_bounds || !append_unique_damage(plan, new_bounds.value())) {
+            return display_error(errors::invalid_trusted_overlay);
+        }
+    }
+    return plan;
+}
 
 os::core::Result<TrustedMarkRasterStats> rasterize_trusted_marks(
     const TrustedOverlaySnapshot& overlay,
@@ -200,13 +292,13 @@ os::core::Result<TrustedMarkRasterStats> rasterize_trusted_marks(
     }
 
     TrustedMarkRasterStats stats{};
+    const PixelSize display_size{.width = target.width, .height = target.height};
     for (std::size_t index = 0U; index < overlay.count; ++index) {
         const TrustedOverlayEntry& entry = overlay.entries[index];
         ++stats.entries_seen;
-        if (!entry_valid(entry, target)) {
-            return display_error(errors::invalid_trusted_overlay);
-        }
-        draw_mark(entry, theme, target, stats);
+        auto mark_bounds = trusted_mark_bounds(entry, display_size);
+        if (!mark_bounds) return mark_bounds.error();
+        draw_mark(entry, mark_bounds.value(), theme, target, stats);
     }
     return stats;
 }
