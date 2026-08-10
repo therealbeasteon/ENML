@@ -8,6 +8,7 @@ add_subdirectory(unit/keys)
 add_subdirectory(unit/display)
 add_subdirectory(unit/ui)
 add_subdirectory(unit/accessibility)
+add_subdirectory(unit/collection_transport)
 
 add_subdirectory(integration/ipc)
 add_subdirectory(integration/rpc)
