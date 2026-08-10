@@ -77,6 +77,8 @@ inline constexpr std::uint16_t max_font_weight = 1000U;
         style.metrics.size_q6 <= max_logical_dimension_q6 &&
         style.metrics.line_height_q6 != 0U &&
         style.metrics.line_height_q6 <= max_logical_dimension_q6 &&
+        style.metrics.weight >= min_font_weight &&
+        style.metrics.weight <= max_font_weight &&
         fallback_valid(style.fallback);
 }
 
@@ -92,6 +94,32 @@ inline constexpr std::uint16_t max_font_weight = 1000U;
     const auto widened = static_cast<std::int64_t>(value);
     const auto bound = static_cast<std::int64_t>(max_logical_dimension_q6);
     return widened >= -bound && widened <= bound;
+}
+
+[[nodiscard]] bool source_is_only_line_separators(const SemanticText& source) noexcept {
+    std::size_t offset = 0U;
+    const std::size_t length = source.length;
+    while (offset < length) {
+        const auto first = static_cast<std::uint8_t>(source.bytes[offset]);
+        if (first == static_cast<std::uint8_t>('\n') ||
+            first == static_cast<std::uint8_t>('\r')) {
+            ++offset;
+            continue;
+        }
+        // UTF-8 encodings of U+2028 LINE SEPARATOR and U+2029 PARAGRAPH
+        // SEPARATOR. SemanticText is already validated UTF-8 before this helper
+        // is called, so exact byte matching is sufficient and bounded.
+        if (offset + 2U < length && first == 0xE2U &&
+            static_cast<std::uint8_t>(source.bytes[offset + 1U]) == 0x80U) {
+            const auto third = static_cast<std::uint8_t>(source.bytes[offset + 2U]);
+            if (third == 0xA8U || third == 0xA9U) {
+                offset += 3U;
+                continue;
+            }
+        }
+        return false;
+    }
+    return !source.empty();
 }
 
 } // namespace
@@ -192,8 +220,16 @@ bool shaped_text_valid(
         return shaped.glyph_count == 0U && shaped.run_count == 0U &&
             shaped.line_count == 0U;
     }
-    if (shaped.glyph_count == 0U || shaped.run_count == 0U || shaped.line_count == 0U) {
-        return false;
+    if (shaped.line_count == 0U) return false;
+
+    if (shaped.glyph_count == 0U || shaped.run_count == 0U) {
+        // A non-empty source may legitimately paint no glyphs only when it is
+        // made entirely of hard line/paragraph separators. This permits blank
+        // lines without allowing an arbitrary backend to erase ordinary text.
+        if (shaped.glyph_count != 0U || shaped.run_count != 0U ||
+            !source_is_only_line_separators(source)) {
+            return false;
+        }
     }
 
     const std::size_t text_length = static_cast<std::size_t>(source.length);
@@ -236,7 +272,7 @@ bool shaped_text_valid(
         const ShapedLine& line = shaped.lines[line_index];
         const std::size_t first_glyph = static_cast<std::size_t>(line.first_glyph);
         const std::size_t glyph_count = static_cast<std::size_t>(line.glyph_count);
-        if (glyph_count == 0U || first_glyph != expected_line_glyph ||
+        if (first_glyph != expected_line_glyph ||
             first_glyph + glyph_count > shaped.glyph_count) {
             return false;
         }
