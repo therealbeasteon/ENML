@@ -178,9 +178,9 @@ public:
     instance(os::core::ApplicationInstanceId instance_id) const noexcept;
 
     // Trusted semantic lifecycle projection for shell/runtime consumers. It
-    // intentionally strips native_pid, package code handles, service endpoints,
-    // storage roots and sandbox internals. Revision changes only when the exact
-    // live-instance set changes.
+    // strips native_pid, package code handles, service endpoints, storage roots
+    // and sandbox internals. Snapshot revision advances only when the observed
+    // exact live-instance set changes; repeated reads of the same state are quiet.
     [[nodiscard]] os::core::Result<ApplicationLifecycleSnapshot>
     lifecycle_snapshot() const noexcept;
 
@@ -252,7 +252,9 @@ private:
     std::uint64_t next_instance_id_ {1U};
     std::uint64_t next_accessibility_session_id_ {1U};
     std::uint64_t next_collection_session_id_ {1U};
-    std::uint64_t lifecycle_revision_ {1U};
+    mutable std::uint64_t lifecycle_revision_ {1U};
+    mutable ApplicationLifecycleSnapshot lifecycle_cache_ {};
+    mutable bool lifecycle_cache_initialized_ {false};
 
     os::ipc::Channel storage_control_ {};
     std::optional<os::storage::StorageControlClient> storage_control_client_ {};
@@ -263,7 +265,6 @@ private:
     std::uint64_t key_service_generation_ {0U};
 
     [[nodiscard]] bool broker_configuration_valid() const noexcept;
-    [[nodiscard]] bool advance_lifecycle_revision() noexcept;
     [[nodiscard]] os::core::Result<void> release_instance_identity(
         os::core::ProcessId process) noexcept;
 
