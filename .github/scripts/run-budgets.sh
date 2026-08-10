@@ -26,7 +26,7 @@ ctest --preset host-debug -V -L '^budget$' >"$log" 2>&1 || status=$?
 
 # The harness's own report lines, plus whatever CTest says about failures.
 report="$(grep -E \
-    'resource budget:|resident_kib|ready_ms|idle_wakeups_per_sec|OVER BUDGET|skip:|Failed|\*\*\*|tests passed|tests failed' \
+    'resource budget:|resident_kib|ready_ms|idle_wakeups_per_sec|OVER BUDGET|skip:|Failed|\*\*\*|tests passed|tests failed|fatal|failed to start|did not reach|did not stay|could not sample|no compiled budget' \
     "$log" || true)"
 
 emit_annotations() {
