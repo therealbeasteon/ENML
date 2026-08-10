@@ -9,6 +9,7 @@
 
 #include <os/core/error.hpp>
 #include <os/core/native_handle.hpp>
+#include <os/core/platform_principals.hpp>
 #include <os/display/buffer.hpp>
 #include <os/display/service.hpp>
 #include <os/ipc/channel.hpp>
@@ -17,15 +18,6 @@
 #include <os/service/identity.hpp>
 
 namespace {
-
-constexpr os::core::PrincipalId shell_principal{
-    0x454E4D4C5348454CULL,
-    0x4C00000000000001ULL,
-};
-constexpr os::core::PrincipalId secure_ui_principal{
-    0x454E4D4C53454355ULL,
-    0x5245554900000001ULL,
-};
 
 [[nodiscard]] bool peer_died(const os::core::Error& error) noexcept {
     return error.domain == os::core::ErrorDomain::ipc &&
@@ -71,8 +63,8 @@ int main() {
             .compositor_margin_ns = 1'000'000U,
         },
         os::display::TrustedUiPrincipals{
-            .shell = shell_principal,
-            .secure_ui = secure_ui_principal,
+            .shell = os::core::shell_service_principal,
+            .secure_ui = os::core::secure_ui_service_principal,
         },
         service_generation,
     };
