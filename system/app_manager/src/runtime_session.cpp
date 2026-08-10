@@ -55,7 +55,7 @@ ApplicationManager::service_runtime_session_once(InstanceSlot& slot) noexcept {
     }
 
     std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
-    auto request = receive_service_acquire_request(slot.service_session, scratch);
+    auto request = receive_runtime_session_request(slot.service_session, scratch);
     if (!request) {
         // A malformed packet or a dead peer is contained to this application's
         // private runtime session. It must not destabilize App Manager or any
@@ -87,9 +87,37 @@ ApplicationManager::service_runtime_session_once(InstanceSlot& slot) noexcept {
         return {};
     }
 
-    // The bootstrap service set is the application-visible allow-list for this
-    // session. ServiceBroker independently enforces the same process/service
-    // attachment, so a forged or future ServiceId cannot expand authority.
+    if (request.value().kind == RuntimeSessionRequestKind::acquire_input_events) {
+        // The application supplies no target identity or descriptor. App
+        // Manager creates a fresh pair only after authenticating the already-
+        // bound runtime session. Reacquisition atomically replaces the sender
+        // side so an old receiver becomes stale instead of coexisting forever.
+        auto pair_result = os::ipc::Channel::create_local_pair();
+        if (!pair_result) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                pair_result.error());
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+        auto pair = std::move(pair_result).value();
+        auto application_endpoint = pair[1].take_native_handle_for_transfer();
+        slot.input_event_sender = std::move(pair[0]);
+        slot.last_input_event_sequence = 0U;
+        auto sent = send_input_event_endpoint_response(
+            slot.service_session,
+            request.value().request_header,
+            application_endpoint);
+        if (!sent) slot.input_event_sender.close();
+        close_on_send_failure(slot.service_session, sent);
+        return {};
+    }
+
+    // The bootstrap service set is the application-visible allow-list for
+    // service reacquisition. ServiceBroker independently enforces the same
+    // process/service attachment, so a forged or future ServiceId cannot expand
+    // authority.
     if (!service_allowed(slot, request.value().service)) {
         auto sent = os::ipc::send_rpc_error(
             slot.service_session,
