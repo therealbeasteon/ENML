@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -43,6 +44,35 @@ struct TrustedMarkRasterStats final {
     std::uint16_t marks_drawn {0U};
     std::uint64_t pixel_writes {0U};
 };
+
+inline constexpr std::size_t max_trusted_mark_damage_rectangles = max_surfaces * 2U;
+
+// Damage caused specifically by trust-attribution state changes. This is
+// separate from client-buffer damage: a client redraw under a persistent mark
+// still reapplies the mark in the compositor's final trusted pass. These rects
+// exist so moving/removing/changing a mark can invalidate its old/new footprint
+// without forcing a full-screen redraw in a future hardware compositor.
+struct TrustedMarkDamagePlan final {
+    std::array<Rect, max_trusted_mark_damage_rectangles> rects {};
+    std::size_t count {0U};
+};
+
+// Returns the exact bounded square owned by the current CPU trust-mark
+// geometry. Future private hardware backends may render that region differently
+// but must preserve the compositor-owned attribution/order contract rather than
+// exposing this geometry to applications.
+[[nodiscard]] os::core::Result<Rect> trusted_mark_bounds(
+    const TrustedOverlayEntry& entry,
+    PixelSize display_size) noexcept;
+
+// Compares two compositor-owned overlay snapshots and returns old/new mark
+// footprints whose attribution changed. Pure frame-sequence changes do not add
+// damage because mark geometry/color is independent of client frame content;
+// normal client damage still causes the final mark pass to be reapplied.
+[[nodiscard]] os::core::Result<TrustedMarkDamagePlan> plan_trusted_mark_damage(
+    const TrustedOverlaySnapshot& previous,
+    const TrustedOverlaySnapshot& current,
+    PixelSize display_size) noexcept;
 
 // Final compositor-owned CPU fallback pass for trusted attribution. It consumes
 // only TrustedOverlaySnapshot, never application surface style/pixels, and draws
