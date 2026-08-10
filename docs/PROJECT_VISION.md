@@ -8,6 +8,16 @@ Build a phone operating system with the compactness, modularity and appliance-li
 
 ENML is not a Symbian clone and does not copy Symbian ABI, UI, frameworks or historical implementation choices. Symbian and all other supplied sources are engineering evidence and design guidance.
 
+## Implementation authority
+
+**References teach principles. ENML determines implementation. External systems are not the design specification.**
+
+This is a project-level rule, not merely a documentation preference. A supplied reference may teach a useful principle, mechanism/failure mode, threat-model lesson or engineering tradeoff. It does not define ENML's ABI, subsystem decomposition, wire protocol, visual grammar, service topology, naming, compatibility target or exact implementation.
+
+For every design decision, begin from ENML's mission, threat model, resource/power constraints, existing invariants and measured behavior. Use the supplied references to challenge or inform that reasoning. Then implement the result in ENML's own types, ownership model and architecture.
+
+A historical or external design is never accepted merely because it exists elsewhere. Likewise, ENML may choose a different implementation when that better satisfies ENML's security, bounded-resource, performance, portability or UX requirements while preserving the principle being learned.
+
 ## Priority order
 
 The system must optimize the following together rather than treating any one as an afterthought:
@@ -179,11 +189,14 @@ For every reference-driven change:
 
 1. identify the principle or failure mode being borrowed;
 2. decide whether it is still valid for ENML's threat model and hardware era;
-3. express it using ENML's own architecture and types;
-4. avoid copying vendor-specific ABI/visual identity/obsolete algorithms;
-5. validate the resulting behavior with ENML-specific tests.
+3. derive the implementation from ENML's own requirements and existing architecture;
+4. express the result using ENML's own types and ownership model;
+5. avoid copying vendor-specific ABI, subsystem topology, visual identity or obsolete algorithms;
+6. validate the resulting behavior with ENML-specific tests and measured behavior.
 
-See `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md` and milestone-specific reference notes.
+A reference is evidence in the reasoning process, never an implementation specification. When several references demonstrate different mechanisms for the same principle, ENML is free to use none of those mechanisms and design its own, provided the resulting design satisfies ENML's requirements and is validated.
+
+See `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md`, `docs/REFERENCE_ADDITIONS_2026_08_10.md` and milestone-specific reference notes.
 
 ## Current M3.2 interpretation
 
