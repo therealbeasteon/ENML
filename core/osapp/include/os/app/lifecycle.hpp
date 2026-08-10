@@ -25,6 +25,10 @@ struct ApplicationLifecycleRecord final {
         return instance.value() != 0U && application.valid() &&
             os::core::valid_peer_identity(identity);
     }
+
+    [[nodiscard]] friend bool operator==(
+        const ApplicationLifecycleRecord&,
+        const ApplicationLifecycleRecord&) = default;
 };
 
 struct ApplicationLifecycleSnapshot final {
