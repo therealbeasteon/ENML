@@ -22,7 +22,7 @@ target_compile_options(application_service_session_test PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
 add_test(NAME m2_service_session_test COMMAND application_service_session_test)
-set_tests_properties(m2_service_session_test PROPERTIES LABELS m2-runtime)
+set_tests_properties(m2_service_session_test PROPERTIES LABELS "m2-runtime;m3-display")
 
 add_executable(application_input_event_test input_event_test.cpp)
 target_link_libraries(application_input_event_test PRIVATE emnl::osapp emnl_warnings)
