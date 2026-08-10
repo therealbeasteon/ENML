@@ -18,7 +18,7 @@ See `docs/M3_1_SHARED_BUFFER_COMPOSITOR_SERVICE.md`.
 
 ## M3.2 — bounded semantic UI, text and original ENML visual foundation
 
-Status: implementation in progress on `m3-2-semantic-ui-foundation`.
+Status: late implementation / exit review on `m3-2-semantic-ui-foundation`.
 
 `docs/M3_2_EXIT_CRITERIA.md` defines when this branch is actually good enough to leave draft. M3.2 is a trustworthy semantic UI/render/input/accessibility foundation, not a claim that later DRM/KMS/GPU, telephony, update/recovery, verified-boot or full power-management tracks are finished.
 
@@ -85,7 +85,9 @@ Implemented:
 - raised/floating/hero economy depth combines coverage-aware support shadow, leading highlight and restrained trailing occlusion; inset reverses the edge treatment and does not cast an external positive-offset shadow;
 - concrete compositor-owned `rasterize_trusted_marks()` CPU fallback renders the bounded ENML trusted-system signature after client composition from `TrustedOverlaySnapshot` metadata only;
 - application frames cannot request the trust-mark pass or select its palette/geometry; appearance is not treated as cryptographic proof because technical authority still comes from compositor role/z-order/capture/input policy;
-- semantic-only changes can generate zero pixel damage, moved nodes damage old+new bounds, and pathological damage lists fall back explicitly to full redraw.
+- `trusted_mark_bounds()` and fixed-capacity `plan_trusted_mark_damage()` provide exact old/new compositor-owned mark footprints for moves/additions/removals/classification changes without forcing a full-screen attribution redraw;
+- pure client-frame sequence changes create no attribution damage, while ordinary client damage still causes the final trust pass to be reapplied;
+- semantic-only changes can generate zero pixel damage, moved nodes damage old+new bounds, and pathological semantic damage lists fall back explicitly to full redraw.
 
 Opaque figure/ground and state remain the identity baseline. Live backdrop/translucency must enhance ENML, not become the only reason it is recognizable.
 
@@ -103,7 +105,11 @@ Implemented:
 - composed geometry+text opaque frame raster;
 - concrete renderer-private Linux adapter using configured platform faces, FreeType metrics/masks, HarfBuzz shaping and ICU bidi/line/grapheme analysis behind ENML's own bounded interfaces;
 - fixed semantic face-role table and fixed scratch capacities tied to `SemanticText`/shaped-run limits rather than an unbounded text service;
+- reusable renderer-owned shaping buffer removes per-run HarfBuzz buffer construction without adding shared background work;
 - real mixed LTR/RTL and wrapping tests plus complete production-backend `RenderCommandBuffer` → frame-pixel coverage;
+- font fallback is selected per complete Unicode grapheme so base characters, combining marks, variation selectors and shaping controls are not fragmented into unrelated fallback runs;
+- when no configured face covers an entire grapheme, ENML keeps the grapheme intact and permits an explicit missing-glyph result rather than corrupting one user-perceived character across faces;
+- empty text is zero-paint and hard blank lines preserve line-box layout without manufacturing fake glyphs;
 - render-command glyph pixels are clipped to the semantic command rectangle in addition to the target, so legitimate font overhang/bearings cannot paint into sibling node regions;
 - no font scanner, text worker, polling loop or unbounded glyph cache.
 
@@ -149,9 +155,9 @@ Implemented: bounded event-driven `MotionTimeline`, no animation worker/polling 
 
 ### Trusted system presentation
 
-Implemented: compositor-derived trust classification, secure-system capture exclusion, bounded compositor-owned `TrustedOverlaySnapshot`, role/classification consistency validation and the concrete compositor-owned CPU trusted-mark raster described above. Application pixels cannot self-mint trusted-system attribution.
+Implemented: compositor-derived trust classification, secure-system capture exclusion, bounded compositor-owned `TrustedOverlaySnapshot`, role/classification consistency validation, concrete compositor-owned CPU trusted-mark raster and bounded attribution-damage planning. Application pixels cannot self-mint trusted-system attribution.
 
-The next trust-presentation step is carrying the same overlay-after-client ownership contract into the future private hardware compositor and usability-testing the mark. A lookalike shape drawn by an app is never itself proof of system authority.
+The future hardware compositor must preserve the same overlay-after-client ordering and bounded old/new mark footprint contract. A lookalike shape drawn by an app is never itself proof of system authority.
 
 ### Reference/product contract
 
@@ -161,31 +167,33 @@ The next trust-presentation step is carrying the same overlay-after-client owner
 
 ### Validation status
 
-Head `eda64e5acaa512cf7260052d57c5b30090e73d9a` completed the full current workflow line successfully:
+Head `2edcd41961f30a52afc89d3c6e55d3acf194ed24` completed the full workflow line successfully:
 
 - M0 CI;
 - M1 Package and App Foundation;
 - M2 Private Storage;
 - M2 Key Service;
-- M2 Service Broker;
+- M2 Service Broker, including GCC, Clang, ASan/UBSan and native AArch64;
 - M3 Semantic UI, including GCC, Clang, ASan/UBSan and native AArch64;
-- M3 Display/Compositor.
+- M3 Display/Compositor, including GCC, Clang, ASan/UBSan and native AArch64.
 
-That checkpoint includes the supervised accessibility-service lifecycle, authenticated App Manager collection-capability lifecycle, compositor-owned trusted-mark path, shared bounded contour evaluator and the first production-oriented Linux text-backend integration.
+That validated checkpoint includes grapheme-safe font fallback, production command-to-pixel text rendering, semantic glyph paint clipping and the bounded trusted-mark footprint/damage planner.
 
-The current branch extends that green checkpoint with semantic paint clipping for real glyph overhang, full production-backend command-to-pixel validation and the explicit implementation-authority rule. The exact current head must pass the fresh workflow line before PR #26 can leave draft; queued/running validation is not a pass.
+The first M2 Service Broker attempt on that checkpoint had one isolated GCC teardown assertion while Clang, sanitizers and native AArch64 passed. Re-running the unchanged GCC job passed; no authorization/lifecycle timeout or production rule was loosened. The rerun result is recorded rather than silently treating the original transient execution as product behavior.
 
-M3 PR workflows use concurrency grouping so superseded validation is cancelled rather than accumulating an unbounded queue.
+Documentation commits after that checkpoint still require exact-head validation before PR #26 can leave draft. M3 PR workflows use concurrency grouping so superseded validation is cancelled rather than accumulating an unbounded queue.
 
-### Remaining M3.2 work
+### Remaining M3.2 exit review
 
-- complete current-head review/validation of the renderer-private Unicode/font adapter and close any bounded text-layout edge cases exposed by it;
-- carry the compositor-owned trusted-mark overlay-after-client contract into the future hardware compositor and usability-test the actual mark;
-- improve contour/depth/blur quality only where justified by measured phone-scale visual/power budgets while keeping focus/state dominant and the shared contour contract authoritative;
-- if collection consumption moves into a separate privileged UI-host process, add authenticated kernel-credential control around the existing exact-owner claim seam;
-- continue compositor-deadline-aware scene transitions;
-- add later text-input/IME, keyboard traversal and gesture contracts without exposing raw hardware APIs;
-- freeze the public semantic UI/OSIDL surface only after these invariants stabilize;
-- align the eventual Figma component system with the same semantic token vocabulary and evaluate accessibility/usability before freezing the visual language.
+The remaining work is no longer foundational reconstruction. Before leaving draft, review the exact exit checklist against the current head and close only concrete gaps found by tests/review. Known later-product items must not be pulled into M3.2 merely to make the checklist look larger.
 
-Hardware DRM/KMS/GPU backends, production shader stacks, telephony/radio, verified boot/attestation, production TPM/TEE/HSM providers, recovery/update and full power-management integration remain later tracks and must not be faked inside M3.2.
+Items intentionally still outside the M3.2 completion claim include:
+
+- final ENML font assets/licensing, synthetic generated-overflow semantics, editable text/IME, color-font policy and GPU glyph atlas;
+- hardware DRM/KMS/GPU composition, while preserving the already-defined trusted overlay-after-client and bounded damage contract;
+- user-study/usability refinement of the baseline trusted mark;
+- raw hardware input discovery plus multitouch/gesture/pointer-capture/keyboard/IME product contracts;
+- telephony/radio, verified boot/attestation, production TPM/TEE/HSM providers, recovery/update and complete power-management integration;
+- final marketplace/application distribution/product shell work.
+
+Public semantic UI packaging should freeze only the stable ENML semantic contracts. Cross-process collection/accessibility protocols must remain bounded message/session contracts; in-process UI implementation details and private renderer/library objects must not be promoted into public ABI merely to imitate another platform.
