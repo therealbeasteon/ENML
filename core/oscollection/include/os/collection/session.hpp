@@ -16,10 +16,19 @@ namespace os::collection {
 struct CollectionSessionIdTag;
 using CollectionSessionId = os::core::StrongId<CollectionSessionIdTag, std::uint64_t>;
 
+// Canonical trusted consumer principal for platform-hosted semantic collection
+// data. The value is an identifier, not a secret: App Manager/runtime identity
+// state decides whether a process actually owns this authority.
+inline constexpr os::core::PrincipalId collection_consumer_principal{
+    0x454E4D4C434F4C4CULL,
+    0x4543540000000001ULL,
+};
+
 // Private per-application collection capability namespace. This is not a
-// globally discoverable service. The endpoint is expected to be handed to the
-// owning application/runtime by a trusted outer lifecycle layer.
-inline constexpr os::core::ServiceId application_collection_session_service_id{0x0000F014U};
+// globally discoverable service. F016 is intentionally distinct from the
+// supervised accessibility service's F014 control namespace even though both
+// protocols live only on private capabilities.
+inline constexpr os::core::ServiceId application_collection_session_service_id{0x0000F016U};
 inline constexpr std::uint32_t collection_session_op_snapshot = 1U;
 inline constexpr std::uint32_t collection_session_op_changes = 2U;
 inline constexpr std::uint32_t collection_session_op_content = 3U;
