@@ -61,6 +61,17 @@ int main() {
     assert(measured);
     assert(measured.value().width_q6 != 0U);
 
+    // Empty semantic text is a valid no-paint input. The platform adapter must
+    // not manufacture a glyph or a line merely to satisfy its native libraries.
+    auto empty_text = os::ui::make_semantic_text("");
+    assert(empty_text);
+    auto empty_shaped = os::ui::shape_text_with_fonts(
+        empty_text.value(), style.value(), faces.value(), backend.text_shaper());
+    assert(empty_shaped);
+    assert(empty_shaped.value().glyph_count == 0U);
+    assert(empty_shaped.value().run_count == 0U);
+    assert(empty_shaped.value().line_count == 0U);
+
     // The production paragraph seam uses ICU line-break analysis plus
     // HarfBuzz shaping instead of the fake unit-test paragraph backend.
     auto paragraph = os::ui::make_semantic_text("ENML keeps background work quiet");
@@ -83,6 +94,50 @@ int main() {
         paragraph.value(), style.value(), wrap_constraints, wrapped.value()));
     assert(wrapped.value().line_count >= 2U);
     assert(wrapped.value().line_count <= wrap_constraints.max_lines);
+
+    // Consecutive hard separators preserve the blank visual line without
+    // inventing a fake glyph. The blank line owns vertical layout only; the two
+    // real text lines remain the only glyph-bearing lines.
+    auto blank_middle = os::ui::make_semantic_text("A\n\nB");
+    assert(blank_middle);
+    const os::ui::ParagraphConstraints hard_break_constraints{
+        .max_width_q6 = os::ui::logical_from_dp(80U),
+        .max_lines = 4U,
+        .wrap = os::ui::ParagraphWrapMode::word,
+        .overflow = os::ui::ParagraphOverflowMode::clip,
+        .base_direction = os::ui::ParagraphBaseDirection::auto_detect,
+    };
+    auto hard_breaks = os::ui::shape_paragraph_with_fonts(
+        blank_middle.value(),
+        style.value(),
+        faces.value(),
+        hard_break_constraints,
+        backend.paragraph_shaper());
+    assert(hard_breaks);
+    assert(os::ui::paragraph_layout_valid(
+        blank_middle.value(), style.value(), hard_break_constraints, hard_breaks.value()));
+    assert(hard_breaks.value().line_count == 3U);
+    assert(hard_breaks.value().lines[0].glyph_count != 0U);
+    assert(hard_breaks.value().lines[1].glyph_count == 0U);
+    assert(hard_breaks.value().lines[2].glyph_count != 0U);
+
+    auto only_break = os::ui::make_semantic_text("\n");
+    assert(only_break);
+    auto blank_paragraph = os::ui::shape_paragraph_with_fonts(
+        only_break.value(),
+        style.value(),
+        faces.value(),
+        hard_break_constraints,
+        backend.paragraph_shaper());
+    assert(blank_paragraph);
+    assert(blank_paragraph.value().line_count == 1U);
+    assert(blank_paragraph.value().glyph_count == 0U);
+    assert(blank_paragraph.value().run_count == 0U);
+    auto blank_measurement = os::ui::measure_shaped_text(
+        only_break.value(), style.value(), blank_paragraph.value());
+    assert(blank_measurement);
+    assert(blank_measurement.value().width_q6 == 0U);
+    assert(blank_measurement.value().height_q6 == style.value().metrics.line_height_q6);
 
     // ICU resolves the visual runs while HarfBuzz shapes each directional run.
     // Hebrew bytes remain cluster offsets into the original SemanticText; the
