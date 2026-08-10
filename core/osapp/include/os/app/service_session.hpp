@@ -17,9 +17,11 @@ namespace os::app {
 inline constexpr os::core::ServiceId application_service_session_id{0x0000F011U};
 inline constexpr std::uint32_t application_service_session_operation_acquire = 1U;
 inline constexpr std::uint32_t application_service_session_operation_acquire_input_events = 2U;
+inline constexpr std::uint32_t application_service_session_operation_acquire_accessibility = 3U;
 inline constexpr std::uint16_t application_service_session_version_v1 = 1U;
 inline constexpr std::uint16_t application_service_session_payload_size_v1 = 16U;
 inline constexpr std::uint16_t application_input_endpoint_payload_size_v1 = 4U;
+inline constexpr std::uint16_t application_accessibility_endpoint_payload_size_v1 = 12U;
 
 // The application may report the generation it last observed. This is advisory
 // state only: it never selects a service implementation, ProcessId, PrincipalId
@@ -35,6 +37,7 @@ struct ServiceAcquireRequestV1 final {
 enum class RuntimeSessionRequestKind : std::uint8_t {
     acquire_service = 1U,
     acquire_input_events = 2U,
+    acquire_accessibility = 3U,
 };
 
 struct RuntimeSessionRequestV1 final {
@@ -61,6 +64,24 @@ struct PlatformServiceEndpoint final {
     }
 };
 
+// Application side of one App Manager-minted accessibility capability. The
+// numeric session is meaningful only together with this move-only channel; it
+// is not a globally discoverable application identifier.
+struct PlatformAccessibilityEndpoint final {
+    std::uint64_t session_id {0U};
+    os::ipc::Channel channel {};
+
+    PlatformAccessibilityEndpoint() noexcept = default;
+    PlatformAccessibilityEndpoint(const PlatformAccessibilityEndpoint&) = delete;
+    PlatformAccessibilityEndpoint& operator=(const PlatformAccessibilityEndpoint&) = delete;
+    PlatformAccessibilityEndpoint(PlatformAccessibilityEndpoint&&) noexcept = default;
+    PlatformAccessibilityEndpoint& operator=(PlatformAccessibilityEndpoint&&) noexcept = default;
+
+    [[nodiscard]] bool valid() const noexcept {
+        return session_id != 0U && channel.valid();
+    }
+};
+
 // Application-side session layered over the bootstrap-v2 control channel after
 // READY. The channel remains long-lived for the application process lifetime.
 // Returned service/event endpoints are move-only capabilities created or
@@ -84,6 +105,13 @@ public:
     // endpoint to the already-authenticated application session.
     [[nodiscard]] os::core::Result<os::ipc::Channel>
     acquire_input_events(os::core::MutableByteSpan receive_buffer) noexcept;
+
+    // Requests the application side of a private accessibility channel plus a
+    // runtime-minted session id. The request contains no target identity or
+    // trusted-accessibility-service identity; App Manager binds the capability
+    // to this already-authenticated application runtime.
+    [[nodiscard]] os::core::Result<PlatformAccessibilityEndpoint>
+    acquire_accessibility(os::core::MutableByteSpan receive_buffer) noexcept;
 
 private:
     os::ipc::ClientConnection connection_;
@@ -115,6 +143,13 @@ send_service_acquire_response(
 send_input_event_endpoint_response(
     os::ipc::Channel& channel,
     const os::ipc::WireHeaderV1& request_header,
+    const os::core::NativeHandle& endpoint) noexcept;
+
+[[nodiscard]] os::core::Result<void>
+send_accessibility_endpoint_response(
+    os::ipc::Channel& channel,
+    const os::ipc::WireHeaderV1& request_header,
+    std::uint64_t session_id,
     const os::core::NativeHandle& endpoint) noexcept;
 
 } // namespace os::app
