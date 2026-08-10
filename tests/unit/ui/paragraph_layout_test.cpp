@@ -185,6 +185,29 @@ int main() {
     assert(!invalid);
     expect_ui_error(invalid.error(), os::ui::errors::invalid_paragraph_layout);
 
+    auto invalid_style = style.value();
+    invalid_style.metrics.size_q6 = 0U;
+    auto bad_style = os::ui::shape_paragraph_with_fonts(
+        text.value(), invalid_style, faces, constraints,
+        os::ui::FontAwareParagraphShaperBackend{
+            .context = &advance,
+            .shape = paragraph_backend,
+        });
+    assert(!bad_style);
+    expect_ui_error(bad_style.error(), os::ui::errors::invalid_paragraph_layout);
+
+    auto duplicate_fallback = style.value();
+    duplicate_fallback.fallback.families[1] = duplicate_fallback.fallback.families[0];
+    auto duplicate_faces = body_faces(duplicate_fallback);
+    auto bad_fallback = os::ui::shape_paragraph_with_fonts(
+        text.value(), duplicate_fallback, duplicate_faces, constraints,
+        os::ui::FontAwareParagraphShaperBackend{
+            .context = &advance,
+            .shape = paragraph_backend,
+        });
+    assert(!bad_fallback);
+    expect_ui_error(bad_fallback.error(), os::ui::errors::invalid_paragraph_layout);
+
     auto bad_faces = faces;
     bad_faces.faces[0].id = {};
     auto invalid_faces = os::ui::shape_paragraph_with_fonts(
