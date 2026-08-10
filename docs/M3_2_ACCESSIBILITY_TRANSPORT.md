@@ -1,6 +1,6 @@
 # M3.2 — brokered accessibility session transport
 
-This slice moves ENML accessibility from an in-process semantic authority seam toward a real cross-process capability path without adding framebuffer scraping, a global application-controlled accessibility bus or an idle polling worker.
+This slice moves ENML accessibility from an in-process semantic authority seam to a supervised cross-process capability path without adding framebuffer scraping, a global application-controlled accessibility bus or an idle polling worker.
 
 ## Layering
 
@@ -12,7 +12,7 @@ The transport is split deliberately:
 → private `AccessibilitySessionServer` / `AccessibilitySessionClient` RPC channel
 → App Manager capability brokering
 → authenticated accessibility claim control
-→ trusted accessibility-service lifecycle.
+→ supervised `system.accessibility` lifecycle.
 
 `core/osui` remains independent of IPC. `core/osaccessibility` sits above `osui` and `osipc`, so wire-format concerns do not leak into the semantic tree, renderer or application-facing UI semantics.
 
@@ -45,17 +45,27 @@ Authorization runs before target lookup so an ordinary caller cannot use target-
 
 ## Authenticated claim control
 
-`AccessibilityBrokerControlServer` now provides the private RPC boundary that was missing above the in-process claim seam. It receives the request packet first, runs the normal `validate_rpc_request()` path, and resolves the sender's kernel `SCM_CREDENTIALS` through a trusted `PeerIdentityResolver`. The request payload contains **only** the exact target application `PeerIdentity`; it contains no caller principal, caller process identity or native descriptor that could be used to manufacture authority.
+`AccessibilityBrokerControlServer` provides the App Manager RPC boundary above the in-process claim seam. It receives the request packet first, runs the normal `validate_rpc_request()` path, and resolves the sender's kernel `SCM_CREDENTIALS` through a trusted `PeerIdentityResolver`. The request payload contains **only** the exact target application `PeerIdentity`; it contains no caller principal, caller process identity or native descriptor that could be used to manufacture authority.
 
-The resolved caller must have `accessibility_service_principal` before the target payload is decoded or the App Manager claim callback is entered. This preserves the existing anti-enumeration property across the process boundary: an ordinary process cannot learn whether a particular target has a pending accessibility capability by comparing target-specific claim errors.
+The resolved caller must have `accessibility_service_principal` before the target payload is decoded or the App Manager claim callback is entered. This preserves the anti-enumeration property across the process boundary.
 
-On success the control server sends a fixed bounded response containing the nonzero session id and exact application identity plus exactly one move-only channel transferred with `SCM_RIGHTS`. The client rejects wrong handle counts, malformed metadata or a response naming a different application than the one requested.
+The neutral client/wire half now lives in `core/osaccessibility/broker.hpp` rather than forcing `system.accessibility` to link the full App Manager/package/storage stack. On success the control server sends fixed metadata containing the nonzero session id and exact application identity plus exactly one move-only channel transferred with `SCM_RIGHTS`.
 
-The production adapter is `accessibility_endpoint_backend(ApplicationManager&)`; callback pointers stay inside the trusted App Manager process and never cross the wire. A focused fork/socket test uses real packet sender credentials to prove that the trusted accessibility principal can receive the exact endpoint while an ordinary principal that knows both the private service id and target identity is denied before the claim backend runs.
+## Supervised accessibility service
+
+`system.accessibility` is now a real Supervisor-managed process with the canonical `accessibility_service_principal`.
+
+The Supervisor gained one generic **private service capability** slot. Trusted composition may provide a borrowed capability descriptor in `ServiceLaunchConfig`; each service generation receives only a duplicate at private fd 6. The descriptor is never returned by `Supervisor::connect()` and is never published through the application `ServiceBroker`. `system.accessibility` uses this fd exclusively as its App Manager broker-control channel.
+
+The service still receives the normal private Supervisor control fd for bootstrap and identity publication. Its administration endpoint is intentionally not registered for applications in M3.2. A trusted caller must both possess the Supervisor-owned endpoint capability and resolve through the service's generation-local `IdentityRegistry` to `accessibility_admin_principal`. Merely inheriting/obtaining an endpoint without that published identity is insufficient.
+
+The service keeps at most 16 claimed application sessions. There is no dynamically growing session map. Each slot contains the exact application `PeerIdentity`, nonzero session id, move-only application channel and a persistent `AccessibilitySessionClient`, so synchronous RPC request ids continue monotonically on that capability. Peer death clears the slot rather than retaining stale session state.
+
+The private administration operations are bounded to claim, snapshot, semantic action and release. Claim authority still comes from the separate App Manager broker: the administration caller cannot manufacture an application session by supplying a descriptor or session id.
 
 ## Private session RPC
 
-`AccessibilitySessionServer` runs beside the owning application semantic tree. `AccessibilitySessionClient` runs on the trusted-service side of the App Manager-brokered channel.
+`AccessibilitySessionServer` runs beside the owning application semantic tree. `AccessibilitySessionClient` runs in `system.accessibility` on the App Manager-brokered channel.
 
 The RPC namespace is private to that capability and supports only:
 
@@ -64,14 +74,31 @@ The RPC namespace is private to that capability and supports only:
 
 The server is constructed with the exact `AccessibilityBridgeAuthority` for the application session and the trusted caller identity established by brokering. It opens no global listener and performs no identity lookup from application-provided principal fields.
 
-A focused cross-process socketpair test exercises snapshot and focus-action round trips through the client/server channel. The lower transport tests independently cover principal denial, session mismatch, stale revision and malformed semantic graph data.
+## Lifecycle validation
+
+`accessibility_service_supervisor_test` launches the real `system.accessibility` binary under `Supervisor`, injects only the private broker capability, publishes an authenticated admin identity, and proves the following path:
+
+`trusted admin`
+→ supervised accessibility service
+→ authenticated broker claim made by the service process
+→ exactly one transferred application session channel
+→ semantic snapshot
+→ revision-bound focus action
+→ application `SemanticTree` state change
+→ explicit session release.
+
+The same fixture then republishes the exact native admin sender under an ordinary principal and proves that the already-open Supervisor endpoint is no longer enough: the service returns `authority_denied` before touching the now-unavailable broker. The test is part of all four M3 UI runners, including native AArch64 and ASan/UBSan.
+
+A focused lower-level broker test separately proves that a non-accessibility principal which knows the private broker service id and exact target identity is denied before the App Manager claim callback is invoked.
 
 ## Resource and power discipline
 
-This design adds no permanent worker, scanner or polling loop. Snapshot/action and claim-control work occurs only when a request is made. Serialization uses caller-owned bounded buffers. App Manager only brokers a move-only capability; it is not placed in the synchronous snapshot/action data path, so a slow application accessibility server cannot block App Manager's lifecycle loop.
+This design adds no permanent worker, scanner or polling loop. `system.accessibility` blocks in the same event-driven `poll()` style as other small supervised services and wakes only for Supervisor control or an explicit trusted administration request. Snapshot/action and broker work is synchronous and bounded; serialization uses caller-owned fixed buffers.
 
-## Remaining integration work
+App Manager brokers a move-only capability but is not placed in the synchronous snapshot/action data path, so a slow application accessibility server does not make App Manager a semantic relay or create an unbounded producer queue.
 
-The remaining M3.2 accessibility lifecycle work is to run the trusted accessibility service under Supervisor and wire its private control connection to `AccessibilityBrokerControlServer` using the service's supervisor-published identity registry. An application-runtime integration gate should then prove the complete app request → App Manager retained endpoint → authenticated service claim → semantic snapshot/action round trip in one lifecycle fixture.
+## Remaining integration/product work
+
+The supervised lifecycle and authenticated claim path now exist. A broader application-runtime integration fixture can still combine the already-tested application capability request and the supervised service path in one test, but no new authority mechanism is required for that composition.
 
 Later accessibility product work includes speech, braille, switch control, live-region policy, secure-screen redaction and editable-text integration. Those features must build on the semantic/session authority above rather than bypass it with pixels or raw input APIs.
