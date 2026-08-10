@@ -16,6 +16,11 @@
 
 namespace {
 
+constexpr os::core::PrincipalId ordinary_service_principal{
+    0x4F5244494E415259ULL,
+    0x5345525649434501ULL,
+};
+
 class ShellIdentityResolver final : public os::ipc::PeerIdentityResolver {
 public:
     void expect(pid_t native_pid, os::core::PeerIdentity peer) noexcept {
@@ -62,18 +67,19 @@ struct LifecycleFixture final {
 
 os::supervisor::ServiceLaunchConfig shell_config(
     const char* executable,
+    os::core::PrincipalId principal,
     int lifecycle_fd) noexcept {
     return os::supervisor::ServiceLaunchConfig{
         .descriptor = os::supervisor::ServiceDescriptorV1{
             .service_id = os::shell::shell_service_id,
-            .principal_id = os::core::shell_service_principal,
+            .principal_id = principal,
             .user_id = os::core::UserId{0U},
             .name = "system.shell",
             .restart_policy = os::supervisor::RestartPolicy::never,
             .restart_delay_ms = 10U,
             .max_restarts_in_window = 1U,
             .restart_window_ms = 1000U,
-            .readiness_timeout_ms = 2000U,
+            .readiness_timeout_ms = 1000U,
             .sandbox = {},
         },
         .executable_path = executable,
@@ -86,13 +92,43 @@ os::supervisor::ServiceLaunchConfig shell_config(
 int main(int argc, char** argv) {
     assert(argc == 2);
 
+    // A process launched under the shell ServiceId but with any other trusted
+    // runtime principal must fail before READY. Numeric service labels alone do
+    // not create shell authority.
+    {
+        auto pair_result = os::ipc::Channel::create_local_pair();
+        assert(pair_result);
+        auto pair = std::move(pair_result).value();
+        os::supervisor::ProcessAuthority authority;
+        os::supervisor::Supervisor wrong_principal{
+            shell_config(argv[1], ordinary_service_principal, pair[1].native_fd()),
+            authority,
+        };
+        assert(!wrong_principal.start());
+    }
+
+    // The canonical shell principal without its private lifecycle capability is
+    // also not ready. Startup fails closed instead of falling back to public
+    // process enumeration, a task scanner or ambient App Manager access.
+    {
+        os::supervisor::ProcessAuthority authority;
+        os::supervisor::Supervisor missing_capability{
+            shell_config(argv[1], os::core::shell_service_principal, -1),
+            authority,
+        };
+        assert(!missing_capability.start());
+    }
+
     auto lifecycle_pair_result = os::ipc::Channel::create_local_pair();
     assert(lifecycle_pair_result);
     auto lifecycle_pair = std::move(lifecycle_pair_result).value();
 
     os::supervisor::ProcessAuthority authority;
     os::supervisor::Supervisor supervisor{
-        shell_config(argv[1], lifecycle_pair[1].native_fd()),
+        shell_config(
+            argv[1],
+            os::core::shell_service_principal,
+            lifecycle_pair[1].native_fd()),
         authority,
     };
     assert(supervisor.start());
