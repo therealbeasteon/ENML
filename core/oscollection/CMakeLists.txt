@@ -1,5 +1,6 @@
 add_library(oscollection STATIC
     src/transport.cpp
+    src/session.cpp
 )
 add_library(emnl::oscollection ALIAS oscollection)
 
