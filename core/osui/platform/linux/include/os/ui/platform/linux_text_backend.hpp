@@ -16,13 +16,10 @@ struct LinuxFontFiles final {
 };
 
 // Optional production-oriented Linux adapter for the existing bounded ENML
-// text seams. It owns FreeType/HarfBuzz state but exposes only ENML callback
-// contracts to the renderer. No font path, FT_Face, hb_font_t, glyph bitmap or
-// other native object crosses into application-facing semantic APIs.
-//
-// This backend deliberately does not claim paragraph bidi/line breaking yet;
-// that remains a separate renderer-private ParagraphShaper seam so ENML does
-// not substitute a partial home-grown Unicode algorithm for a reviewed backend.
+// text seams. FreeType owns face loading/rasterization, HarfBuzz owns OpenType
+// shaping and ICU owns Unicode bidi/line-break analysis. Native objects remain
+// renderer-private: applications still receive only semantic typography roles,
+// bounded text and opaque face IDs.
 class LinuxTextBackend final {
 public:
     explicit LinuxTextBackend(const LinuxFontFiles& files) noexcept;
@@ -37,8 +34,14 @@ public:
 
     [[nodiscard]] FontProviderBackend font_provider() noexcept;
     [[nodiscard]] FontAwareTextShaperBackend text_shaper() noexcept;
+    [[nodiscard]] FontAwareParagraphShaperBackend paragraph_shaper() noexcept;
     [[nodiscard]] FontLineMetricsBackend line_metrics() noexcept;
     [[nodiscard]] GlyphMaskProviderBackend glyph_masks() noexcept;
+
+    // Convenience bundle for the existing RenderCommand text path. The bundle
+    // contains callback views into this backend and is valid only while this
+    // LinuxTextBackend remains alive.
+    [[nodiscard]] TextCommandRasterBackend command_backend() noexcept;
 
 private:
     struct Impl;
