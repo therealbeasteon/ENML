@@ -1,0 +1,60 @@
+name: M4 Trusted Phone Shell
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  shell-gcc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build shell gates
+        run: cmake --build --preset host-debug --target shell_task_model_test --parallel 2
+      - name: Test shell gates
+        run: ctest --preset host-debug --output-on-failure -L '^m4-shell$'
+
+  shell-clang:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: >-
+          cmake -S . -B build/m4-shell-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Build shell gates
+        run: cmake --build build/m4-shell-clang --target shell_task_model_test --parallel 2
+      - name: Test shell gates
+        run: ctest --test-dir build/m4-shell-clang --output-on-failure -L '^m4-shell$'
+
+  shell-sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure ASan and UBSan
+        run: cmake --preset host-asan
+      - name: Build shell gates with sanitizers
+        run: cmake --build --preset host-asan --target shell_task_model_test --parallel 2
+      - name: Test shell gates with sanitizers
+        run: ctest --preset host-asan --output-on-failure -L '^m4-shell$'
+
+  shell-arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Confirm AArch64
+        run: test "$(uname -m)" = "aarch64"
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build shell gates natively
+        run: cmake --build --preset host-debug --target shell_task_model_test --parallel 2
+      - name: Test shell gates natively
+        run: ctest --preset host-debug --output-on-failure -L '^m4-shell$'
