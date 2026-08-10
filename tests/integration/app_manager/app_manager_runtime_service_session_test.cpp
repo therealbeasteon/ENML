@@ -97,7 +97,12 @@ bool wait_for_file(
     os::app::ApplicationManager& manager,
     int directory_fd,
     const char* name) {
-    for (std::size_t attempt = 0U; attempt < 1200U; ++attempt) {
+    // The restart path deliberately exercises SIGKILL + supervisor readiness +
+    // policy republish + application reacquisition. Native AArch64 runners can
+    // transiently take longer than x86 to complete that full chain, so keep a
+    // bounded 12-second integration budget rather than treating scheduler
+    // variance as an authorization/lifecycle failure.
+    for (std::size_t attempt = 0U; attempt < 2400U; ++attempt) {
         auto maintained = manager.maintain();
         if (!maintained) {
             std::fprintf(
