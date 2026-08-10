@@ -1,6 +1,7 @@
 #include <os/ui/raster.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -253,6 +254,85 @@ struct PixelRect final {
     return true;
 }
 
+[[nodiscard]] bool corner_inside_subpixel(
+    std::int64_t x4,
+    std::int64_t y4,
+    std::int64_t center_x4,
+    std::int64_t center_y4,
+    std::int64_t radius4,
+    std::uint8_t smoothing_percent) noexcept {
+    if (radius4 <= 0) return true;
+
+    const std::int64_t dx = x4 - center_x4;
+    const std::int64_t dy = y4 - center_y4;
+    const std::uint64_t dx_sq = static_cast<std::uint64_t>(dx * dx);
+    const std::uint64_t dy_sq = static_cast<std::uint64_t>(dy * dy);
+    const std::uint64_t radius_sq = static_cast<std::uint64_t>(radius4 * radius4);
+    const std::uint64_t circle_metric = (dx_sq + dy_sq) * radius_sq;
+    const std::uint64_t squircle_metric = dx_sq * dx_sq + dy_sq * dy_sq;
+    const std::uint64_t limit = radius_sq * radius_sq;
+    const std::uint64_t smoothing = smoothing_percent;
+    const std::uint64_t metric =
+        circle_metric * (100U - smoothing) + squircle_metric * smoothing;
+    return metric <= limit * 100U;
+}
+
+[[nodiscard]] bool contour_contains_subpixel(
+    const PixelRect& rect,
+    std::int64_t x4,
+    std::int64_t y4) noexcept {
+    const std::int64_t left4 = rect.left * 4;
+    const std::int64_t top4 = rect.top * 4;
+    const std::int64_t right4 = rect.right * 4;
+    const std::int64_t bottom4 = rect.bottom * 4;
+    if (x4 < left4 || x4 >= right4 || y4 < top4 || y4 >= bottom4) return false;
+
+    const std::int64_t tl4 = rect.top_left_radius * 4;
+    if (tl4 > 0 && x4 < left4 + tl4 && y4 < top4 + tl4) {
+        return corner_inside_subpixel(
+            x4, y4, left4 + tl4, top4 + tl4, tl4, rect.smoothing_percent);
+    }
+
+    const std::int64_t tr4 = rect.top_right_radius * 4;
+    if (tr4 > 0 && x4 >= right4 - tr4 && y4 < top4 + tr4) {
+        return corner_inside_subpixel(
+            x4, y4, right4 - tr4, top4 + tr4, tr4, rect.smoothing_percent);
+    }
+
+    const std::int64_t br4 = rect.bottom_right_radius * 4;
+    if (br4 > 0 && x4 >= right4 - br4 && y4 >= bottom4 - br4) {
+        return corner_inside_subpixel(
+            x4, y4, right4 - br4, bottom4 - br4, br4, rect.smoothing_percent);
+    }
+
+    const std::int64_t bl4 = rect.bottom_left_radius * 4;
+    if (bl4 > 0 && x4 < left4 + bl4 && y4 >= bottom4 - bl4) {
+        return corner_inside_subpixel(
+            x4, y4, left4 + bl4, bottom4 - bl4, bl4, rect.smoothing_percent);
+    }
+    return true;
+}
+
+[[nodiscard]] std::uint8_t contour_coverage_2x2(
+    const PixelRect& rect,
+    std::int64_t pixel_x,
+    std::int64_t pixel_y) noexcept {
+    static constexpr std::array<std::int64_t, 2U> offsets{{1, 3}};
+    std::uint8_t samples_inside = 0U;
+    for (const auto offset_y : offsets) {
+        for (const auto offset_x : offsets) {
+            if (contour_contains_subpixel(
+                    rect,
+                    pixel_x * 4 + offset_x,
+                    pixel_y * 4 + offset_y)) {
+                ++samples_inside;
+            }
+        }
+    }
+    return static_cast<std::uint8_t>(
+        (static_cast<std::uint16_t>(samples_inside) * 255U + 2U) / 4U);
+}
+
 [[nodiscard]] constexpr std::uint8_t blend_channel(
     std::uint8_t base,
     std::uint8_t tint,
@@ -284,6 +364,32 @@ struct PixelRect final {
         .green = blend_channel(base.green, 0U, percent),
         .blue = blend_channel(base.blue, 0U, percent),
         .alpha = 255U,
+    };
+}
+
+[[nodiscard]] constexpr std::uint8_t blend_channel_coverage(
+    std::uint8_t destination,
+    std::uint8_t source,
+    std::uint8_t coverage) noexcept {
+    const std::uint32_t inverse = 255U - coverage;
+    return static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(destination) * inverse +
+         static_cast<std::uint32_t>(source) * coverage + 127U) /
+        255U);
+}
+
+[[nodiscard]] constexpr Rgba8 blend_coverage(
+    Rgba8 destination,
+    Rgba8 source,
+    std::uint8_t coverage) noexcept {
+    return Rgba8{
+        .red = blend_channel_coverage(destination.red, source.red, coverage),
+        .green = blend_channel_coverage(destination.green, source.green, coverage),
+        .blue = blend_channel_coverage(destination.blue, source.blue, coverage),
+        .alpha = static_cast<std::uint8_t>(
+            coverage +
+            (static_cast<std::uint32_t>(destination.alpha) * (255U - coverage) + 127U) /
+                255U),
     };
 }
 
@@ -357,6 +463,24 @@ void write_pixel(
     Rgba8 color,
     RasterStats& stats) noexcept {
     target.pixels[pixel_index(target, x, y)] = color;
+    ++stats.pixel_writes;
+}
+
+void write_pixel_coverage(
+    RasterTarget target,
+    std::uint32_t x,
+    std::uint32_t y,
+    Rgba8 color,
+    std::uint8_t coverage,
+    RasterStats& stats) noexcept {
+    if (coverage == 0U) return;
+    if (coverage == 255U) {
+        write_pixel(target, x, y, color, stats);
+        return;
+    }
+    const std::size_t index = pixel_index(target, x, y);
+    target.pixels[index] = blend_coverage(target.pixels[index], color, coverage);
+    ++stats.partial_coverage_writes;
     ++stats.pixel_writes;
 }
 
@@ -442,13 +566,15 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
             for (std::int64_t y = clipped_top; y < clipped_bottom; ++y) {
                 for (std::int64_t x = clipped_left; x < clipped_right; ++x) {
                     if (!contour_contains(rect, x, y)) continue;
-                    write_pixel(
+                    const std::uint8_t coverage = contour_coverage_2x2(rect, x, y);
+                    write_pixel_coverage(
                         target,
                         static_cast<std::uint32_t>(x),
                         static_cast<std::uint32_t>(y),
                         fill,
+                        coverage,
                         stats);
-                    filled = true;
+                    filled = coverage != 0U || filled;
                 }
             }
         }
@@ -470,10 +596,12 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
                     const std::uint32_t ux = static_cast<std::uint32_t>(x);
                     const std::uint32_t uy = static_cast<std::uint32_t>(y);
                     const std::size_t index = pixel_index(target, ux, uy);
+                    const std::uint8_t alpha = target.pixels[index].alpha;
                     target.pixels[index] = blend_opaque(
                         target.pixels[index],
                         highlight,
                         command.visual.material.specular_percent);
+                    target.pixels[index].alpha = alpha;
                     ++stats.pixel_writes;
                     lit = true;
                 }
@@ -488,11 +616,13 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
         for (std::int64_t y = clipped_top; y < clipped_bottom; ++y) {
             for (std::int64_t x = clipped_left; x < clipped_right; ++x) {
                 if (!boundary_pixel(rect, x, y)) continue;
-                write_pixel(
+                const std::uint8_t coverage = contour_coverage_2x2(rect, x, y);
+                write_pixel_coverage(
                     target,
                     static_cast<std::uint32_t>(x),
                     static_cast<std::uint32_t>(y),
                     outline,
+                    coverage,
                     stats);
             }
         }
