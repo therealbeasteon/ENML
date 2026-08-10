@@ -28,6 +28,7 @@ set_tests_properties(input_service_transport_test PROPERTIES LABELS m3-display)
 add_executable(shell_compositor_control_test shell_compositor_control_test.cpp)
 target_link_libraries(shell_compositor_control_test PRIVATE
     emnl::compositor_service
+    osshell
     emnl_warnings
 )
 target_compile_options(shell_compositor_control_test PRIVATE
