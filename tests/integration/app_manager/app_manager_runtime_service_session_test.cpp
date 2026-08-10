@@ -285,6 +285,46 @@ int main(int argc, char** argv) {
     const int data_fd = ::open(data_path, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     assert(data_fd >= 0);
 
+    // The child first asks its authenticated runtime session for a private
+    // runtime→application input endpoint. No target identity or fd is provided
+    // by the app in that request. Once the marker exists, App Manager owns the
+    // opposite sender endpoint for this exact PeerIdentity.
+    assert(wait_for_file(manager, data_fd, "m3-input-ready.bin"));
+
+    os::app::ApplicationInputEventV1 input_event{
+        .sequence = 41U,
+        .target = instance.identity,
+        .surface_id = 0x0000000900000001ULL,
+        .frame_sequence = 17U,
+        .surface_width_px = 360U,
+        .surface_height_px = 800U,
+        .local_x_px = 73,
+        .local_y_px = 99,
+        .pointer_id = 0U,
+        .phase = os::app::ApplicationPointerPhase::down,
+    };
+    assert(input_event.valid());
+
+    // Changing the target PeerIdentity cannot redirect the event to this
+    // instance merely because it is the only running application.
+    auto wrong_target = input_event;
+    wrong_target.target.process = os::core::ProcessId{instance.identity.process.value() + 1U};
+    auto wrong_delivery = manager.deliver_input_event(wrong_target);
+    assert(!wrong_delivery);
+    assert(wrong_delivery.error().domain == os::core::ErrorDomain::service);
+    assert(wrong_delivery.error().code == os::app::manager_errors::input_target_not_found);
+
+    assert(manager.deliver_input_event(input_event));
+
+    // App Manager retains monotonic delivery state independently of endpoint
+    // reacquisition; replay is rejected before another packet can be queued.
+    auto replay = manager.deliver_input_event(input_event);
+    assert(!replay);
+    assert(replay.error().domain == os::core::ErrorDomain::service);
+    assert(replay.error().code == os::app::manager_errors::input_event_replay);
+
+    assert(wait_for_file(manager, data_fd, "m3-input-delivered.bin"));
+
     // Service the child's post-READY session requests until it has observed the
     // initial Storage and Key generations. This marker is written only after an
     // unauthorized ServiceId was denied and both generation observations were
@@ -348,6 +388,8 @@ int main(int argc, char** argv) {
     assert(cleanup_data >= 0 && cleanup_keys >= 0 && cleanup_packages >= 0 && cleanup_principals >= 0);
 
     unlink_if_present(cleanup_data, "m2-10-initial.bin");
+    unlink_if_present(cleanup_data, "m3-input-ready.bin");
+    unlink_if_present(cleanup_data, "m3-input-delivered.bin");
     unlink_if_present(cleanup_data, "m2-10-session-ready.bin");
     unlink_if_present(cleanup_data, "m2-10-key-reacquired.bin");
     unlink_if_present(cleanup_data, "m2-10-storage-heartbeat.bin");
