@@ -209,6 +209,21 @@ stands, independent of milestone numbering.
 
 ---
 
+---
+
+## M5 — verified boot
+
+`docs/M5_0_VERIFIED_BOOT.md`
+
+- [x] **M5.0** AEAD nonces are provider-owned by invariant, not by accident.
+      A caller cannot influence the IV, no nonce repeats under a key, and a
+      test asserts all three properties whose absence produced CVE-2021-25444.
+- [ ] **M5.0** Verified boot foundation. Design and exit criteria are written;
+      completion is blocked on choosing a target SoC, since a chain of trust is
+      rooted in specific silicon.
+
+---
+
 ## Not claimed anywhere yet
 
 These are the gap between a hardened userspace and a secure phone. They are

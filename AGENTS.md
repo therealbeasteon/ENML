@@ -87,6 +87,7 @@ Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_P
 - Public applications never provide `KeyOwner`, `PrincipalId`, `UserId`, `KeyProtectionScope`, root references, raw provider handles, private control operations or raw long-lived key bytes.
 - A `KeyObjectHandle` is an object capability but its operations are still checked against trusted per-message peer identity.
 - AES-256-GCM-v1 is the current reviewed service profile; do not invent custom crypto or silently switch profiles.
+- The AEAD nonce is provider-owned. `seal()` takes it by non-const reference as an *output*; no caller-supplied or caller-influenced value may ever reach the cipher, and no nonce may repeat under one key. Letting an untrusted caller pin the IV is precisely what made keystream reuse, and then key recovery by XOR alone, possible in CVE-2021-25444. Any future production provider is bound by this, not just the current one.
 - The `EKEY` envelope authenticates canonical metadata plus caller AAD.
 - `PersistentKeyProvider` returns opaque provider-owned durability blobs. A production provider may use TPM/TEE/HSM sealed objects or secure locators; the OpenSSL provider and fixed wrapping root are test-only.
 - `KRG1` persistence is explicit little-endian and bounded. Never serialize `KeyRecord`, `KeyDescriptor`, `ProviderKeyReference`, `RootKeyReference`, or other native C++ layout directly.
