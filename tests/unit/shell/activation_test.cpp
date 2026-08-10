@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include <os/core/error.hpp>
+#include <os/display/error.hpp>
 #include <os/package/package.hpp>
 #include <os/shell/activation.hpp>
 #include <os/shell/error.hpp>
