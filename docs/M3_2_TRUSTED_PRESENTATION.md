@@ -2,7 +2,7 @@
 
 ENML must not let an application mint trusted-system authority merely by drawing pixels that resemble shell or secure-system UI.
 
-M3.0 restricts `system_chrome` surfaces to the trusted shell principal and `secure_system` surfaces to the trusted secure-UI principal. M3.2 carries that authority forward into compositor-derived `TrustedPresentation`, a separate `TrustedOverlaySnapshot`, and now a concrete compositor-owned CPU trust-mark pass.
+M3.0 restricts `system_chrome` surfaces to the trusted shell principal and `secure_system` surfaces to the trusted secure-UI principal. M3.2 carries that authority forward into compositor-derived `TrustedPresentation`, a separate `TrustedOverlaySnapshot`, and a concrete compositor-owned CPU trust-mark pass.
 
 ## Authority rule
 
@@ -29,7 +29,7 @@ Only visible surfaces with a submitted frame are included. Hidden or not-yet-pre
 
 ## Concrete compositor-owned mark
 
-`rasterize_trusted_marks()` is the first concrete private CPU/display fallback for the overlay. It consumes only `TrustedOverlaySnapshot`, a compositor-private opaque palette, and the final compositor-owned pixel target. It is intended to run **after client composition**.
+`rasterize_trusted_marks()` is the private CPU/display fallback for the overlay. It consumes only `TrustedOverlaySnapshot`, a compositor-private opaque palette, and the final compositor-owned pixel target. It is intended to run **after client composition**.
 
 The baseline ENML signature is deliberately geometric rather than a borrowed lock/shield icon:
 
@@ -41,6 +41,24 @@ The baseline ENML signature is deliberately geometric rather than a borrowed loc
 The pass performs no heap allocation, backdrop sampling, shader compilation, font lookup, worker scheduling or animation. Work is bounded by the fixed overlay count and the small mark geometry rather than by full-surface area.
 
 The raster boundary validates target memory/stride/dimensions, opaque/distinct compositor palette entries, generation-scoped surface ids, trusted presentation kinds, nonzero frame sequences and bounds containment before writing pixels. Malformed internal overlay state fails closed through the display error domain.
+
+## Bounded attribution damage
+
+The trusted mark is now also expressed as a bounded compositor-owned footprint rather than being useful only to a full-frame CPU raster.
+
+`trusted_mark_bounds()` returns the exact square occupied by the current CPU mark geometry for a validated overlay entry. `plan_trusted_mark_damage()` compares two trusted-overlay snapshots and emits only old/new mark footprints whose compositor-owned attribution changed.
+
+This distinction matters for a low-power partial-composition path:
+
+- moving a trusted surface damages the old and new mark footprints;
+- changing `system_chrome` to `secure_system` damages the old and new footprints because their bounded mark sizes differ;
+- removing a trusted surface damages only the old footprint so client pixels underneath can be restored;
+- adding a trusted surface damages only its new footprint;
+- changing only a client `frame_sequence` produces no **attribution** damage because mark placement/classification did not change.
+
+A client-frame redraw underneath a persistent mark still causes the normal client damage path to compose its pixels and then reapply the final trusted mark. The attribution damage plan is deliberately not a replacement for client-buffer damage.
+
+The plan has fixed capacity `2 * max_surfaces`, rejects malformed/duplicate overlay identities, deduplicates identical rectangles and allocates no heap memory. This gives a future private DRM/KMS/GPU compositor enough ENML-owned information to preserve the overlay-after-client contract without treating every trust-state transition as a full-screen redraw.
 
 ## What this does and does not prove
 
@@ -54,12 +72,13 @@ This distinction follows the project security-UX rule: make trusted state intell
 
 The normal ENML design system gives applications semantic access to ordinary color, typography, contour, material and motion roles. Secure attribution cannot be another such role. If a public `StyleTokenId` could request the secure-system treatment, the trust signal would be counterfeit-able by construction.
 
-The compositor path now separates:
+The compositor path separates:
 
 1. submitted application/system buffers;
 2. compositor-authoritative `TrustedPresentation`;
 3. `TrustedOverlaySnapshot` generated outside application buffers;
-4. private compositor-owned trust-mark rasterization after client composition.
+4. private compositor-owned trust-mark footprint/damage planning;
+5. private compositor-owned trust-mark rasterization after client composition.
 
 The future DRM/KMS/GPU backend must preserve this ordering and authority contract rather than exposing the mark as a public shader/material option.
 
@@ -74,6 +93,7 @@ The security properties remain independent:
 - capture policy excludes secure-system surfaces;
 - `TrustedPresentation` determines overlay eligibility;
 - `TrustedOverlaySnapshot` creates the compositor-private render input;
+- trusted-mark damage planning bounds partial redraw work;
 - `rasterize_trusted_marks()` paints the baseline attribution after client buffers;
 - application pixels never set any of those trust values.
 
@@ -81,14 +101,14 @@ The security properties remain independent:
 
 The first mark is an implementation baseline, **not a frozen final brand asset**. Its geometry/palette must still be evaluated for recognition, false confidence, high-contrast behavior, reduced-transparency modes, localization-independent comprehension and interaction with future system chrome.
 
-Any refinement must stay original to ENML and must not imitate Android, iOS, Knox, BlackBerry, Windows or another platform's secure chrome. Premium optical effects are optional; the trust cue must remain visible in the opaque economy renderer.
+Any refinement must stay original to ENML and must not imitate another platform's secure chrome. Premium optical effects are optional; the trust cue must remain visible in the opaque economy renderer.
 
 ## Reference guidance
 
 The supplied project references support the architectural separation rather than a specific icon. Security-UX material emphasizes intelligible security-relevant state and observable cause/effect, while the broader OS/security references support mediated privileged boundaries. The duress material is also a reminder that visual or credential tricks are not substitutes for an explicit adversary model.
 
-See `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md` and `docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md`.
+References teach principles. ENML determines implementation. External systems are not the design specification.
 
 ## Next step
 
-The next secure-presentation work is to carry the same overlay-after-client ordering into the future private hardware compositor backend and usability-test the baseline mark together with actual secure-system flows. The mark must never become an application style token or caller-supplied compositor command.
+The next secure-presentation work is to carry the same overlay-after-client ordering and bounded footprint/damage contract into the future private hardware compositor backend and usability-test the baseline mark together with actual secure-system flows. The mark must never become an application style token or caller-supplied compositor command.
