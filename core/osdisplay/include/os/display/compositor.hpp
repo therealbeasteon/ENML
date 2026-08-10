@@ -41,8 +41,17 @@ public:
         SurfaceId surface,
         SurfaceVisibility visibility) noexcept;
 
+    // Legacy internal shell activation. Production M4 shell integration should
+    // use activate_application_exact() so semantic lifecycle owner and
+    // generation-scoped SurfaceId are revalidated together at the compositor
+    // commit point.
     [[nodiscard]] os::core::Result<void> activate_application(
         os::core::PeerIdentity caller,
+        SurfaceId application_surface) noexcept;
+
+    [[nodiscard]] os::core::Result<void> activate_application_exact(
+        os::core::PeerIdentity caller,
+        os::core::PeerIdentity expected_owner,
         SurfaceId application_surface) noexcept;
 
     [[nodiscard]] os::core::Result<FrameReceipt> submit_frame(
