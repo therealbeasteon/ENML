@@ -18,10 +18,12 @@ inline constexpr os::core::ServiceId application_service_session_id{0x0000F011U}
 inline constexpr std::uint32_t application_service_session_operation_acquire = 1U;
 inline constexpr std::uint32_t application_service_session_operation_acquire_input_events = 2U;
 inline constexpr std::uint32_t application_service_session_operation_acquire_accessibility = 3U;
+inline constexpr std::uint32_t application_service_session_operation_acquire_collection = 4U;
 inline constexpr std::uint16_t application_service_session_version_v1 = 1U;
 inline constexpr std::uint16_t application_service_session_payload_size_v1 = 16U;
 inline constexpr std::uint16_t application_input_endpoint_payload_size_v1 = 4U;
 inline constexpr std::uint16_t application_accessibility_endpoint_payload_size_v1 = 12U;
+inline constexpr std::uint16_t application_collection_endpoint_payload_size_v1 = 12U;
 
 // The application may report the generation it last observed. This is advisory
 // state only: it never selects a service implementation, ProcessId, PrincipalId
@@ -38,6 +40,7 @@ enum class RuntimeSessionRequestKind : std::uint8_t {
     acquire_service = 1U,
     acquire_input_events = 2U,
     acquire_accessibility = 3U,
+    acquire_collection = 4U,
 };
 
 struct RuntimeSessionRequestV1 final {
@@ -82,6 +85,25 @@ struct PlatformAccessibilityEndpoint final {
     }
 };
 
+// Producer/application side of one App Manager-minted collection capability.
+// The application hosts CollectionSessionServer on this channel. App Manager
+// retains the paired consumer endpoint for a one-shot exact-owner claim by the
+// trusted semantic collection consumer.
+struct PlatformCollectionEndpoint final {
+    std::uint64_t session_id {0U};
+    os::ipc::Channel channel {};
+
+    PlatformCollectionEndpoint() noexcept = default;
+    PlatformCollectionEndpoint(const PlatformCollectionEndpoint&) = delete;
+    PlatformCollectionEndpoint& operator=(const PlatformCollectionEndpoint&) = delete;
+    PlatformCollectionEndpoint(PlatformCollectionEndpoint&&) noexcept = default;
+    PlatformCollectionEndpoint& operator=(PlatformCollectionEndpoint&&) noexcept = default;
+
+    [[nodiscard]] bool valid() const noexcept {
+        return session_id != 0U && channel.valid();
+    }
+};
+
 // Application-side session layered over the bootstrap-v2 control channel after
 // READY. The channel remains long-lived for the application process lifetime.
 // Returned service/event endpoints are move-only capabilities created or
@@ -112,6 +134,13 @@ public:
     // to this already-authenticated application runtime.
     [[nodiscard]] os::core::Result<PlatformAccessibilityEndpoint>
     acquire_accessibility(os::core::MutableByteSpan receive_buffer) noexcept;
+
+    // Requests one fresh producer-side collection capability. The request is
+    // intentionally empty: the application cannot name another process,
+    // consumer principal, session id, or native descriptor. Multiple sessions
+    // are allowed only within App Manager's fixed per-instance capacity.
+    [[nodiscard]] os::core::Result<PlatformCollectionEndpoint>
+    acquire_collection(os::core::MutableByteSpan receive_buffer) noexcept;
 
 private:
     os::ipc::ClientConnection connection_;
@@ -147,6 +176,13 @@ send_input_event_endpoint_response(
 
 [[nodiscard]] os::core::Result<void>
 send_accessibility_endpoint_response(
+    os::ipc::Channel& channel,
+    const os::ipc::WireHeaderV1& request_header,
+    std::uint64_t session_id,
+    const os::core::NativeHandle& endpoint) noexcept;
+
+[[nodiscard]] os::core::Result<void>
+send_collection_endpoint_response(
     os::ipc::Channel& channel,
     const os::ipc::WireHeaderV1& request_header,
     std::uint64_t session_id,
