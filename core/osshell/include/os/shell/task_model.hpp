@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <os/app/lifecycle.hpp>
 #include <os/core/identity.hpp>
 #include <os/core/result.hpp>
 #include <os/core/strong_id.hpp>
@@ -12,10 +13,9 @@
 
 namespace os::shell {
 
-// M4.0 begins with the same hard live-application ceiling already owned by App
-// Manager. The shell must not create a second, larger hidden task registry that
-// can grow independently of the process/lifecycle authority beneath it.
-inline constexpr std::size_t max_shell_tasks = 16U;
+// The shell task ceiling is exactly the lifecycle capacity published by App
+// Manager. Product navigation must not grow a second, larger hidden registry.
+inline constexpr std::size_t max_shell_tasks = os::app::max_application_lifecycle_instances;
 
 struct ShellRevisionTag;
 using ShellRevision = os::core::StrongId<ShellRevisionTag, std::uint64_t>;
@@ -24,27 +24,6 @@ enum class ShellView : std::uint8_t {
     home = 1U,
     application = 2U,
     overview = 3U,
-};
-
-// App Manager-facing semantic lifecycle identity. It deliberately contains no
-// surface id because App Manager does not own compositor objects. The trusted
-// shell joins this record to the compositor's application-root scene state by
-// exact PeerIdentity rather than trusting either source alone.
-struct ShellApplicationRecord final {
-    os::core::ApplicationInstanceId instance {};
-    os::package::ApplicationIdentity application {};
-    os::core::PeerIdentity owner {};
-
-    [[nodiscard]] bool valid() const noexcept {
-        return instance.value() != 0U && application.valid() &&
-            os::core::valid_peer_identity(owner);
-    }
-};
-
-struct ShellApplicationSnapshot final {
-    std::uint64_t revision {0U};
-    std::array<ShellApplicationRecord, max_shell_tasks> applications {};
-    std::size_t count {0U};
 };
 
 // Trusted shell metadata for one fully joined live application root. This uses
@@ -91,12 +70,13 @@ public:
     [[nodiscard]] os::core::Result<void> publish(ShellTask task) noexcept;
 
     // Coherently joins App Manager lifecycle state with compositor scene state.
-    // Only an exact live lifecycle owner that also owns exactly one application
-    // root surface becomes a task. Orphan surfaces and lifecycle entries without
-    // a root are omitted. The whole desired task set is committed with one shell
-    // revision, preserving activation serials for exact surviving identities.
+    // Only an exact live lifecycle identity that also owns exactly one
+    // application root surface becomes a task. Orphan surfaces and lifecycle
+    // entries without a root are omitted. The whole desired task set is
+    // committed with one shell revision, preserving activation serials for
+    // exact surviving identities.
     [[nodiscard]] os::core::Result<void> reconcile(
-        const ShellApplicationSnapshot& applications,
+        const os::app::ApplicationLifecycleSnapshot& applications,
         const os::display::SceneSnapshot& scene) noexcept;
 
     // Removes one exact application instance. Removing the active application
