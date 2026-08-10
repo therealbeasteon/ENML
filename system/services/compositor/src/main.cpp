@@ -117,7 +117,7 @@ int main() {
             pollfd{.fd = endpoint.native_fd(), .events = POLLIN, .revents = 0},
             pollfd{
                 .fd = shell_endpoint.valid() ? shell_endpoint.native_fd() : -1,
-                .events = shell_endpoint.valid() ? POLLIN : static_cast<short>(0),
+                .events = static_cast<short>(shell_endpoint.valid() ? POLLIN : 0),
                 .revents = 0,
             },
         };
