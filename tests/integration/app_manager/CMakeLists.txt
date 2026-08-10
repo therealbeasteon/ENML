@@ -60,6 +60,28 @@ target_compile_options(accessibility_control_test PRIVATE
 add_test(NAME accessibility_control_test COMMAND accessibility_control_test)
 set_tests_properties(accessibility_control_test PROPERTIES LABELS m3-ui)
 
+# M3.2 supervised accessibility lifecycle. A real system.accessibility process
+# receives only the Supervisor-injected private App Manager broker capability,
+# claims one exact application session, then performs semantic snapshot/action
+# RPC through that move-only endpoint.
+add_executable(accessibility_service_supervisor_test
+    accessibility_service_supervisor_test.cpp)
+target_link_libraries(accessibility_service_supervisor_test PRIVATE
+    emnl::accessibility_service
+    emnl::app_manager
+    emnl::supervisor
+    emnl_warnings
+)
+target_compile_options(accessibility_service_supervisor_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_dependencies(accessibility_service_supervisor_test system.accessibility)
+add_test(
+    NAME accessibility_service_supervisor_test
+    COMMAND accessibility_service_supervisor_test $<TARGET_FILE:system.accessibility>
+)
+set_tests_properties(accessibility_service_supervisor_test PROPERTIES LABELS m3-ui)
+
 # The M2.9 fixture consumes the versioned handle-based bootstrap. It receives
 # Storage + Keys by typed ServiceId and never relies on a fixed service fd.
 add_executable(m2_broker_test_app broker_test_app.cpp)
