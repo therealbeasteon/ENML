@@ -21,7 +21,7 @@ jobs:
           cmake --build --preset host-debug
           --target ui_semantic_tree_test ui_responsive_layout_test
           ui_render_snapshot_test ui_collection_window_test ui_collection_content_test
-          ui_collection_changes_test ui_design_reflow_test ui_renderer_command_test
+          ui_collection_changes_test collection_transport_test ui_design_reflow_test ui_renderer_command_test
           ui_render_damage_test ui_text_layout_test ui_paragraph_layout_test ui_raster_test
           ui_contour_aa_test ui_glyph_raster_test ui_text_command_raster_test
           ui_input_transform_test ui_input_routing_test ui_accessibility_bridge_test
@@ -41,7 +41,7 @@ jobs:
           cmake --build --preset host-asan
           --target ui_semantic_tree_test ui_responsive_layout_test
           ui_render_snapshot_test ui_collection_window_test ui_collection_content_test
-          ui_collection_changes_test ui_design_reflow_test ui_renderer_command_test
+          ui_collection_changes_test collection_transport_test ui_design_reflow_test ui_renderer_command_test
           ui_render_damage_test ui_text_layout_test ui_paragraph_layout_test ui_raster_test
           ui_contour_aa_test ui_glyph_raster_test ui_text_command_raster_test
           ui_input_transform_test ui_input_routing_test ui_accessibility_bridge_test
@@ -64,7 +64,7 @@ jobs:
           cmake --build build/m3-ui-clang
           --target ui_semantic_tree_test ui_responsive_layout_test
           ui_render_snapshot_test ui_collection_window_test ui_collection_content_test
-          ui_collection_changes_test ui_design_reflow_test ui_renderer_command_test
+          ui_collection_changes_test collection_transport_test ui_design_reflow_test ui_renderer_command_test
           ui_render_damage_test ui_text_layout_test ui_paragraph_layout_test ui_raster_test
           ui_contour_aa_test ui_glyph_raster_test ui_text_command_raster_test
           ui_input_transform_test ui_input_routing_test ui_accessibility_bridge_test
@@ -86,7 +86,7 @@ jobs:
           cmake --build --preset host-debug
           --target ui_semantic_tree_test ui_responsive_layout_test
           ui_render_snapshot_test ui_collection_window_test ui_collection_content_test
-          ui_collection_changes_test ui_design_reflow_test ui_renderer_command_test
+          ui_collection_changes_test collection_transport_test ui_design_reflow_test ui_renderer_command_test
           ui_render_damage_test ui_text_layout_test ui_paragraph_layout_test ui_raster_test
           ui_contour_aa_test ui_glyph_raster_test ui_text_command_raster_test
           ui_input_transform_test ui_input_routing_test ui_accessibility_bridge_test
