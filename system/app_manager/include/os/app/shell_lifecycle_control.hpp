@@ -18,11 +18,11 @@ using ShellTakeCompositorCapabilityFn = os::core::Result<os::core::NativeHandle>
     void* context) noexcept;
 
 // Internal composition seam only. Function pointers and backing contexts never
-// cross IPC. The optional compositor handoff is deliberately separate from the
-// lifecycle context so boot composition can provide a move-only control channel
-// without teaching ApplicationManager about compositor implementation details.
+// cross IPC. `context` remains the lifecycle context for compatibility with the
+// existing server fixture shape; compositor handoff has its own optional
+// context so boot composition does not teach ApplicationManager about display.
 struct ShellLifecycleBackend final {
-    void* snapshot_context {nullptr};
+    void* context {nullptr};
     ShellLifecycleSnapshotFn snapshot {nullptr};
     void* compositor_context {nullptr};
     ShellTakeCompositorCapabilityFn take_compositor_capability {nullptr};
