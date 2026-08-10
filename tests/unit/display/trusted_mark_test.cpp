@@ -50,6 +50,10 @@ int main() {
         .stride = width,
     };
     const os::display::PixelSize display_size{.width = width, .height = height};
+    const os::display::Rect expected_system_bounds{12, 2, 14U, 14U};
+    const os::display::Rect expected_secure_bounds{40, 20, 18U, 18U};
+    const os::display::Rect expected_moved_system_bounds{14, 2, 14U, 14U};
+    const os::display::Rect expected_promoted_secure_bounds{8, 2, 18U, 18U};
 
     os::display::TrustedOverlaySnapshot overlay{};
     overlay.count = 2U;
@@ -64,10 +68,10 @@ int main() {
 
     auto system_bounds = os::display::trusted_mark_bounds(overlay.entries[0], display_size);
     assert(system_bounds);
-    assert(system_bounds.value() == os::display::Rect{12, 2, 14U, 14U});
+    assert(system_bounds.value() == expected_system_bounds);
     auto secure_bounds = os::display::trusted_mark_bounds(overlay.entries[1], display_size);
     assert(secure_bounds);
-    assert(secure_bounds.value() == os::display::Rect{40, 20, 18U, 18U});
+    assert(secure_bounds.value() == expected_secure_bounds);
 
     auto raster = os::display::rasterize_trusted_marks(overlay, theme, target);
     assert(raster);
@@ -101,8 +105,8 @@ int main() {
     auto moved_damage = os::display::plan_trusted_mark_damage(overlay, moved, display_size);
     assert(moved_damage);
     assert(moved_damage.value().count == 2U);
-    assert(moved_damage.value().rects[0] == os::display::Rect{12, 2, 14U, 14U});
-    assert(moved_damage.value().rects[1] == os::display::Rect{14, 2, 14U, 14U});
+    assert(moved_damage.value().rects[0] == expected_system_bounds);
+    assert(moved_damage.value().rects[1] == expected_moved_system_bounds);
 
     // Changing trust classification can change the compositor-owned footprint
     // even when the trusted surface bounds stay fixed, so both old and new
@@ -113,8 +117,8 @@ int main() {
         overlay, promoted, display_size);
     assert(promoted_damage);
     assert(promoted_damage.value().count == 2U);
-    assert(promoted_damage.value().rects[0] == os::display::Rect{12, 2, 14U, 14U});
-    assert(promoted_damage.value().rects[1] == os::display::Rect{8, 2, 18U, 18U});
+    assert(promoted_damage.value().rects[0] == expected_system_bounds);
+    assert(promoted_damage.value().rects[1] == expected_promoted_secure_bounds);
 
     // Removing a trusted surface invalidates only the old compositor mark.
     os::display::TrustedOverlaySnapshot removed{};
@@ -215,7 +219,8 @@ int main() {
         tiny_overlay.entries[0],
         os::display::PixelSize{.width = 2U, .height = 2U});
     assert(tiny_bounds);
-    assert(tiny_bounds.value() == os::display::Rect{1, 1, 1U, 1U});
+    const os::display::Rect expected_tiny_bounds{1, 1, 1U, 1U};
+    assert(tiny_bounds.value() == expected_tiny_bounds);
 
     return 0;
 }
