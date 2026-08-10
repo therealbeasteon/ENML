@@ -17,7 +17,7 @@ jobs:
       - name: Install production text backend dependencies
         run: >-
           sudo apt-get update && sudo apt-get install -y
-          pkg-config libfreetype6-dev libharfbuzz-dev fonts-dejavu-core
+          pkg-config libfreetype6-dev libharfbuzz-dev libicu-dev fonts-dejavu-core
       - name: Configure
         run: cmake --preset host-debug -DEMNL_BUILD_LINUX_TEXT_BACKEND=ON
       - name: Build semantic UI gates
@@ -45,7 +45,7 @@ jobs:
       - name: Install production text backend dependencies
         run: >-
           sudo apt-get update && sudo apt-get install -y
-          pkg-config libfreetype6-dev libharfbuzz-dev fonts-dejavu-core
+          pkg-config libfreetype6-dev libharfbuzz-dev libicu-dev fonts-dejavu-core
       - name: Configure ASan and UBSan
         run: cmake --preset host-asan -DEMNL_BUILD_LINUX_TEXT_BACKEND=ON
       - name: Build semantic UI gates with sanitizers
@@ -73,7 +73,7 @@ jobs:
       - name: Install production text backend dependencies
         run: >-
           sudo apt-get update && sudo apt-get install -y
-          pkg-config libfreetype6-dev libharfbuzz-dev fonts-dejavu-core
+          pkg-config libfreetype6-dev libharfbuzz-dev libicu-dev fonts-dejavu-core
       - name: Configure
         run: >-
           cmake -S . -B build/m3-ui-clang -G Ninja
@@ -107,7 +107,7 @@ jobs:
       - name: Install production text backend dependencies
         run: >-
           sudo apt-get update && sudo apt-get install -y
-          pkg-config libfreetype6-dev libharfbuzz-dev fonts-dejavu-core
+          pkg-config libfreetype6-dev libharfbuzz-dev libicu-dev fonts-dejavu-core
       - name: Configure
         run: cmake --preset host-debug -DEMNL_BUILD_LINUX_TEXT_BACKEND=ON
       - name: Build semantic UI gates natively
