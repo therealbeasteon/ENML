@@ -1,6 +1,7 @@
 add_library(osaccessibility STATIC
     src/transport.cpp
     src/session_channel.cpp
+    src/broker.cpp
 )
 add_library(emnl::osaccessibility ALIAS osaccessibility)
 
