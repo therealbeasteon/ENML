@@ -1,4 +1,5 @@
 #include <os/ui/platform/linux_text_backend.hpp>
+#include <os/ui/frame_raster.hpp>
 
 #include <array>
 #include <cassert>
