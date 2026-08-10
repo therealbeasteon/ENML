@@ -6,6 +6,7 @@
 #include <cstdint>
 #include <utility>
 
+#include <fcntl.h>
 #include <poll.h>
 
 #include <os/core/error.hpp>
@@ -32,6 +33,21 @@ void close_on_send_failure(
     os::ipc::Channel& session,
     const os::core::Result<void>& result) noexcept {
     if (!result) session.close();
+}
+
+[[nodiscard]] bool set_nonblocking(os::ipc::Channel& channel) noexcept {
+    if (!channel.valid()) return false;
+    int flags = -1;
+    do {
+        flags = ::fcntl(channel.native_fd(), F_GETFL);
+    } while (flags < 0 && errno == EINTR);
+    if (flags < 0) return false;
+
+    int result = -1;
+    do {
+        result = ::fcntl(channel.native_fd(), F_SETFL, flags | O_NONBLOCK);
+    } while (result < 0 && errno == EINTR);
+    return result == 0;
 }
 
 } // namespace
@@ -104,6 +120,14 @@ ApplicationManager::service_runtime_session_once(InstanceSlot& slot) noexcept {
             return {};
         }
         auto pair = std::move(pair_result).value();
+        if (!set_nonblocking(pair[0])) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                service_error(manager_errors::input_endpoint_unavailable));
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
         auto application_endpoint = pair[1].take_native_handle_for_transfer();
         slot.input_event_sender = std::move(pair[0]);
         auto sent = send_input_event_endpoint_response(
