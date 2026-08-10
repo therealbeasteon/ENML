@@ -26,7 +26,28 @@ enum class ShellView : std::uint8_t {
     overview = 3U,
 };
 
-// Trusted shell metadata for one live application root. This deliberately uses
+// App Manager-facing semantic lifecycle identity. It deliberately contains no
+// surface id because App Manager does not own compositor objects. The trusted
+// shell joins this record to the compositor's application-root scene state by
+// exact PeerIdentity rather than trusting either source alone.
+struct ShellApplicationRecord final {
+    os::core::ApplicationInstanceId instance {};
+    os::package::ApplicationIdentity application {};
+    os::core::PeerIdentity owner {};
+
+    [[nodiscard]] bool valid() const noexcept {
+        return instance.value() != 0U && application.valid() &&
+            os::core::valid_peer_identity(owner);
+    }
+};
+
+struct ShellApplicationSnapshot final {
+    std::uint64_t revision {0U};
+    std::array<ShellApplicationRecord, max_shell_tasks> applications {};
+    std::size_t count {0U};
+};
+
+// Trusted shell metadata for one fully joined live application root. This uses
 // semantic/generation-scoped ENML identities only: no native PID, executable
 // path, Linux window handle or vendor task identifier becomes shell ABI.
 struct ShellTask final {
@@ -63,11 +84,20 @@ public:
     ShellTaskModel(const ShellTaskModel&) = delete;
     ShellTaskModel& operator=(const ShellTaskModel&) = delete;
 
-    // Publishes a live application root. Re-publishing the same exact
-    // instance/application/owner updates only its generation-scoped root
-    // surface, allowing compositor restart recovery without inventing a new
-    // application task. Rebinding an instance to another identity fails closed.
+    // Publishes a live application root directly. This remains useful for
+    // focused internal tests/adapters; production shell integration should
+    // prefer reconcile() so one source cannot self-assert both lifecycle and
+    // compositor identity.
     [[nodiscard]] os::core::Result<void> publish(ShellTask task) noexcept;
+
+    // Coherently joins App Manager lifecycle state with compositor scene state.
+    // Only an exact live lifecycle owner that also owns exactly one application
+    // root surface becomes a task. Orphan surfaces and lifecycle entries without
+    // a root are omitted. The whole desired task set is committed with one shell
+    // revision, preserving activation serials for exact surviving identities.
+    [[nodiscard]] os::core::Result<void> reconcile(
+        const ShellApplicationSnapshot& applications,
+        const os::display::SceneSnapshot& scene) noexcept;
 
     // Removes one exact application instance. Removing the active application
     // returns the shell to home rather than selecting another task implicitly.
@@ -92,6 +122,7 @@ private:
     ShellView view_ {ShellView::home};
     os::core::ApplicationInstanceId active_instance_ {};
     std::uint64_t next_activation_serial_ {1U};
+    std::uint64_t last_lifecycle_revision_ {0U};
 
     [[nodiscard]] ShellTask* find(os::core::ApplicationInstanceId instance) noexcept;
     [[nodiscard]] const ShellTask* find(os::core::ApplicationInstanceId instance) const noexcept;
