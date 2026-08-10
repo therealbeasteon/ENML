@@ -99,7 +99,6 @@ public:
           registry_(&registry),
           id_source_(&id_source) {}
 
-    [[nodiscard]] os::core::Result<void>
     // Descriptors this service can contribute to a caller-owned wait set: the
     // public endpoint plus one per live key-object endpoint.
     static constexpr std::size_t max_wait_descriptors = max_key_objects + 1U;
