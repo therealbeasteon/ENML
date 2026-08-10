@@ -105,6 +105,22 @@ int main(int argc, char** argv) {
 
     const auto ready_ms = ready_at.value() - spawn_at.value();
 
+    // Hold a client endpoint open for the whole measurement.
+    //
+    // A supervised service with no peer attached is not the state worth
+    // measuring: real services sit idle with clients connected, and idle cost
+    // under that condition is the number the budget is about. It is also not a
+    // state every service tolerates - system.storage's dispatch loop fails with
+    // a storage io_failure when polled with no peer on its endpoint, so
+    // measuring without connecting would be measuring a service on its way out.
+    auto client_result = supervisor.connect();
+    if (!client_result) {
+        std::fprintf(stderr, "could not attach a client endpoint\n");
+        (void)supervisor.terminate(SIGKILL);
+        return 1;
+    }
+    auto client_endpoint = std::move(client_result).value();
+
     auto first_sample = budget::sample_process(status.native_pid);
     if (!first_sample) {
         std::fprintf(stderr, "could not sample service process\n");
