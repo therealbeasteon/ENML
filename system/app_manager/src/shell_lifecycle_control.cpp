@@ -104,7 +104,7 @@ namespace {
 
 ShellLifecycleBackend shell_lifecycle_backend(ApplicationManager& manager) noexcept {
     return ShellLifecycleBackend{
-        .snapshot_context = &manager,
+        .context = &manager,
         .snapshot = manager_snapshot,
     };
 }
@@ -143,7 +143,7 @@ os::core::Result<void> ShellLifecycleControlServer::dispatch_once(
     }
 
     if (request_header.operation_id == shell_lifecycle_operation_snapshot) {
-        auto snapshot = backend_.snapshot(backend_.snapshot_context);
+        auto snapshot = backend_.snapshot(backend_.context);
         if (!snapshot) {
             return os::ipc::send_rpc_error(channel, request_header, snapshot.error());
         }
