@@ -113,6 +113,7 @@ int main() {
     assert(raster.value().surfaces_filled == 2U);
     assert(raster.value().shadows_drawn == 1U);
     assert(raster.value().lit_edges_drawn == 1U);
+    assert(raster.value().partial_coverage_writes > 0U);
     assert(raster.value().pixel_writes >= width * height);
 
     const auto surface = theme.colors[color_index(os::ui::ColorRole::surface)];
@@ -124,13 +125,19 @@ int main() {
     assert(pixels[0] == surface);
 
     // The swept panel does not collapse to a generic rectangle: the authored
-    // top-right contour clips its extreme corner while leaving the center filled.
+    // top-right contour clips its extreme center-sampled corner while leaving
+    // the center fully filled.
     assert(pixels[4U * width + 27U] == surface);
     assert(pixels[10U * width + 16U] == panel_fill);
 
-    // Smoothing is a real geometric input. The high-smoothing swept top-right
-    // corner includes this leading-edge sample and focus paints it explicitly.
-    assert(pixels[4U * width + 26U] == focus);
+    // The high-smoothing swept edge now has real *interior* subpixel coverage.
+    // This pixel's center is inside the contour, but only three of four fixed
+    // subpixel samples are inside. Focus therefore remains visible while the
+    // edge is neither a binary root pixel nor an unnaturally full focus pixel.
+    const auto interior_edge = pixels[4U * width + 26U];
+    assert(interior_edge.alpha == 255U);
+    assert(interior_edge != surface);
+    assert(interior_edge != focus);
 
     // Depth has a useful opaque fallback before blur/alpha exists: the floating
     // panel darkens already-painted support pixels at its positive offset.
@@ -140,9 +147,9 @@ int main() {
     // by material/transparency, keeping interaction state legible.
     assert(pixels[4U * width + 5U] == focus);
 
-    // With smoothing removed, the same top-right sample falls outside the
-    // circular corner and therefore remains the root surface. This protects
-    // authored contour identity from being ignored by the raster backend.
+    // With smoothing removed, the same top-right sample's center falls outside
+    // the circular corner and therefore remains the root surface in the primary
+    // raster. The separate perimeter AA stage may later add outside coverage.
     std::array<os::ui::Rgba8, width * height> circular_pixels{};
     auto circular_commands = commands;
     circular_commands.commands[1].contour.smoothing_percent = 0U;
