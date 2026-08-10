@@ -6,7 +6,7 @@
 
 #include <poll.h>
 
-#include <os/app/shell_lifecycle_control.hpp>
+#include <os/app/shell_lifecycle_client.hpp>
 #include <os/core/error.hpp>
 #include <os/core/native_handle.hpp>
 #include <os/core/platform_principals.hpp>
