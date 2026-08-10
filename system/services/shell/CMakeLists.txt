@@ -4,7 +4,7 @@ add_executable(system.shell
 
 target_link_libraries(system.shell PRIVATE
     osshell
-    emnl::app_manager
+    emnl::osapp
     emnl::osservice
     emnl_warnings
 )
