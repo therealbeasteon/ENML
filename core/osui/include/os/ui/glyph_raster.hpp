@@ -68,4 +68,22 @@ struct GlyphRasterStats final {
     TextRasterOrigin origin,
     RasterTarget target) noexcept;
 
+// Same bounded glyph-mask path, but pixels are additionally clipped to a
+// validated logical rectangle before touching the caller-owned target. This is
+// the path used by RenderContentKind::text so font overhang/bearings cannot
+// paint into sibling UI regions merely because a glyph mask extends beyond the
+// semantic node's layout box. The clip is renderer policy, not application font
+// control; target clipping remains in force as a second bound.
+[[nodiscard]] os::core::Result<GlyphRasterStats> rasterize_shaped_text_masks_clipped(
+    const SemanticText& source,
+    const ResolvedTextStyle& style,
+    const ShapedText& shaped,
+    const FontFaceSet& faces,
+    GlyphMaskProviderBackend provider,
+    const RasterTheme& theme,
+    ColorRole color,
+    TextRasterOrigin origin,
+    LogicalRect clip_bounds,
+    RasterTarget target) noexcept;
+
 } // namespace os::ui
