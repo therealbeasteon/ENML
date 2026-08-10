@@ -13,6 +13,10 @@ inline constexpr std::uint32_t task_conflict = 3U;
 inline constexpr std::uint32_t unknown_task = 4U;
 inline constexpr std::uint32_t revision_exhausted = 5U;
 inline constexpr std::uint32_t activation_serial_exhausted = 6U;
+inline constexpr std::uint32_t invalid_lifecycle_snapshot = 7U;
+inline constexpr std::uint32_t stale_lifecycle_snapshot = 8U;
+inline constexpr std::uint32_t invalid_scene_snapshot = 9U;
+inline constexpr std::uint32_t stale_scene_snapshot = 10U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error shell_error(std::uint32_t code) noexcept {
