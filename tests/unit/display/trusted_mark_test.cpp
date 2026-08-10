@@ -72,7 +72,7 @@ int main() {
     // presentation uses a distinct accent and adds the asymmetric inner seam.
     assert(pixels[2U * width + 25U] == theme.system_chrome);
     assert(pixels[20U * width + 57U] == theme.secure_system);
-    assert(pixels[29U * width + 48U] != background);
+    assert(pixels[27U * width + 48U] == theme.secure_system);
 
     // An empty overlay means ordinary application pixels receive no trust mark.
     const auto before = pixels;
