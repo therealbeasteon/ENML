@@ -14,6 +14,7 @@
 #include <hb.h>
 #include <unicode/ubidi.h>
 #include <unicode/ubrk.h>
+#include <unicode/uchar.h>
 #include <unicode/utypes.h>
 
 namespace os::ui::platform {
@@ -210,6 +211,16 @@ struct FamilySegments final {
     return line;
 }
 
+[[nodiscard]] bool scalar_requires_font_glyph(std::uint32_t scalar) noexcept {
+    // Join controls, variation selectors and other default-ignorable shaping
+    // characters may legitimately have no standalone glyph in any face. They
+    // still remain inside the grapheme handed to HarfBuzz, but do not force a
+    // fallback-family change by themselves.
+    return u_hasBinaryProperty(
+        static_cast<UChar32>(scalar),
+        UCHAR_DEFAULT_IGNORABLE_CODE_POINT) == 0;
+}
+
 } // namespace
 
 struct LinuxTextBackend::Impl final {
@@ -282,41 +293,121 @@ struct LinuxTextBackend::Impl final {
         return style.fallback.families[0];
     }
 
-    [[nodiscard]] bool family_segments(
+    [[nodiscard]] bool family_covers_grapheme(
+        FontFamilyRole family,
         const SemanticText& source,
-        const ResolvedTextStyle& style,
         std::uint16_t byte_start,
-        std::uint16_t byte_end,
-        FamilySegments& output) const noexcept {
-        output = {};
+        std::uint16_t byte_end) const noexcept {
+        const FaceSlot* slot = slot_for(family);
+        if (slot == nullptr || slot->face == nullptr || byte_start >= byte_end) return false;
+
         std::size_t offset = byte_start;
-        const std::size_t limit = byte_end;
-        while (offset < limit) {
+        while (offset < byte_end) {
             std::uint32_t scalar = 0U;
             std::size_t scalar_width = 0U;
             if (!decode_utf8_scalar(source, offset, scalar, scalar_width) ||
-                offset + scalar_width > limit) {
+                offset + scalar_width > byte_end) {
                 return false;
             }
-            const FontFamilyRole family = family_for_scalar(scalar, style);
-            const std::size_t segment_start = offset;
-            offset += scalar_width;
-            while (offset < limit) {
-                std::uint32_t next_scalar = 0U;
-                std::size_t next_width = 0U;
-                if (!decode_utf8_scalar(source, offset, next_scalar, next_width) ||
-                    offset + next_width > limit) {
-                    return false;
-                }
-                if (family_for_scalar(next_scalar, style) != family) break;
-                offset += next_width;
+            if (scalar_requires_font_glyph(scalar) &&
+                FT_Get_Char_Index(slot->face, static_cast<FT_ULong>(scalar)) == 0U) {
+                return false;
             }
-            if (output.count >= output.segments.size()) return false;
-            output.segments[output.count++] = FamilySegment{
-                .byte_start = static_cast<std::uint16_t>(segment_start),
-                .byte_end = static_cast<std::uint16_t>(offset),
-                .family = family,
-            };
+            offset += scalar_width;
+        }
+        return offset == byte_end;
+    }
+
+    [[nodiscard]] FontFamilyRole family_for_grapheme(
+        const SemanticText& source,
+        const ResolvedTextStyle& style,
+        std::uint16_t byte_start,
+        std::uint16_t byte_end) const noexcept {
+        // Select one face for the complete grapheme. A base scalar and its
+        // combining marks/variation/join controls must never be separated merely
+        // because scalar-by-scalar coverage happens to differ across fallback
+        // faces. This is ENML's renderer contract; the private Unicode/font
+        // libraries only implement the mechanics underneath it.
+        for (std::size_t index = 0U; index < style.fallback.count; ++index) {
+            const FontFamilyRole family = style.fallback.families[index];
+            if (family_covers_grapheme(family, source, byte_start, byte_end)) return family;
+        }
+
+        // If no configured face covers the entire cluster, keep the cluster
+        // intact and choose the normal fallback for its first glyph-bearing
+        // scalar. HarfBuzz may then emit .notdef for uncovered members, but ENML
+        // does not corrupt one user-perceived character into cross-face pieces.
+        std::size_t offset = byte_start;
+        while (offset < byte_end) {
+            std::uint32_t scalar = 0U;
+            std::size_t scalar_width = 0U;
+            if (!decode_utf8_scalar(source, offset, scalar, scalar_width) ||
+                offset + scalar_width > byte_end) {
+                break;
+            }
+            if (scalar_requires_font_glyph(scalar)) return family_for_scalar(scalar, style);
+            offset += scalar_width;
+        }
+        return style.fallback.families[0];
+    }
+
+    [[nodiscard]] bool family_segments(
+        const SemanticText& source,
+        const ResolvedTextStyle& style,
+        const Utf16Text& utf16,
+        std::int32_t utf16_start,
+        std::int32_t utf16_end,
+        FamilySegments& output) noexcept {
+        output = {};
+        if (grapheme_breaker == nullptr || utf16_start < 0 || utf16_end <= utf16_start ||
+            utf16_end > utf16.length ||
+            utf16.byte_boundary[static_cast<std::size_t>(utf16_start)] < 0 ||
+            utf16.byte_boundary[static_cast<std::size_t>(utf16_end)] < 0) {
+            return false;
+        }
+
+        UErrorCode status = U_ZERO_ERROR;
+        ubrk_setText(grapheme_breaker, utf16.units.data(), utf16.length, &status);
+        if (U_FAILURE(status) ||
+            ubrk_isBoundary(grapheme_breaker, utf16_start) == 0 ||
+            ubrk_isBoundary(grapheme_breaker, utf16_end) == 0) {
+            return false;
+        }
+
+        std::int32_t grapheme_start = utf16_start;
+        while (grapheme_start < utf16_end) {
+            const std::int32_t grapheme_end = ubrk_following(grapheme_breaker, grapheme_start);
+            if (grapheme_end == UBRK_DONE || grapheme_end <= grapheme_start ||
+                grapheme_end > utf16_end) {
+                return false;
+            }
+            const std::int32_t byte_start_i32 =
+                utf16.byte_boundary[static_cast<std::size_t>(grapheme_start)];
+            const std::int32_t byte_end_i32 =
+                utf16.byte_boundary[static_cast<std::size_t>(grapheme_end)];
+            if (byte_start_i32 < 0 || byte_end_i32 <= byte_start_i32 ||
+                byte_end_i32 > source.length) {
+                return false;
+            }
+
+            const auto byte_start = static_cast<std::uint16_t>(byte_start_i32);
+            const auto byte_end = static_cast<std::uint16_t>(byte_end_i32);
+            const FontFamilyRole family =
+                family_for_grapheme(source, style, byte_start, byte_end);
+
+            if (output.count != 0U &&
+                output.segments[output.count - 1U].family == family &&
+                output.segments[output.count - 1U].byte_end == byte_start) {
+                output.segments[output.count - 1U].byte_end = byte_end;
+            } else {
+                if (output.count >= output.segments.size()) return false;
+                output.segments[output.count++] = FamilySegment{
+                    .byte_start = byte_start,
+                    .byte_end = byte_end,
+                    .family = family,
+                };
+            }
+            grapheme_start = grapheme_end;
         }
         return output.count != 0U;
     }
@@ -457,8 +548,9 @@ struct LinuxTextBackend::Impl final {
             if (!family_segments(
                     source,
                     style,
-                    static_cast<std::uint16_t>(byte_start_i32),
-                    static_cast<std::uint16_t>(byte_end_i32),
+                    utf16,
+                    absolute_start,
+                    absolute_end,
                     segments)) {
                 return false;
             }
