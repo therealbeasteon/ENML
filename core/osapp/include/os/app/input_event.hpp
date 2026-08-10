@@ -36,7 +36,7 @@ struct ApplicationInputEventV1 final {
 };
 
 inline constexpr std::uint16_t application_input_event_version_v1 = 1U;
-inline constexpr std::uint16_t application_input_event_payload_size_v1 = 76U;
+inline constexpr std::uint16_t application_input_event_payload_size_v1 = 84U;
 
 // Trusted-runtime send boundary. Callers are expected to have revalidated the
 // compositor-issued hit immediately before constructing this event. This codec
