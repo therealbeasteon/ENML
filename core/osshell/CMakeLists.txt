@@ -1,5 +1,6 @@
 add_library(osshell STATIC
     src/task_model.cpp
+    src/activation.cpp
 )
 
 target_include_directories(osshell PUBLIC include)
