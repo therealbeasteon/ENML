@@ -140,6 +140,13 @@ namespace {
     };
 }
 
+[[nodiscard]] constexpr std::uint8_t coverage_percent(
+    std::uint8_t percent,
+    std::uint8_t coverage) noexcept {
+    return static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(percent) * coverage + 127U) / 255U);
+}
+
 [[nodiscard]] bool command_valid(const RenderCommand& command) noexcept {
     return command.source.value() != 0U && command.bounds.bounded() &&
         color_role_valid(command.visual.token.background) &&
@@ -224,11 +231,33 @@ void write_pixel_coverage(
     const Rgba8 existing = target.pixels[index];
     if (existing.alpha == 0U) return false;
 
-    const std::uint8_t effective_percent = static_cast<std::uint8_t>(
-        (static_cast<std::uint32_t>(percent) * coverage + 127U) / 255U);
+    const std::uint8_t effective_percent = coverage_percent(percent, coverage);
     if (effective_percent == 0U) return false;
 
     target.pixels[index] = darken_opaque(existing, effective_percent);
+    target.pixels[index].alpha = existing.alpha;
+    if (coverage != 255U) ++stats.partial_coverage_writes;
+    ++stats.pixel_writes;
+    return true;
+}
+
+[[nodiscard]] bool tint_existing_pixel_coverage(
+    RasterTarget target,
+    std::uint32_t x,
+    std::uint32_t y,
+    Rgba8 tint,
+    std::uint8_t percent,
+    std::uint8_t coverage,
+    RasterStats& stats) noexcept {
+    if (coverage == 0U) return false;
+    const std::size_t index = pixel_index(target, x, y);
+    const Rgba8 existing = target.pixels[index];
+    if (existing.alpha == 0U) return false;
+
+    const std::uint8_t effective_percent = coverage_percent(percent, coverage);
+    if (effective_percent == 0U) return false;
+
+    target.pixels[index] = blend_opaque(existing, tint, effective_percent);
     target.pixels[index].alpha = existing.alpha;
     if (coverage != 255U) ++stats.partial_coverage_writes;
     ++stats.pixel_writes;
@@ -257,17 +286,16 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
             raster_detail::pixel_contour(command, target.scale);
         const Rgba8 fill = resolved_fill(command, theme);
 
-        // Opaque depth fallback: before blur kernels or alpha shadows exist,
-        // raised material darkens already-painted supporting pixels at a
-        // deterministic positive offset. Material, depth and fringe stages all
-        // use the same renderer-private contour evaluator so authored geometry
-        // cannot drift between passes.
+        // Raised/floating/hero surfaces cast the bounded offset silhouette.
+        // Inset material is handled inside its own contour below rather than
+        // incorrectly casting an external positive-offset shadow.
         const std::int64_t shadow_offset = raster_detail::scale_radius(
             command.visual.depth.offset_q6,
             target.scale);
         if (fill.alpha != 0U &&
             command.visual.token.material != OpticalMaterialRole::none &&
             command.visual.token.depth != DepthRole::flush &&
+            command.visual.token.depth != DepthRole::inset &&
             command.visual.depth.opacity_percent != 0U &&
             shadow_offset > 0) {
             const raster_detail::PixelContour shadow_contour =
@@ -325,33 +353,66 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
         }
         if (filled) ++stats.surfaces_filled;
 
-        // A bounded leading-edge highlight gives non-flush material an optical
-        // light direction even when live translucency/specular shaders are not
-        // available. Focus/outline is painted after this and therefore always
-        // remains the final, unambiguous state cue.
+        // Directional edge lighting strengthens depth without an offscreen
+        // buffer or shader. Raised surfaces receive a leading highlight and a
+        // restrained trailing occlusion. Inset surfaces reverse that lighting
+        // orientation so they read as recessed instead of casting a fake outer
+        // shadow. Fixed-grid coverage attenuates both treatments at authored
+        // curved edges, and focus/outline still paints last.
         if (fill.alpha != 0U &&
             command.visual.token.material != OpticalMaterialRole::none &&
-            command.visual.token.depth != DepthRole::flush &&
-            command.visual.material.specular_percent != 0U) {
+            command.visual.token.depth != DepthRole::flush) {
             const Rgba8 highlight = theme.colors[color_index(ColorRole::highlight)];
+            const std::uint8_t shade_percent = command.visual.depth.opacity_percent == 0U
+                ? 0U
+                : static_cast<std::uint8_t>(
+                    (static_cast<std::uint16_t>(command.visual.depth.opacity_percent) + 2U) / 3U);
             bool lit = false;
+            bool shaded = false;
             for (std::int64_t y = clipped_top; y < clipped_bottom; ++y) {
                 for (std::int64_t x = clipped_left; x < clipped_right; ++x) {
-                    if (!raster_detail::leading_boundary_center(contour, x, y)) continue;
+                    const bool leading = raster_detail::leading_boundary_center(contour, x, y);
+                    const bool trailing = raster_detail::trailing_boundary_center(contour, x, y);
+                    if (!leading && !trailing) continue;
+
+                    const std::uint8_t coverage = raster_detail::coverage_2x2(contour, x, y);
                     const std::uint32_t ux = static_cast<std::uint32_t>(x);
                     const std::uint32_t uy = static_cast<std::uint32_t>(y);
-                    const std::size_t index = pixel_index(target, ux, uy);
-                    const std::uint8_t alpha = target.pixels[index].alpha;
-                    target.pixels[index] = blend_opaque(
-                        target.pixels[index],
-                        highlight,
-                        command.visual.material.specular_percent);
-                    target.pixels[index].alpha = alpha;
-                    ++stats.pixel_writes;
-                    lit = true;
+                    if (command.visual.token.depth == DepthRole::inset) {
+                        if (leading && shade_percent != 0U) {
+                            shaded = darken_existing_pixel_coverage(
+                                target, ux, uy, shade_percent, coverage, stats) || shaded;
+                        }
+                        if (trailing && command.visual.material.specular_percent != 0U) {
+                            lit = tint_existing_pixel_coverage(
+                                target,
+                                ux,
+                                uy,
+                                highlight,
+                                command.visual.material.specular_percent,
+                                coverage,
+                                stats) || lit;
+                        }
+                    } else {
+                        if (leading && command.visual.material.specular_percent != 0U) {
+                            lit = tint_existing_pixel_coverage(
+                                target,
+                                ux,
+                                uy,
+                                highlight,
+                                command.visual.material.specular_percent,
+                                coverage,
+                                stats) || lit;
+                        }
+                        if (trailing && shade_percent != 0U) {
+                            shaded = darken_existing_pixel_coverage(
+                                target, ux, uy, shade_percent, coverage, stats) || shaded;
+                        }
+                    }
                 }
             }
             if (lit) ++stats.lit_edges_drawn;
+            if (shaded) ++stats.shaded_edges_drawn;
         }
 
         const ColorRole outline_role =
