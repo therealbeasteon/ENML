@@ -1,26 +1,14 @@
 #include <os/ui/raster.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cstddef>
 #include <cstdint>
 
+#include <os/ui/detail/contour_geometry.hpp>
 #include <os/ui/error.hpp>
 
 namespace os::ui {
 namespace {
-
-struct PixelRect final {
-    std::int64_t left {0};
-    std::int64_t top {0};
-    std::int64_t right {0};
-    std::int64_t bottom {0};
-    std::int64_t top_left_radius {0};
-    std::int64_t top_right_radius {0};
-    std::int64_t bottom_right_radius {0};
-    std::int64_t bottom_left_radius {0};
-    std::uint8_t smoothing_percent {0U};
-};
 
 [[nodiscard]] constexpr bool color_role_valid(ColorRole role) noexcept {
     switch (role) {
@@ -90,247 +78,6 @@ struct PixelRect final {
     const std::size_t required =
         static_cast<std::size_t>(target.stride) * static_cast<std::size_t>(target.height);
     return target.pixel_count >= required;
-}
-
-[[nodiscard]] constexpr std::int64_t floor_div(
-    std::int64_t value,
-    std::int64_t divisor) noexcept {
-    if (value >= 0) return value / divisor;
-    return -(((-value) + divisor - 1) / divisor);
-}
-
-[[nodiscard]] constexpr std::int64_t ceil_div(
-    std::int64_t value,
-    std::int64_t divisor) noexcept {
-    if (value >= 0) return (value + divisor - 1) / divisor;
-    return -((-value) / divisor);
-}
-
-[[nodiscard]] std::int64_t scale_floor(
-    std::int64_t q6,
-    const RasterScale& scale) noexcept {
-    return floor_div(
-        q6 * static_cast<std::int64_t>(scale.numerator),
-        static_cast<std::int64_t>(scale.denominator));
-}
-
-[[nodiscard]] std::int64_t scale_ceil(
-    std::int64_t q6,
-    const RasterScale& scale) noexcept {
-    return ceil_div(
-        q6 * static_cast<std::int64_t>(scale.numerator),
-        static_cast<std::int64_t>(scale.denominator));
-}
-
-[[nodiscard]] std::int64_t scale_radius(
-    std::uint32_t q6,
-    const RasterScale& scale) noexcept {
-    if (q6 == 0U) return 0;
-    const std::uint64_t numerator =
-        static_cast<std::uint64_t>(q6) * scale.numerator;
-    return static_cast<std::int64_t>(
-        (numerator + scale.denominator - 1U) / scale.denominator);
-}
-
-[[nodiscard]] PixelRect pixel_rect(
-    const RenderCommand& command,
-    const RasterScale& scale) noexcept {
-    const std::int64_t left_q6 = command.bounds.x_q6;
-    const std::int64_t top_q6 = command.bounds.y_q6;
-    const std::int64_t right_q6 =
-        left_q6 + static_cast<std::int64_t>(command.bounds.width_q6);
-    const std::int64_t bottom_q6 =
-        top_q6 + static_cast<std::int64_t>(command.bounds.height_q6);
-
-    PixelRect rect {
-        .left = scale_floor(left_q6, scale),
-        .top = scale_floor(top_q6, scale),
-        .right = scale_ceil(right_q6, scale),
-        .bottom = scale_ceil(bottom_q6, scale),
-        .top_left_radius = scale_radius(command.contour.radii.top_left_q6, scale),
-        .top_right_radius = scale_radius(command.contour.radii.top_right_q6, scale),
-        .bottom_right_radius = scale_radius(command.contour.radii.bottom_right_q6, scale),
-        .bottom_left_radius = scale_radius(command.contour.radii.bottom_left_q6, scale),
-        .smoothing_percent = command.contour.smoothing_percent,
-    };
-
-    const std::int64_t half_width = std::max<std::int64_t>(0, (rect.right - rect.left) / 2);
-    const std::int64_t half_height = std::max<std::int64_t>(0, (rect.bottom - rect.top) / 2);
-    const std::int64_t maximum_radius = std::min(half_width, half_height);
-    rect.top_left_radius = std::min(rect.top_left_radius, maximum_radius);
-    rect.top_right_radius = std::min(rect.top_right_radius, maximum_radius);
-    rect.bottom_right_radius = std::min(rect.bottom_right_radius, maximum_radius);
-    rect.bottom_left_radius = std::min(rect.bottom_left_radius, maximum_radius);
-    return rect;
-}
-
-[[nodiscard]] PixelRect offset_rect(PixelRect rect, std::int64_t offset) noexcept {
-    rect.left += offset;
-    rect.top += offset;
-    rect.right += offset;
-    rect.bottom += offset;
-    return rect;
-}
-
-// Smoothing interpolates between circular corner coverage and a squircle-like
-// fourth-power contour. This is still a bounded raster approximation rather
-// than the final ENML vector/path implementation, but it makes smoothing a
-// real geometric input instead of silently discarding it.
-[[nodiscard]] bool corner_inside(
-    std::int64_t pixel_x,
-    std::int64_t pixel_y,
-    std::int64_t center_x,
-    std::int64_t center_y,
-    std::int64_t radius,
-    std::uint8_t smoothing_percent) noexcept {
-    if (radius <= 0) return true;
-
-    const std::int64_t point_x2 = pixel_x * 2 + 1;
-    const std::int64_t point_y2 = pixel_y * 2 + 1;
-    const std::int64_t center_x2 = center_x * 2;
-    const std::int64_t center_y2 = center_y * 2;
-    const std::int64_t dx = point_x2 - center_x2;
-    const std::int64_t dy = point_y2 - center_y2;
-    const std::int64_t radius2 = radius * 2;
-
-    const std::uint64_t dx_sq = static_cast<std::uint64_t>(dx * dx);
-    const std::uint64_t dy_sq = static_cast<std::uint64_t>(dy * dy);
-    const std::uint64_t radius_sq = static_cast<std::uint64_t>(radius2 * radius2);
-    const std::uint64_t circle_metric = (dx_sq + dy_sq) * radius_sq;
-    const std::uint64_t squircle_metric = dx_sq * dx_sq + dy_sq * dy_sq;
-    const std::uint64_t limit = radius_sq * radius_sq;
-    const std::uint64_t smoothing = smoothing_percent;
-    const std::uint64_t metric =
-        circle_metric * (100U - smoothing) + squircle_metric * smoothing;
-    return metric <= limit * 100U;
-}
-
-[[nodiscard]] bool contour_contains(
-    const PixelRect& rect,
-    std::int64_t x,
-    std::int64_t y) noexcept {
-    if (x < rect.left || x >= rect.right || y < rect.top || y >= rect.bottom) return false;
-
-    if (rect.top_left_radius > 0 &&
-        x < rect.left + rect.top_left_radius &&
-        y < rect.top + rect.top_left_radius) {
-        return corner_inside(
-            x, y,
-            rect.left + rect.top_left_radius,
-            rect.top + rect.top_left_radius,
-            rect.top_left_radius,
-            rect.smoothing_percent);
-    }
-    if (rect.top_right_radius > 0 &&
-        x >= rect.right - rect.top_right_radius &&
-        y < rect.top + rect.top_right_radius) {
-        return corner_inside(
-            x, y,
-            rect.right - rect.top_right_radius,
-            rect.top + rect.top_right_radius,
-            rect.top_right_radius,
-            rect.smoothing_percent);
-    }
-    if (rect.bottom_right_radius > 0 &&
-        x >= rect.right - rect.bottom_right_radius &&
-        y >= rect.bottom - rect.bottom_right_radius) {
-        return corner_inside(
-            x, y,
-            rect.right - rect.bottom_right_radius,
-            rect.bottom - rect.bottom_right_radius,
-            rect.bottom_right_radius,
-            rect.smoothing_percent);
-    }
-    if (rect.bottom_left_radius > 0 &&
-        x < rect.left + rect.bottom_left_radius &&
-        y >= rect.bottom - rect.bottom_left_radius) {
-        return corner_inside(
-            x, y,
-            rect.left + rect.bottom_left_radius,
-            rect.bottom - rect.bottom_left_radius,
-            rect.bottom_left_radius,
-            rect.smoothing_percent);
-    }
-    return true;
-}
-
-[[nodiscard]] bool corner_inside_subpixel(
-    std::int64_t x4,
-    std::int64_t y4,
-    std::int64_t center_x4,
-    std::int64_t center_y4,
-    std::int64_t radius4,
-    std::uint8_t smoothing_percent) noexcept {
-    if (radius4 <= 0) return true;
-
-    const std::int64_t dx = x4 - center_x4;
-    const std::int64_t dy = y4 - center_y4;
-    const std::uint64_t dx_sq = static_cast<std::uint64_t>(dx * dx);
-    const std::uint64_t dy_sq = static_cast<std::uint64_t>(dy * dy);
-    const std::uint64_t radius_sq = static_cast<std::uint64_t>(radius4 * radius4);
-    const std::uint64_t circle_metric = (dx_sq + dy_sq) * radius_sq;
-    const std::uint64_t squircle_metric = dx_sq * dx_sq + dy_sq * dy_sq;
-    const std::uint64_t limit = radius_sq * radius_sq;
-    const std::uint64_t smoothing = smoothing_percent;
-    const std::uint64_t metric =
-        circle_metric * (100U - smoothing) + squircle_metric * smoothing;
-    return metric <= limit * 100U;
-}
-
-[[nodiscard]] bool contour_contains_subpixel(
-    const PixelRect& rect,
-    std::int64_t x4,
-    std::int64_t y4) noexcept {
-    const std::int64_t left4 = rect.left * 4;
-    const std::int64_t top4 = rect.top * 4;
-    const std::int64_t right4 = rect.right * 4;
-    const std::int64_t bottom4 = rect.bottom * 4;
-    if (x4 < left4 || x4 >= right4 || y4 < top4 || y4 >= bottom4) return false;
-
-    const std::int64_t tl4 = rect.top_left_radius * 4;
-    if (tl4 > 0 && x4 < left4 + tl4 && y4 < top4 + tl4) {
-        return corner_inside_subpixel(
-            x4, y4, left4 + tl4, top4 + tl4, tl4, rect.smoothing_percent);
-    }
-
-    const std::int64_t tr4 = rect.top_right_radius * 4;
-    if (tr4 > 0 && x4 >= right4 - tr4 && y4 < top4 + tr4) {
-        return corner_inside_subpixel(
-            x4, y4, right4 - tr4, top4 + tr4, tr4, rect.smoothing_percent);
-    }
-
-    const std::int64_t br4 = rect.bottom_right_radius * 4;
-    if (br4 > 0 && x4 >= right4 - br4 && y4 >= bottom4 - br4) {
-        return corner_inside_subpixel(
-            x4, y4, right4 - br4, bottom4 - br4, br4, rect.smoothing_percent);
-    }
-
-    const std::int64_t bl4 = rect.bottom_left_radius * 4;
-    if (bl4 > 0 && x4 < left4 + bl4 && y4 >= bottom4 - bl4) {
-        return corner_inside_subpixel(
-            x4, y4, left4 + bl4, bottom4 - bl4, bl4, rect.smoothing_percent);
-    }
-    return true;
-}
-
-[[nodiscard]] std::uint8_t contour_coverage_2x2(
-    const PixelRect& rect,
-    std::int64_t pixel_x,
-    std::int64_t pixel_y) noexcept {
-    static constexpr std::array<std::int64_t, 2U> offsets{{1, 3}};
-    std::uint8_t samples_inside = 0U;
-    for (const auto offset_y : offsets) {
-        for (const auto offset_x : offsets) {
-            if (contour_contains_subpixel(
-                    rect,
-                    pixel_x * 4 + offset_x,
-                    pixel_y * 4 + offset_y)) {
-                ++samples_inside;
-            }
-        }
-    }
-    return static_cast<std::uint8_t>(
-        (static_cast<std::uint16_t>(samples_inside) * 255U + 2U) / 4U);
 }
 
 [[nodiscard]] constexpr std::uint8_t blend_channel(
@@ -430,25 +177,6 @@ struct PixelRect final {
     return base;
 }
 
-[[nodiscard]] bool boundary_pixel(
-    const PixelRect& rect,
-    std::int64_t x,
-    std::int64_t y) noexcept {
-    if (!contour_contains(rect, x, y)) return false;
-    return !contour_contains(rect, x - 1, y) ||
-        !contour_contains(rect, x + 1, y) ||
-        !contour_contains(rect, x, y - 1) ||
-        !contour_contains(rect, x, y + 1);
-}
-
-[[nodiscard]] bool leading_light_pixel(
-    const PixelRect& rect,
-    std::int64_t x,
-    std::int64_t y) noexcept {
-    if (!boundary_pixel(rect, x, y)) return false;
-    return !contour_contains(rect, x - 1, y) || !contour_contains(rect, x, y - 1);
-}
-
 [[nodiscard]] std::size_t pixel_index(
     const RasterTarget& target,
     std::uint32_t x,
@@ -525,16 +253,16 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
         ++stats.commands_seen;
         if (!command_valid(command)) return ui_error(errors::invalid_raster_command);
 
-        const PixelRect rect = pixel_rect(command, target.scale);
+        const raster_detail::PixelContour contour =
+            raster_detail::pixel_contour(command, target.scale);
         const Rgba8 fill = resolved_fill(command, theme);
 
         // Opaque depth fallback: before blur kernels or alpha shadows exist,
         // raised material darkens already-painted supporting pixels at a
-        // deterministic positive offset. The same fixed-grid contour evaluator
-        // used by authored material edges also attenuates the shadow silhouette,
-        // including one-pixel outside partial coverage, without an offscreen
-        // shadow buffer or general path engine.
-        const std::int64_t shadow_offset = scale_radius(
+        // deterministic positive offset. Material, depth and fringe stages all
+        // use the same renderer-private contour evaluator so authored geometry
+        // cannot drift between passes.
+        const std::int64_t shadow_offset = raster_detail::scale_radius(
             command.visual.depth.offset_q6,
             target.scale);
         if (fill.alpha != 0U &&
@@ -542,17 +270,21 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
             command.visual.token.depth != DepthRole::flush &&
             command.visual.depth.opacity_percent != 0U &&
             shadow_offset > 0) {
-            const PixelRect shadow_rect = offset_rect(rect, shadow_offset);
-            const std::int64_t shadow_left = std::max<std::int64_t>(0, shadow_rect.left - 1);
-            const std::int64_t shadow_top = std::max<std::int64_t>(0, shadow_rect.top - 1);
+            const raster_detail::PixelContour shadow_contour =
+                raster_detail::offset_contour(contour, shadow_offset);
+            const std::int64_t shadow_left =
+                std::max<std::int64_t>(0, shadow_contour.left - 1);
+            const std::int64_t shadow_top =
+                std::max<std::int64_t>(0, shadow_contour.top - 1);
             const std::int64_t shadow_right =
-                std::min<std::int64_t>(target.width, shadow_rect.right + 1);
+                std::min<std::int64_t>(target.width, shadow_contour.right + 1);
             const std::int64_t shadow_bottom =
-                std::min<std::int64_t>(target.height, shadow_rect.bottom + 1);
+                std::min<std::int64_t>(target.height, shadow_contour.bottom + 1);
             bool shadow_written = false;
             for (std::int64_t y = shadow_top; y < shadow_bottom; ++y) {
                 for (std::int64_t x = shadow_left; x < shadow_right; ++x) {
-                    const std::uint8_t coverage = contour_coverage_2x2(shadow_rect, x, y);
+                    const std::uint8_t coverage =
+                        raster_detail::coverage_2x2(shadow_contour, x, y);
                     if (coverage == 0U) continue;
                     shadow_written = darken_existing_pixel_coverage(
                         target,
@@ -566,20 +298,20 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
             if (shadow_written) ++stats.shadows_drawn;
         }
 
-        const std::int64_t clipped_left = std::max<std::int64_t>(0, rect.left);
-        const std::int64_t clipped_top = std::max<std::int64_t>(0, rect.top);
+        const std::int64_t clipped_left = std::max<std::int64_t>(0, contour.left);
+        const std::int64_t clipped_top = std::max<std::int64_t>(0, contour.top);
         const std::int64_t clipped_right =
-            std::min<std::int64_t>(target.width, rect.right);
+            std::min<std::int64_t>(target.width, contour.right);
         const std::int64_t clipped_bottom =
-            std::min<std::int64_t>(target.height, rect.bottom);
+            std::min<std::int64_t>(target.height, contour.bottom);
         if (clipped_left >= clipped_right || clipped_top >= clipped_bottom) continue;
 
         bool filled = false;
         if (fill.alpha != 0U) {
             for (std::int64_t y = clipped_top; y < clipped_bottom; ++y) {
                 for (std::int64_t x = clipped_left; x < clipped_right; ++x) {
-                    if (!contour_contains(rect, x, y)) continue;
-                    const std::uint8_t coverage = contour_coverage_2x2(rect, x, y);
+                    if (!raster_detail::contains_center(contour, x, y)) continue;
+                    const std::uint8_t coverage = raster_detail::coverage_2x2(contour, x, y);
                     write_pixel_coverage(
                         target,
                         static_cast<std::uint32_t>(x),
@@ -605,7 +337,7 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
             bool lit = false;
             for (std::int64_t y = clipped_top; y < clipped_bottom; ++y) {
                 for (std::int64_t x = clipped_left; x < clipped_right; ++x) {
-                    if (!leading_light_pixel(rect, x, y)) continue;
+                    if (!raster_detail::leading_boundary_center(contour, x, y)) continue;
                     const std::uint32_t ux = static_cast<std::uint32_t>(x);
                     const std::uint32_t uy = static_cast<std::uint32_t>(y);
                     const std::size_t index = pixel_index(target, ux, uy);
@@ -628,8 +360,8 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
         const Rgba8 outline = theme.colors[color_index(outline_role)];
         for (std::int64_t y = clipped_top; y < clipped_bottom; ++y) {
             for (std::int64_t x = clipped_left; x < clipped_right; ++x) {
-                if (!boundary_pixel(rect, x, y)) continue;
-                const std::uint8_t coverage = contour_coverage_2x2(rect, x, y);
+                if (!raster_detail::boundary_center(contour, x, y)) continue;
+                const std::uint8_t coverage = raster_detail::coverage_2x2(contour, x, y);
                 write_pixel_coverage(
                     target,
                     static_cast<std::uint32_t>(x),
