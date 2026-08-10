@@ -484,16 +484,25 @@ void write_pixel_coverage(
     ++stats.pixel_writes;
 }
 
-[[nodiscard]] bool darken_existing_pixel(
+[[nodiscard]] bool darken_existing_pixel_coverage(
     RasterTarget target,
     std::uint32_t x,
     std::uint32_t y,
     std::uint8_t percent,
+    std::uint8_t coverage,
     RasterStats& stats) noexcept {
+    if (coverage == 0U) return false;
     const std::size_t index = pixel_index(target, x, y);
     const Rgba8 existing = target.pixels[index];
     if (existing.alpha == 0U) return false;
-    target.pixels[index] = darken_opaque(existing, percent);
+
+    const std::uint8_t effective_percent = static_cast<std::uint8_t>(
+        (static_cast<std::uint32_t>(percent) * coverage + 127U) / 255U);
+    if (effective_percent == 0U) return false;
+
+    target.pixels[index] = darken_opaque(existing, effective_percent);
+    target.pixels[index].alpha = existing.alpha;
+    if (coverage != 255U) ++stats.partial_coverage_writes;
     ++stats.pixel_writes;
     return true;
 }
@@ -521,8 +530,10 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
 
         // Opaque depth fallback: before blur kernels or alpha shadows exist,
         // raised material darkens already-painted supporting pixels at a
-        // deterministic positive offset. Transparent/unpainted target pixels
-        // are left alone so this stage never invents an opaque backdrop.
+        // deterministic positive offset. The same fixed-grid contour evaluator
+        // used by authored material edges also attenuates the shadow silhouette,
+        // including one-pixel outside partial coverage, without an offscreen
+        // shadow buffer or general path engine.
         const std::int64_t shadow_offset = scale_radius(
             command.visual.depth.offset_q6,
             target.scale);
@@ -532,21 +543,23 @@ os::core::Result<RasterStats> rasterize_opaque_materials(
             command.visual.depth.opacity_percent != 0U &&
             shadow_offset > 0) {
             const PixelRect shadow_rect = offset_rect(rect, shadow_offset);
-            const std::int64_t shadow_left = std::max<std::int64_t>(0, shadow_rect.left);
-            const std::int64_t shadow_top = std::max<std::int64_t>(0, shadow_rect.top);
+            const std::int64_t shadow_left = std::max<std::int64_t>(0, shadow_rect.left - 1);
+            const std::int64_t shadow_top = std::max<std::int64_t>(0, shadow_rect.top - 1);
             const std::int64_t shadow_right =
-                std::min<std::int64_t>(target.width, shadow_rect.right);
+                std::min<std::int64_t>(target.width, shadow_rect.right + 1);
             const std::int64_t shadow_bottom =
-                std::min<std::int64_t>(target.height, shadow_rect.bottom);
+                std::min<std::int64_t>(target.height, shadow_rect.bottom + 1);
             bool shadow_written = false;
             for (std::int64_t y = shadow_top; y < shadow_bottom; ++y) {
                 for (std::int64_t x = shadow_left; x < shadow_right; ++x) {
-                    if (!contour_contains(shadow_rect, x, y)) continue;
-                    shadow_written = darken_existing_pixel(
+                    const std::uint8_t coverage = contour_coverage_2x2(shadow_rect, x, y);
+                    if (coverage == 0U) continue;
+                    shadow_written = darken_existing_pixel_coverage(
                         target,
                         static_cast<std::uint32_t>(x),
                         static_cast<std::uint32_t>(y),
                         command.visual.depth.opacity_percent,
+                        coverage,
                         stats) || shadow_written;
                 }
             }
