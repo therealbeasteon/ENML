@@ -3,6 +3,7 @@
 #include <cerrno>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <span>
 #include <string_view>
 #include <utility>
@@ -42,6 +43,20 @@ namespace {
 [[nodiscard]] bool is_service_not_running(const os::core::Error& error) noexcept {
     return error.domain == os::core::ErrorDomain::service &&
         error.code == os::core::errors::service::not_running;
+}
+
+void report_error(const char* stage, int exit_code, const os::core::Error& error) noexcept {
+    std::fprintf(
+        stderr,
+        "m2.10 child failure stage=%s exit=%d domain=%u code=%u\n",
+        stage,
+        exit_code,
+        static_cast<unsigned>(error.domain),
+        static_cast<unsigned>(error.code));
+}
+
+void report_failure(const char* stage, int exit_code) noexcept {
+    std::fprintf(stderr, "m2.10 child failure stage=%s exit=%d\n", stage, exit_code);
 }
 
 void short_delay() noexcept {
@@ -229,9 +244,6 @@ int main() {
 
     os::app::PlatformServiceSession runtime{bootstrap_channel};
 
-    // Acquire a separate runtime→application event capability. The request
-    // contains no target ProcessId/PrincipalId/surface: App Manager binds the
-    // fresh socketpair to this already-authenticated runtime session.
     auto input_endpoint_result = runtime.acquire_input_events(scratch);
     if (!input_endpoint_result) return 60;
     auto input_endpoint = std::move(input_endpoint_result).value();
@@ -242,12 +254,7 @@ int main() {
     if (!input_stream.valid()) return 61;
 
     const std::array<std::byte, 1U> input_ready_marker{std::byte{0xE1}};
-    if (!storage_root.atomic_replace(
-            input_ready_path.value(),
-            input_ready_marker,
-            scratch)) {
-        return 62;
-    }
+    if (!storage_root.atomic_replace(input_ready_path.value(), input_ready_marker, scratch)) return 62;
 
     auto delivered_input = input_stream.receive(scratch);
     if (!delivered_input) return 63;
@@ -265,17 +272,8 @@ int main() {
     }
 
     const std::array<std::byte, 1U> input_delivered_marker{std::byte{0xE2}};
-    if (!storage_root.atomic_replace(
-            input_delivered_path.value(),
-            input_delivered_marker,
-            scratch)) {
-        return 65;
-    }
+    if (!storage_root.atomic_replace(input_delivered_path.value(), input_delivered_marker, scratch)) return 65;
 
-    // Collection publication uses the same authenticated runtime lifecycle but
-    // mints a distinct bounded capability for each source. The app receives
-    // only its producer endpoint and the fresh session id; it cannot name the
-    // trusted consumer or another process.
     auto collection_endpoint_result = runtime.acquire_collection(scratch);
     if (!collection_endpoint_result) return 66;
     auto collection_endpoint = std::move(collection_endpoint_result).value();
@@ -300,19 +298,9 @@ int main() {
     if (!collection_server.valid()) return 68;
 
     const std::array<std::byte, 1U> collection_ready_marker{std::byte{0xE3}};
-    if (!storage_root.atomic_replace(
-            collection_ready_path.value(),
-            collection_ready_marker,
-            scratch)) {
-        return 69;
-    }
-    // Pull-only flow control: the producer blocks for exactly the one snapshot
-    // request issued by the trusted consumer; no notification queue or worker
-    // exists behind this capability.
+    if (!storage_root.atomic_replace(collection_ready_path.value(), collection_ready_marker, scratch)) return 69;
     if (!collection_server.dispatch_once(collection_endpoint.channel, scratch)) return 70;
 
-    // The bootstrap-v2 service set is a strict allow-list. The runtime session
-    // cannot be used as a general service bus or to expand application policy.
     constexpr os::core::ServiceId unauthorized_service{0x0000F0FFU};
     auto denied = runtime.acquire(unauthorized_service, 0U, scratch);
     if (denied || denied.error().domain != os::core::ErrorDomain::service ||
@@ -320,9 +308,6 @@ int main() {
         return 22;
     }
 
-    // Observe the current generations through the trusted runtime session. The
-    // transferred duplicate endpoints are intentionally discarded; the
-    // original bootstrap capabilities below are used to prove staleness.
     auto key_observed = runtime.acquire(os::keys::key_service_id, 0U, scratch);
     if (!key_observed) return 23;
     const std::uint64_t old_key_generation = key_observed.value().generation;
@@ -336,8 +321,6 @@ int main() {
     const std::array<std::byte, 1U> ready_marker{std::byte{0xA1}};
     if (!storage_root.atomic_replace(session_ready_path.value(), ready_marker, scratch)) return 25;
 
-    // Wait for system.keys to die. The original KeyObject capability must fail
-    // permanently; it is never rebound behind the application's back.
     bool key_died = false;
     for (std::size_t attempt = 0U; attempt < 1000U; ++attempt) {
         auto opened = key.decrypt(
@@ -346,72 +329,101 @@ int main() {
             decrypted,
             scratch);
         if (!opened) {
-            if (!is_peer_died(opened.error())) return 26;
+            if (!is_peer_died(opened.error())) {
+                report_error("old-key-capability", 26, opened.error());
+                return 26;
+            }
             key_died = true;
             break;
         }
         if (!equal_plaintext(as_bytes(plaintext), decrypted, opened.value())) return 27;
         short_delay();
     }
-    if (!key_died) return 28;
+    if (!key_died) {
+        report_failure("old-key-capability-timeout", 28);
+        return 28;
+    }
 
     auto fresh_key_endpoint = acquire_after_restart(
         runtime,
         os::keys::key_service_id,
         old_key_generation,
         scratch);
-    if (!fresh_key_endpoint) return 29;
+    if (!fresh_key_endpoint) {
+        report_error("key-reacquire", 29, fresh_key_endpoint.error());
+        return 29;
+    }
     auto fresh_key_channel = std::move(fresh_key_endpoint).value().channel;
     os::ipc::ClientConnection fresh_key_connection{fresh_key_channel};
     os::keys::KeyClient fresh_keys{fresh_key_connection};
     auto reopened = fresh_keys.open(key_id, scratch);
-    if (!reopened) return 30;
+    if (!reopened) {
+        report_error("key-reopen", 30, reopened.error());
+        return 30;
+    }
     auto fresh_key = std::move(reopened).value();
     auto recovered = fresh_key.decrypt(
         {envelope.data(), envelope_size},
         as_bytes(aad),
         decrypted,
         scratch);
-    if (!recovered ||
-        !equal_plaintext(as_bytes(plaintext), decrypted, recovered.value())) {
+    if (!recovered || !equal_plaintext(as_bytes(plaintext), decrypted, recovered.value())) {
+        if (!recovered) report_error("key-recover", 31, recovered.error());
+        else report_failure("key-recover-plaintext", 31);
         return 31;
     }
 
     const std::array<std::byte, 1U> key_marker{std::byte{0xB2}};
-    if (!storage_root.atomic_replace(key_reacquired_path.value(), key_marker, scratch)) return 32;
+    auto key_marker_written = storage_root.atomic_replace(key_reacquired_path.value(), key_marker, scratch);
+    if (!key_marker_written) {
+        report_error("key-marker", 32, key_marker_written.error());
+        return 32;
+    }
 
-    // Now wait for system.storage to die. Repeated bounded writes are merely a
-    // liveness probe on the old root object; only peer_died advances the test.
     const std::array<std::byte, 1U> heartbeat{std::byte{0xC3}};
     bool storage_died = false;
     for (std::size_t attempt = 0U; attempt < 1000U; ++attempt) {
         auto written = storage_root.atomic_replace(heartbeat_path.value(), heartbeat, scratch);
         if (!written) {
-            if (!is_peer_died(written.error())) return 33;
+            if (!is_peer_died(written.error())) {
+                report_error("old-storage-capability", 33, written.error());
+                return 33;
+            }
             storage_died = true;
             break;
         }
         short_delay();
     }
-    if (!storage_died) return 34;
+    if (!storage_died) {
+        report_failure("old-storage-capability-timeout", 34);
+        return 34;
+    }
 
     auto fresh_storage_endpoint = acquire_after_restart(
         runtime,
         os::storage::storage_service_id,
         old_storage_generation,
         scratch);
-    if (!fresh_storage_endpoint) return 35;
+    if (!fresh_storage_endpoint) {
+        report_error("storage-reacquire", 35, fresh_storage_endpoint.error());
+        return 35;
+    }
     auto fresh_storage_channel = std::move(fresh_storage_endpoint).value().channel;
     os::ipc::ClientConnection fresh_storage_connection{fresh_storage_channel};
     os::storage::StorageClient fresh_storage{fresh_storage_connection};
     auto fresh_root_result = fresh_storage.open_private_root(scratch);
-    if (!fresh_root_result) return 36;
+    if (!fresh_root_result) {
+        report_error("storage-open-root", 36, fresh_root_result.error());
+        return 36;
+    }
     auto fresh_root = std::move(fresh_root_result).value();
     const std::array<std::byte, 1U> storage_marker{std::byte{0xD4}};
-    if (!fresh_root.atomic_replace(
-            storage_reacquired_path.value(),
-            storage_marker,
-            scratch)) {
+    auto storage_marker_written = fresh_root.atomic_replace(
+        storage_reacquired_path.value(),
+        storage_marker,
+        scratch);
+    if (!storage_marker_written) {
+        report_error("storage-marker", 37, storage_marker_written.error());
         return 37;
     }
 
