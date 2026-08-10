@@ -8,6 +8,7 @@
 #include <sys/types.h>
 
 #include <os/app/bootstrap.hpp>
+#include <os/app/input_event.hpp>
 #include <os/app/principal_store.hpp>
 #include <os/app/service_session.hpp>
 #include <os/core/identity.hpp>
@@ -45,6 +46,9 @@ inline constexpr std::uint32_t profile_not_found = 111U;
 inline constexpr std::uint32_t generation_in_use = 112U;
 inline constexpr std::uint32_t generation_active = 113U;
 inline constexpr std::uint32_t broker_misconfigured = 114U;
+inline constexpr std::uint32_t input_target_not_found = 115U;
+inline constexpr std::uint32_t input_endpoint_unavailable = 116U;
+inline constexpr std::uint32_t input_event_replay = 117U;
 } // namespace manager_errors
 
 // Trusted Package Service registration. Applications never supply executable
@@ -149,6 +153,12 @@ public:
     [[nodiscard]] os::core::Result<void>
     terminate(os::core::ApplicationInstanceId instance_id, int signal_number) noexcept;
 
+    // Trusted-runtime delivery seam. The event already names the compositor-
+    // issued exact owner. App Manager finds that live instance by exact
+    // PeerIdentity; callers cannot redirect delivery with an ApplicationInstanceId.
+    [[nodiscard]] os::core::Result<void>
+    deliver_input_event(const ApplicationInputEventV1& event) noexcept;
+
 private:
     struct LaunchTarget final {
         bool occupied {false};
@@ -174,6 +184,8 @@ private:
         bool occupied {false};
         ApplicationInstanceInfo info {};
         os::ipc::Channel service_session {};
+        os::ipc::Channel input_event_sender {};
+        std::uint64_t last_input_event_sequence {0U};
         std::array<os::core::ServiceId, max_application_service_endpoints_v2> services {};
         std::uint16_t service_count {0U};
     };
