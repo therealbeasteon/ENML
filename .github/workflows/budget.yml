@@ -1,0 +1,39 @@
+name: Resource Budgets
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: budget-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Budget gates read procfs for the real service child, so they are not
+  # qemu-user-safe: under emulation the resident set and context-switch counts
+  # belong to the emulator rather than to the service. Native runners only.
+  budget-x86:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build
+        run: cmake --build --preset host-debug --parallel 2
+      - name: Enforce resource budgets
+        run: ctest --preset host-debug --output-on-failure -L '^budget$'
+
+  budget-arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record machine
+        run: |
+          uname -m
+          test "$(uname -m)" = "aarch64"
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build
+        run: cmake --build --preset host-debug --parallel 2
+      - name: Enforce resource budgets on AArch64
+        run: ctest --preset host-debug --output-on-failure -L '^budget$'

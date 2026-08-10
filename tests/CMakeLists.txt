@@ -22,3 +22,5 @@ add_subdirectory(integration/arm64)
 
 add_subdirectory(unit/osidlc)
 add_subdirectory(generated/echo)
+
+add_subdirectory(budget)
