@@ -184,6 +184,66 @@ ApplicationManager::service_runtime_session_once(InstanceSlot& slot) noexcept {
         return {};
     }
 
+    if (request.value().kind == RuntimeSessionRequestKind::acquire_collection) {
+        // Collection sessions are producer/application capabilities. The
+        // authenticated application supplies no target, session number,
+        // consumer principal or descriptor. App Manager allocates a fixed slot,
+        // mints a globally monotonic session id and retains the paired consumer
+        // endpoint for a later one-shot trusted-consumer claim.
+        if (next_collection_session_id_ == 0U) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                service_error(manager_errors::collection_session_exhausted));
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+
+        CollectionEndpointSlot* free_slot = nullptr;
+        for (auto& candidate : slot.collection_endpoints) {
+            if (candidate.session_id == 0U && !candidate.consumer_endpoint.valid()) {
+                free_slot = &candidate;
+                break;
+            }
+        }
+        if (free_slot == nullptr) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                service_error(manager_errors::collection_session_capacity));
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+
+        auto pair_result = os::ipc::Channel::create_local_pair();
+        if (!pair_result) {
+            auto sent = os::ipc::send_rpc_error(
+                slot.service_session,
+                request.value().request_header,
+                pair_result.error());
+            close_on_send_failure(slot.service_session, sent);
+            return {};
+        }
+        auto pair = std::move(pair_result).value();
+        const std::uint64_t session_id = next_collection_session_id_;
+        ++next_collection_session_id_;
+
+        auto application_endpoint = pair[1].take_native_handle_for_transfer();
+        free_slot->session_id = session_id;
+        free_slot->consumer_endpoint = std::move(pair[0]);
+        auto sent = send_collection_endpoint_response(
+            slot.service_session,
+            request.value().request_header,
+            session_id,
+            application_endpoint);
+        if (!sent) {
+            free_slot->consumer_endpoint.close();
+            free_slot->session_id = 0U;
+        }
+        close_on_send_failure(slot.service_session, sent);
+        return {};
+    }
+
     // The bootstrap service set is the application-visible allow-list for
     // service reacquisition. ServiceBroker independently enforces the same
     // process/service attachment, so a forged or future ServiceId cannot expand
