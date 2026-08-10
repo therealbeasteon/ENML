@@ -29,15 +29,29 @@ report="$(grep -E \
     'resource budget:|resident_kib|ready_ms|idle_wakeups_per_sec|OVER BUDGET|skip:|Failed|\*\*\*|tests passed|tests failed|fatal|failed to start|did not reach|did not stay|could not sample|no compiled budget' \
     "$log" || true)"
 
+# One annotation carrying the whole report, not one per line.
+#
+# GitHub caps how many annotations it surfaces per check run, and a
+# line-per-annotation scheme silently drops the tail - which cost us the keys
+# service's ready_ms and idle wakeups on its first measured run. Newlines are
+# encoded as %0A so a single annotation keeps the full table.
 emit_annotations() {
     local level="$1"
     [ -n "$report" ] || return 0
+
+    local encoded=''
     while IFS= read -r line; do
         [ -n "$line" ] || continue
-        printf '::%s title=budget (%s)::%s\n' "$level" "$architecture" "$line"
+        # %25 first: escaping the escape character must happen before the
+        # sequences that introduce it.
+        line="${line//%/%25}"
+        line="${line//$'\r'/%0D}"
+        encoded="${encoded}${line}%0A"
     done <<ANNOTATIONS
 $report
 ANNOTATIONS
+
+    printf '::%s title=Resource budgets (%s)::%s\n' "$level" "$architecture" "$encoded"
 }
 
 summary="${GITHUB_STEP_SUMMARY:-/dev/null}"

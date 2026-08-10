@@ -167,10 +167,24 @@ font policy, final font assets and licensing, multitouch and gesture contracts.
       roughly 100 times a second forever. Measured 97/s before, 0/s after.
 - [ ] **M4.x** Leak detection enabled on the fuzz targets (blocked on triaging
       `osidlc` allocation behavior).
-- [ ] **M4.x** `system.keys` covered by a measured budget. Its idle fix is
-      argued from symmetry with the verified storage case, not from a
-      measurement; the service is gated behind `EMNL_BUILD_OPENSSL_TEST_PROVIDER`
-      and needs a state directory descriptor.
+- [x] **M4.8** `system.keys` covered by a measured budget. The harness stages a
+      temporary state directory and passes its descriptor through the private
+      launch channel, so the measurement exercises the real startup path. This
+      converts the keys idle fix from argued-by-symmetry to measured: 0 idle
+      wakeups per second.
+
+### Measured baseline
+
+All three supervised services, both architectures, at the merge candidate:
+
+| Service | Resident (x86-64 / AArch64) | Ready | Idle wakeups |
+| --- | --- | --- | --- |
+| `system.echo` | 3520 / 3008 KiB | 1 ms | 0 /s |
+| `system.storage` | 3552 / 3088 KiB | 1 ms | 0 /s |
+| `system.keys` | 5264 / 4744 KiB | 2 ms | 0 /s |
+
+Storage costs essentially what a bare service costs. Keys costs about 1.7 MiB
+more, which is the provider, hierarchy and durable registry.
 - [ ] **M4.x** `KRG1` registry decoder fuzzed (blocked on a design decision:
       decode/IO separation versus a filesystem-backed harness).
 
