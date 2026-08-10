@@ -51,8 +51,8 @@ int main() {
     endpoint.close();
 
     // The first shell-private capability is an authenticated App Manager
-    // lifecycle endpoint. It is injected by trusted composition only and is
-    // never obtainable through Supervisor::connect() or ServiceBroker.
+    // lifecycle/bootstrap endpoint. It is injected by trusted composition only
+    // and is never obtainable through Supervisor::connect() or ServiceBroker.
     auto lifecycle_result = os::ipc::Channel::adopt(
         os::core::NativeHandle{os::service::service_private_capability_fd});
     if (!lifecycle_result) return 12;
@@ -72,9 +72,9 @@ int main() {
     os::service::IdentityRegistry identities;
 
     // READY certifies only that the shell process has accepted its Supervisor
-    // identity and required private capability. The first lifecycle fetch is
-    // performed immediately afterward, keeping startup fail-closed without
-    // forcing Supervisor::start() to depend on an external server dispatch.
+    // identity and required private bootstrap capability. The first authority
+    // acquisitions happen immediately afterward so startup remains fail-closed
+    // without forcing Supervisor::start() to depend on external dispatch.
     auto ready = os::service::send_ready(control, bootstrap.value().request_header);
     if (!ready) return 15;
 
@@ -85,6 +85,19 @@ int main() {
         if (!initial_lifecycle) report_fatal("lifecycle", initial_lifecycle.error());
         return 16;
     }
+
+    // App Manager/boot composition transfers exactly one private compositor
+    // control channel after authenticating this live shell sender. The eventual
+    // compositor server re-authenticates the shell on every privileged request,
+    // so the descriptor is narrow composition, not a bearer-only privilege.
+    auto compositor_result = lifecycle_client.take_compositor_capability(
+        lifecycle_buffer);
+    if (!compositor_result) {
+        report_fatal("compositor-capability", compositor_result.error());
+        return 17;
+    }
+    auto compositor_control = std::move(compositor_result).value();
+    if (!compositor_control.valid()) return 18;
 
     // No periodic task scan, process scan, thumbnail refresh, animation timer
     // or polling timeout is introduced here. The shell sleeps until trusted
@@ -102,7 +115,7 @@ int main() {
         do {
             polled = ::poll(&descriptor, 1U, -1);
         } while (polled < 0 && errno == EINTR);
-        if (polled < 0) return 17;
+        if (polled < 0) return 19;
 
         if ((descriptor.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 &&
             (descriptor.revents & POLLIN) == 0) {
@@ -116,7 +129,7 @@ int main() {
             if (!handled) {
                 if (peer_died(handled.error())) return 0;
                 report_fatal("control", handled.error());
-                return 18;
+                return 20;
             }
         }
     }
