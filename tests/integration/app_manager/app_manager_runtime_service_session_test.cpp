@@ -18,6 +18,7 @@
 
 #include <os/app/manager.hpp>
 #include <os/app/principal_store.hpp>
+#include <os/collection/session.hpp>
 #include <os/core/native_handle.hpp>
 #include <os/keys/service.hpp>
 #include <os/package/analyzer.hpp>
@@ -38,6 +39,11 @@ constexpr os::core::PrincipalId storage_service_principal{
 constexpr os::core::PrincipalId key_service_principal{
     0x4B45595345525631ULL,
     0x53595354454D3031ULL,
+};
+constexpr os::core::PeerIdentity collection_consumer_peer{
+    .principal = os::collection::collection_consumer_principal,
+    .user = os::core::UserId{0U},
+    .process = os::core::ProcessId{0xC011EC7U},
 };
 
 pkg::ApplicationIdentity make_application() {
@@ -331,6 +337,60 @@ int main(int argc, char** argv) {
 
     assert(wait_for_file(manager, data_fd, "m3-input-delivered.bin"));
 
+    // Collection capability creation is bound to the same authenticated runtime
+    // session. The application did not provide target identity, consumer
+    // principal, session id, or native descriptor. The first manager-minted
+    // session is deterministic in this fresh fixture.
+    assert(wait_for_file(manager, data_fd, "m3-collection-ready.bin"));
+    constexpr std::uint64_t collection_session = 1U;
+
+    // Caller authorization precedes application/session lookup.
+    auto denied_collection = manager.take_collection_endpoint(
+        instance.identity,
+        instance.identity,
+        collection_session);
+    assert(!denied_collection);
+    assert(denied_collection.error().domain == os::core::ErrorDomain::service);
+    assert(denied_collection.error().code == os::app::manager_errors::collection_authority_denied);
+
+    auto wrong_collection = manager.take_collection_endpoint(
+        collection_consumer_peer,
+        instance.identity,
+        collection_session + 1U);
+    assert(!wrong_collection);
+    assert(wrong_collection.error().domain == os::core::ErrorDomain::service);
+    assert(wrong_collection.error().code == os::app::manager_errors::collection_endpoint_unavailable);
+
+    auto collection_endpoint = manager.take_collection_endpoint(
+        collection_consumer_peer,
+        instance.identity,
+        collection_session);
+    assert(collection_endpoint);
+    assert(collection_endpoint.value().valid());
+    assert(collection_endpoint.value().application == instance.identity);
+    assert(collection_endpoint.value().session_id == collection_session);
+
+    os::collection::CollectionSessionClient collection_client{
+        collection_endpoint.value().channel,
+        os::collection::CollectionSessionId{collection_endpoint.value().session_id},
+    };
+    std::array<std::byte, os::ipc::max_wire_packet_size> collection_scratch{};
+    auto collection_snapshot = collection_client.snapshot(collection_scratch);
+    assert(collection_snapshot);
+    assert(collection_snapshot.value().revision == os::ui::CollectionRevision{1U});
+    assert(collection_snapshot.value().item_count == 1U);
+
+    // App Manager transferred the consumer capability exactly once.
+    auto replayed_collection_claim = manager.take_collection_endpoint(
+        collection_consumer_peer,
+        instance.identity,
+        collection_session);
+    assert(!replayed_collection_claim);
+    assert(replayed_collection_claim.error().domain == os::core::ErrorDomain::service);
+    assert(
+        replayed_collection_claim.error().code ==
+        os::app::manager_errors::collection_endpoint_unavailable);
+
     // Service the child's post-READY session requests until it has observed the
     // initial Storage and Key generations. This marker is written only after an
     // unauthorized ServiceId was denied and both generation observations were
@@ -396,6 +456,7 @@ int main(int argc, char** argv) {
     unlink_if_present(cleanup_data, "m2-10-initial.bin");
     unlink_if_present(cleanup_data, "m3-input-ready.bin");
     unlink_if_present(cleanup_data, "m3-input-delivered.bin");
+    unlink_if_present(cleanup_data, "m3-collection-ready.bin");
     unlink_if_present(cleanup_data, "m2-10-session-ready.bin");
     unlink_if_present(cleanup_data, "m2-10-key-reacquired.bin");
     unlink_if_present(cleanup_data, "m2-10-storage-heartbeat.bin");
