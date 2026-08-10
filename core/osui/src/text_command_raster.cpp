@@ -206,7 +206,11 @@ os::core::Result<TextCommandRasterStats> rasterize_render_command_text(
         auto origin = text_origin(command.bounds, command.typography, metrics.value());
         if (!origin) return origin.error();
 
-        auto raster = rasterize_shaped_text_masks(
+        // The semantic/layout node owns a bounded paint rectangle. Font ink may
+        // legitimately overhang its advance box, but it must not overwrite a
+        // sibling merely because a backend glyph bearing extends outside this
+        // command. Target clipping still applies underneath this logical clip.
+        auto raster = rasterize_shaped_text_masks_clipped(
             command.visual_text,
             style,
             shaped.value(),
@@ -215,6 +219,7 @@ os::core::Result<TextCommandRasterStats> rasterize_render_command_text(
             theme,
             command.visual.token.foreground,
             origin.value(),
+            command.bounds,
             target);
         if (!raster) return raster.error();
 
