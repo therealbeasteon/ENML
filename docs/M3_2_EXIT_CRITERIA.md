@@ -12,6 +12,8 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 - accessibility snapshots are revision-bound and stale action requests fail closed;
 - accessibility privilege is bound to a trusted principal and a nonzero runtime `AccessibilitySessionId` so revision/node tuples cannot be replayed against another session;
 - cross-process accessibility transport preserves exact application/session ownership and does not require an idle polling loop or unbounded serialized tree;
+- the trusted accessibility service is a real Supervisor-managed principal, obtains its App Manager broker only as a private Supervisor-injected capability, and authenticates its own administration sender through kernel credentials plus the generation-local identity registry;
+- service-side application-session storage remains fixed-capacity and clears stale/dead peers rather than accumulating a global registry;
 - editable-text accessibility is not exposed until the text-input/IME payload contract is defined.
 
 ### Collections
@@ -20,6 +22,9 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 - stable keys preserve semantic continuity through insert/remove/reorder;
 - snapshots, change sets, recycler bindings and visible content publication are revision-consistent;
 - stale, zero/duplicate-key and malformed-content sources fail closed;
+- collection transport remains private, session-bound, pull-only and bounded; producers do not accumulate notification queues or own polling/prefetch workers;
+- collection capabilities are minted only after the exact application runtime session is authenticated from kernel credentials/trusted broker identity, and the request cannot name another process, consumer principal, session id or descriptor;
+- unclaimed collection endpoints are stored only inside the exact live application instance with a fixed per-instance capacity; one-shot consumer claims require the exact app plus runtime-minted session and do not fall through to another collection;
 - the eventual public/OSIDL shape is record/message based and does not expose in-process callback pointers.
 
 ### Input
@@ -47,6 +52,7 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 - production Unicode/font integration is selected and reviewed before claiming production text support;
 - authored swept/continuous contours retain their identity when premium effects are reduced;
 - contour edge quality is acceptable at phone-scale densities without requiring an unbounded general path engine;
+- all CPU material/depth/focus/fringe passes share one bounded physical contour interpretation so geometry does not drift between renderer stages;
 - depth/lighting remains bounded and cannot erase focus/state cues;
 - live translucency/backdrop is enabled only after opaque figure/ground and state remain clear;
 - the actual trusted-system visual mark is compositor-owned and cannot be requested or counterfeited by application surfaces.
@@ -65,6 +71,7 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 - M3 Semantic UI passes GCC, Clang, ASan/UBSan and native AArch64;
 - M3 Display/Compositor passes GCC, Clang, ASan/UBSan and native AArch64;
 - M1/M2 workflows touched by shared App Manager/runtime-session changes remain green;
+- supervised accessibility and authenticated collection-lifecycle integration tests run on the relevant native/sanitizer matrices rather than existing only as host-only unit fixtures;
 - the current head, not merely an older baseline, is green before the PR leaves draft;
 - focused tests cover stale/replay/ownership/malformed paths for each new security boundary;
 - CI concurrency cancels superseded M3 PR runs so development does not create an ever-growing validation backlog.
