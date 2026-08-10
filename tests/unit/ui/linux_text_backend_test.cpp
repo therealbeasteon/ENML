@@ -171,6 +171,34 @@ int main() {
     assert(saw_rtl);
     assert(saw_ltr);
 
+    // Font fallback is an ENML grapheme-level decision. "A + combining acute"
+    // occupies bytes [0,3) and must not acquire a run boundary at byte 1 even
+    // if future product font roles have different scalar coverage. HarfBuzz may
+    // compose or retain multiple glyphs, but every glyph in the user-perceived
+    // character must keep a cluster anchored to the grapheme rather than the
+    // combining-mark byte offset.
+    auto combining = os::ui::make_semantic_text("A\xCC\x81" "B");
+    assert(combining);
+    auto grapheme_safe = os::ui::shape_paragraph_with_fonts(
+        combining.value(),
+        style.value(),
+        faces.value(),
+        bidi_constraints,
+        backend.paragraph_shaper());
+    assert(grapheme_safe);
+    assert(os::ui::paragraph_layout_valid(
+        combining.value(), style.value(), bidi_constraints, grapheme_safe.value()));
+    for (std::size_t index = 0U; index < grapheme_safe.value().run_count; ++index) {
+        const auto& run = grapheme_safe.value().runs[index];
+        const std::uint32_t run_end =
+            static_cast<std::uint32_t>(run.text_byte_start) + run.text_byte_length;
+        assert(run.text_byte_start != 1U);
+        assert(run_end != 1U);
+    }
+    for (std::size_t index = 0U; index < grapheme_safe.value().glyph_count; ++index) {
+        assert(grapheme_safe.value().glyphs[index].cluster_byte_offset != 1U);
+    }
+
     const auto command_backend = backend.command_backend();
     assert(command_backend.fonts.resolve != nullptr);
     assert(command_backend.paragraphs.shape != nullptr);
