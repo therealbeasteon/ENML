@@ -67,9 +67,9 @@ struct FontProviderBackend final {
 };
 
 // These renderer-private bounds intentionally sit above any concrete shaping
-// library. A future HarfBuzz-like or platform-native backend may produce glyph
-// IDs internally, but applications never submit glyph IDs or font handles.
-// The backend output is validated before the renderer trusts it.
+// library. The Linux adapter currently uses private production-oriented text
+// libraries behind this contract, but their native types/APIs do not become
+// ENML ABI and a future backend may replace them without changing app semantics.
 inline constexpr std::size_t max_shaped_glyphs = max_semantic_text_bytes;
 inline constexpr std::size_t max_shaped_runs = 32U;
 inline constexpr std::size_t max_shaped_lines = 16U;
@@ -161,10 +161,9 @@ struct FontAwareTextShaperBackend final {
     const FontFallbackChain& fallback,
     FontProviderBackend provider) noexcept;
 
-// Validates bounded output from a renderer-owned shaping backend against the
-// original UTF-8 text and semantic fallback policy. This does not pretend that
-// ENML already ships a production shaper; it establishes the contract the
-// eventual shaping implementation must satisfy.
+// Validates bounded output from any renderer-owned shaping backend against the
+// original UTF-8 text and semantic fallback policy. Concrete platform adapters
+// remain subordinate to this ENML contract rather than defining it.
 [[nodiscard]] bool shaped_text_valid(
     const SemanticText& source,
     const ResolvedTextStyle& style,
@@ -189,8 +188,8 @@ struct FontAwareTextShaperBackend final {
     FontAwareTextShaperBackend backend) noexcept;
 
 // Measurement is derived from validated shaped advances, never from byte or
-// code-point counts. This keeps large-text reflow honest once real platform
-// font assets and shaping are connected.
+// code-point counts. This keeps large-text reflow honest with concrete platform
+// shaping while preserving ENML's bounded layout contract.
 [[nodiscard]] os::core::Result<TextMeasurement> measure_shaped_text(
     const SemanticText& source,
     const ResolvedTextStyle& style,
