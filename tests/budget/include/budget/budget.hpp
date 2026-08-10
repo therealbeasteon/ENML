@@ -38,6 +38,12 @@ struct ResourceBudget final {
 
     // How long to hold the service idle while sampling.
     std::uint64_t idle_window_ms {1000};
+
+    // Some services refuse to start without a durable state directory. When
+    // set, the harness stages a temporary one and passes its descriptor through
+    // the Supervisor's private launch channel, the same way App Manager does in
+    // production. The service still never learns a path.
+    bool requires_state_directory {false};
 };
 
 // Baselines are set from measured behavior with deliberate headroom, not from
@@ -82,6 +88,24 @@ inline constexpr ResourceBudget service_budgets[] {
         .max_ready_ms = 250U,
         .max_idle_wakeups_per_second = 5U,
         .idle_window_ms = 1000U,
+    },
+    // system.keys is the heaviest supervised service: an OpenSSL-backed
+    // provider, a key hierarchy and a durable registry all initialize before it
+    // reports READY. Its ceilings are therefore expected to sit above the other
+    // two, and its ready_ms is the one most worth watching as hierarchy work
+    // grows. Only built when the host/CI provider is enabled.
+    ResourceBudget{
+        .name = "system.keys",
+        .service_id = 0x0000F030U,
+        .principal_high = system_principal_high,
+        .principal_low = 0x000000000000F030ULL,
+        // Provisional: no measurement exists yet. Calibrate from the first
+        // green run rather than leaving these inherited.
+        .max_resident_kib = 16384U,
+        .max_ready_ms = 1000U,
+        .max_idle_wakeups_per_second = 5U,
+        .idle_window_ms = 1000U,
+        .requires_state_directory = true,
     },
 };
 

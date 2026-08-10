@@ -1,8 +1,13 @@
 #include <cstdio>
 #include <cstdint>
+#include <cstdlib>
+#include <cstring>
 #include <string_view>
 
+#include <dirent.h>
+#include <fcntl.h>
 #include <signal.h>
+#include <unistd.h>
 
 #include <os/supervisor/supervisor.hpp>
 
@@ -10,6 +15,60 @@
 #include <budget/measure.hpp>
 
 namespace {
+
+// A throwaway state directory for services that will not start without durable
+// storage. It is handed to the Supervisor as a descriptor, never as a path, so
+// the measured service starts exactly the way a production one does.
+class StateDirectory final {
+public:
+    StateDirectory() noexcept = default;
+    StateDirectory(const StateDirectory&) = delete;
+    StateDirectory& operator=(const StateDirectory&) = delete;
+    ~StateDirectory() { reset(); }
+
+    [[nodiscard]] bool create() noexcept {
+        std::snprintf(path_, sizeof(path_), "/tmp/emnl-budget-XXXXXX");
+        if (::mkdtemp(path_) == nullptr) {
+            path_[0] = '\0';
+            return false;
+        }
+        fd_ = ::open(path_, O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+        return fd_ >= 0;
+    }
+
+    [[nodiscard]] int fd() const noexcept { return fd_; }
+
+private:
+    // Removes whatever the service persisted, so a local run does not litter.
+    // Only regular entries are unlinked; if a service ever nests directories
+    // the rmdir simply fails and the directory is left for the OS to reap.
+    void reset() noexcept {
+        if (fd_ >= 0) {
+            ::close(fd_);
+            fd_ = -1;
+        }
+        if (path_[0] == '\0') {
+            return;
+        }
+        if (DIR* directory = ::opendir(path_)) {
+            for (dirent* entry = ::readdir(directory);
+                 entry != nullptr;
+                 entry = ::readdir(directory)) {
+                if (std::strcmp(entry->d_name, ".") == 0 ||
+                    std::strcmp(entry->d_name, "..") == 0) {
+                    continue;
+                }
+                (void)::unlinkat(::dirfd(directory), entry->d_name, 0);
+            }
+            (void)::closedir(directory);
+        }
+        (void)::rmdir(path_);
+        path_[0] = '\0';
+    }
+
+    int fd_ {-1};
+    char path_[64] {};
+};
 
 // CTest treats 77 as "skipped". A kernel or emulator that cannot report VmRSS
 // must not be counted as a passing budget run.
@@ -71,10 +130,17 @@ int main(int argc, char** argv) {
         .readiness_timeout_ms = 1000U,
     };
 
+    StateDirectory state_directory;
+    if (limits.requires_state_directory && !state_directory.create()) {
+        std::fprintf(stderr, "could not stage a state directory\n");
+        return 1;
+    }
+
     os::supervisor::Supervisor supervisor{
         os::supervisor::ServiceLaunchConfig{
             .descriptor = descriptor,
             .executable_path = executable_path,
+            .private_state_directory_fd = state_directory.fd(),
         }
     };
 

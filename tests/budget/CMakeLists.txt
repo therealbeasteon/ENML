@@ -45,3 +45,10 @@ endfunction()
 
 add_emnl_budget_test(system.echo system_echo)
 add_emnl_budget_test(system.storage system.storage)
+
+# system.keys only exists when the host/CI provider is built. Its production
+# provider is a BSP responsibility, so the budget follows the same gate rather
+# than pretending the service is always available.
+if(EMNL_BUILD_OPENSSL_TEST_PROVIDER)
+    add_emnl_budget_test(system.keys system_keys_host_ci)
+endif()
