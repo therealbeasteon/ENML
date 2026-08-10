@@ -1,8 +1,10 @@
 #pragma once
 
+#include <cstddef>
 #include <cstdint>
 
 #include <os/collection/transport.hpp>
+#include <os/core/identity.hpp>
 #include <os/core/result.hpp>
 #include <os/core/span.hpp>
 #include <os/core/strong_id.hpp>
