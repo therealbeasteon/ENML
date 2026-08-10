@@ -82,11 +82,14 @@ Implemented:
 - one renderer-private `PixelContour` lowering/evaluation path shared by material ownership, interior coverage, depth silhouette, focus boundary and complementary outside fringe;
 - normalized Q10 circle→squircle evaluation that keeps fourth-power intermediates bounded at maximum valid logical geometry without floating point or compiler-specific 128-bit arithmetic;
 - deterministic fixed 2×2 interior/outside coverage and coverage-aware opaque depth silhouettes without heap allocation, general path engine, shader compiler or background cache;
+- raised/floating/hero economy depth combines coverage-aware support shadow, leading highlight and restrained trailing occlusion; inset reverses the edge treatment and does not cast an external positive-offset shadow;
+- concrete compositor-owned `rasterize_trusted_marks()` CPU fallback renders the bounded ENML trusted-system signature after client composition from `TrustedOverlaySnapshot` metadata only;
+- application frames cannot request the trust-mark pass or select its palette/geometry; appearance is not treated as cryptographic proof because technical authority still comes from compositor role/z-order/capture/input policy;
 - semantic-only changes can generate zero pixel damage, moved nodes damage old+new bounds, and pathological damage lists fall back explicitly to full redraw.
 
 Opaque figure/ground and state remain the identity baseline. Live backdrop/translucency must enhance ENML, not become the only reason it is recognizable.
 
-See `docs/M3_2_CONTOUR_ANTIALIAS.md`, `docs/M3_2_OPAQUE_RASTER_BASELINE.md` and `docs/M3_2_RENDER_DAMAGE.md`.
+See `docs/M3_2_CONTOUR_ANTIALIAS.md`, `docs/M3_2_OPAQUE_RASTER_BASELINE.md`, `docs/M3_2_RENDER_DAMAGE.md` and `docs/M3_2_TRUSTED_PRESENTATION.md`.
 
 ### Text/font/paragraph rendering
 
@@ -98,9 +101,17 @@ Implemented:
 - renderer-private glyph-mask provider with real coverage→RGBA painting;
 - renderer-owned ascent/descent/line-gap metrics and direct render-command text paint path;
 - composed geometry+text opaque frame raster;
+- concrete renderer-private Linux adapter using configured platform faces, FreeType metrics/masks, HarfBuzz shaping and ICU bidi/line/grapheme analysis behind ENML's own bounded interfaces;
+- fixed semantic face-role table and fixed scratch capacities tied to `SemanticText`/shaped-run limits rather than an unbounded text service;
+- real mixed LTR/RTL and wrapping tests plus complete production-backend `RenderCommandBuffer` → frame-pixel coverage;
+- render-command glyph pixels are clipped to the semantic command rectangle in addition to the target, so legitimate font overhang/bearings cannot paint into sibling node regions;
 - no font scanner, text worker, polling loop or unbounded glyph cache.
 
-ENML still does **not** claim a production Unicode/font backend, final font assets/hinting, color-font support or GPU glyph atlas. A reviewed renderer-private production implementation must plug into the existing seams before production text support is claimed.
+The private Linux adapter is an ENML implementation choice, not the platform design specification. It is serialized renderer-owned state today; any future parallel renderer must justify and bound per-worker state or explicit synchronization rather than silently turning font processing into an always-on concurrent service.
+
+Still not finalized: final ENML font assets/licensing/package policy, synthetic ellipsis/source-cluster semantics, editable-text/IME shaping, final density-specific hinting policy, color-font/emoji policy and GPU glyph atlas/hardware text rendering.
+
+See `docs/M3_2_TEXT_RENDERING.md`.
 
 ### Input routing, authenticated targeting and exact-owner delivery
 
@@ -138,17 +149,19 @@ Implemented: bounded event-driven `MotionTimeline`, no animation worker/polling 
 
 ### Trusted system presentation
 
-Implemented: compositor-derived trust classification, secure-system capture exclusion, bounded compositor-owned `TrustedOverlaySnapshot`, and role/classification consistency validation. Application pixels cannot self-mint trusted-system attribution.
+Implemented: compositor-derived trust classification, secure-system capture exclusion, bounded compositor-owned `TrustedOverlaySnapshot`, role/classification consistency validation and the concrete compositor-owned CPU trusted-mark raster described above. Application pixels cannot self-mint trusted-system attribution.
 
-The actual ENML trust mark and private compositor rendering remain intentionally unfrozen; they must be original, system-owned and usability-tested.
+The next trust-presentation step is carrying the same overlay-after-client ownership contract into the future private hardware compositor and usability-testing the mark. A lookalike shape drawn by an app is never itself proof of system authority.
 
 ### Reference/product contract
 
-`docs/PROJECT_VISION.md`, `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md` and `docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md` remain guardrails. Supplied Symbian, Linux/Tizen, security/hardening and UI references are engineering evidence, not templates. ENML keeps its own ABI/security model and its original classic, crafted, luxurious, colorful, dimensional, curve-authored visual language.
+`docs/PROJECT_VISION.md`, `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md`, `docs/REFERENCE_ADDITIONS_2026_08_10.md` and `docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md` are guardrails.
+
+**References teach principles. ENML determines implementation. External systems are not the design specification.** Supplied Symbian, Linux, security/hardening, mobile-network and UI material may teach principles, mechanisms, failure modes and tradeoffs; ENML derives its ABI, service topology, wire formats, visual grammar and implementation from its own mission, threat model, resource/power limits, existing invariants and measured behavior.
 
 ### Validation status
 
-Head `623face4e65964b2e8c31995244c502340a752d2` completed the full current workflow line successfully:
+Head `eda64e5acaa512cf7260052d57c5b30090e73d9a` completed the full current workflow line successfully:
 
 - M0 CI;
 - M1 Package and App Foundation;
@@ -158,15 +171,17 @@ Head `623face4e65964b2e8c31995244c502340a752d2` completed the full current workf
 - M3 Semantic UI, including GCC, Clang, ASan/UBSan and native AArch64;
 - M3 Display/Compositor.
 
-That checkpoint includes the real supervised accessibility-service lifecycle and the authenticated App Manager collection-capability lifecycle. The Service Broker matrix exercises the launched-application collection handoff on GCC, Clang, sanitizers and native AArch64; the M3 UI matrix exercises the supervised accessibility service on all four UI runners.
+That checkpoint includes the supervised accessibility-service lifecycle, authenticated App Manager collection-capability lifecycle, compositor-owned trusted-mark path, shared bounded contour evaluator and the first production-oriented Linux text-backend integration.
 
-Later documentation-only commits must still pass the current-head CI requirement before PR #26 leaves draft. M3 PR workflows use concurrency grouping so superseded validation is cancelled rather than accumulating an unbounded queue.
+The current branch extends that green checkpoint with semantic paint clipping for real glyph overhang, full production-backend command-to-pixel validation and the explicit implementation-authority rule. The exact current head must pass the fresh workflow line before PR #26 can leave draft; queued/running validation is not a pass.
+
+M3 PR workflows use concurrency grouping so superseded validation is cancelled rather than accumulating an unbounded queue.
 
 ### Remaining M3.2 work
 
-- integrate/review a production renderer-private Unicode/font provider/shaper/raster backend;
-- strengthen bounded material lighting/depth while keeping focus/state dominant and the shared contour contract authoritative;
-- connect `TrustedOverlaySnapshot` to private compositor rendering and design/usability-test the actual ENML trust mark;
+- complete current-head review/validation of the renderer-private Unicode/font adapter and close any bounded text-layout edge cases exposed by it;
+- carry the compositor-owned trusted-mark overlay-after-client contract into the future hardware compositor and usability-test the actual mark;
+- improve contour/depth/blur quality only where justified by measured phone-scale visual/power budgets while keeping focus/state dominant and the shared contour contract authoritative;
 - if collection consumption moves into a separate privileged UI-host process, add authenticated kernel-credential control around the existing exact-owner claim seam;
 - continue compositor-deadline-aware scene transitions;
 - add later text-input/IME, keyboard traversal and gesture contracts without exposing raw hardware APIs;
