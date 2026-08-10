@@ -46,6 +46,20 @@ target_compile_options(application_sandbox_landlock_test PRIVATE
 add_test(NAME application_sandbox_landlock_test COMMAND application_sandbox_landlock_test)
 set_tests_properties(application_sandbox_landlock_test PROPERTIES SKIP_RETURN_CODE 77)
 
+# M3.2 private trusted-accessibility claim control. The forked client is
+# identified from packet SCM_CREDENTIALS through a trusted resolver; caller
+# authority is never accepted from payload fields.
+add_executable(accessibility_control_test accessibility_control_test.cpp)
+target_link_libraries(accessibility_control_test PRIVATE
+    emnl::app_manager
+    emnl_warnings
+)
+target_compile_options(accessibility_control_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME accessibility_control_test COMMAND accessibility_control_test)
+set_tests_properties(accessibility_control_test PROPERTIES LABELS m3-ui)
+
 # The M2.9 fixture consumes the versioned handle-based bootstrap. It receives
 # Storage + Keys by typed ServiceId and never relies on a fixed service fd.
 add_executable(m2_broker_test_app broker_test_app.cpp)
