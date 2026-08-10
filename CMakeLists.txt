@@ -6,6 +6,7 @@ include(CTest)
 option(EMNL_WARNINGS_AS_ERRORS "Treat warnings as errors" ON)
 option(EMNL_BUILD_FUZZING "Build libFuzzer targets" OFF)
 option(EMNL_BUILD_OPENSSL_TEST_PROVIDER "Build the OpenSSL-backed Key Service CI provider" OFF)
+option(EMNL_BUILD_LINUX_TEXT_BACKEND "Build the renderer-private FreeType/HarfBuzz Linux text backend" OFF)
 option(EMNL_ARM64_QEMU_USER "Run AArch64 target tests with QEMU user mode" OFF)
 set(EMNL_OSIDLC_EXECUTABLE "" CACHE FILEPATH "Host osidlc executable used while cross-compiling")
 
