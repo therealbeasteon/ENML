@@ -49,6 +49,7 @@ struct RasterStats final {
     std::uint16_t surfaces_filled {0U};
     std::uint16_t shadows_drawn {0U};
     std::uint16_t lit_edges_drawn {0U};
+    std::uint16_t shaded_edges_drawn {0U};
     // Number of primary-raster writes whose 2x2 contour coverage was neither
     // zero nor fully covered. This is bounded diagnostic evidence that authored
     // curves are receiving interior edge coverage rather than only binary
@@ -62,8 +63,9 @@ inline constexpr std::uint32_t max_raster_dimension = 4096U;
 // First concrete ENML paint stage: bounded, deterministic, CPU-side and
 // intentionally opaque. It realizes semantic palette roles, material tint,
 // focus/outline state, authored contour smoothing/asymmetry, bounded 2x2
-// interior edge coverage, and a directional depth/specular fallback without
-// yet depending on blur, shaders, font glyph masks, GPU APIs or live backdrop
+// interior edge coverage, directional depth, coverage-aware leading/trailing
+// optical edge treatment and focus-final state rendering without yet depending
+// on blur kernels, shaders, font glyph masks, GPU APIs or live backdrop
 // sampling. A separate perimeter-only pass adds the remaining outside fringe.
 // Rich optical effects are layered later; identity does not depend on those
 // effects being present.
