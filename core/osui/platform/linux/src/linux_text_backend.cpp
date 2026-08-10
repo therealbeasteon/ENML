@@ -202,6 +202,14 @@ struct FamilySegments final {
     return limit;
 }
 
+[[nodiscard]] ShapedText blank_line(const ResolvedTextStyle& style) noexcept {
+    ShapedText line {};
+    line.line_height_q6 = style.metrics.line_height_q6;
+    line.line_count = 1U;
+    line.lines[0] = ShapedLine{.first_glyph = 0U, .glyph_count = 0U};
+    return line;
+}
+
 } // namespace
 
 struct LinuxTextBackend::Impl final {
@@ -523,10 +531,12 @@ struct LinuxTextBackend::Impl final {
     [[nodiscard]] bool append_line(
         const ShapedText& line,
         ShapedText& paragraph) noexcept {
-        if (line.line_count != 1U || line.glyph_count == 0U ||
+        if (line.line_count != 1U ||
             paragraph.line_count >= paragraph.lines.size() ||
             paragraph.glyph_count + line.glyph_count > paragraph.glyphs.size() ||
-            paragraph.run_count + line.run_count > paragraph.runs.size()) {
+            paragraph.run_count + line.run_count > paragraph.runs.size() ||
+            (line.glyph_count == 0U && line.run_count != 0U) ||
+            (line.glyph_count != 0U && line.run_count == 0U)) {
             return false;
         }
         const std::size_t glyph_base = paragraph.glyph_count;
@@ -578,8 +588,14 @@ struct LinuxTextBackend::Impl final {
         auto* self = static_cast<Impl*>(context);
         if (self == nullptr || !self->ready || !semantic_text_valid(source) ||
             style.fallback.count == 0U || constraints.max_width_q6 == 0U ||
-            constraints.max_lines == 0U || source.empty()) {
+            constraints.max_lines == 0U) {
             return false;
+        }
+
+        if (source.empty()) {
+            output = {};
+            output.line_height_q6 = style.metrics.line_height_q6;
+            return true;
         }
 
         Utf16Text utf16 {};
@@ -638,11 +654,14 @@ struct LinuxTextBackend::Impl final {
             if (constraints.wrap == ParagraphWrapMode::no_wrap) {
                 const std::int32_t shape_limit = trim_line_terminator(
                     utf16, line_start, utf16.length);
-                if (shape_limit <= line_start) return false;
-                std::uint64_t width = 0U;
-                if (!self->shape_visual_line(
-                        source, style, faces, utf16, line_start, shape_limit, chosen_line, width)) {
-                    return false;
+                if (shape_limit <= line_start) {
+                    chosen_line = blank_line(style);
+                } else {
+                    std::uint64_t width = 0U;
+                    if (!self->shape_visual_line(
+                            source, style, faces, utf16, line_start, shape_limit, chosen_line, width)) {
+                        return false;
+                    }
                 }
                 chosen_consumed = utf16.length;
             } else {
@@ -652,7 +671,13 @@ struct LinuxTextBackend::Impl final {
                     const BreakPoint candidate = breaks.points[candidate_index];
                     const std::int32_t shape_limit = trim_line_terminator(
                         utf16, line_start, candidate.utf16_offset);
-                    if (shape_limit <= line_start) return false;
+                    if (shape_limit <= line_start) {
+                        if (!candidate.hard) return false;
+                        chosen_consumed = candidate.utf16_offset;
+                        chosen_line = blank_line(style);
+                        chose_hard = true;
+                        break;
+                    }
 
                     ShapedText candidate_line {};
                     std::uint64_t candidate_width = 0U;
@@ -690,7 +715,7 @@ struct LinuxTextBackend::Impl final {
                         if (candidate <= line_start) continue;
                         const std::int32_t shape_limit = trim_line_terminator(
                             utf16, line_start, candidate);
-                        if (shape_limit <= line_start) return false;
+                        if (shape_limit <= line_start) continue;
                         ShapedText candidate_line {};
                         std::uint64_t candidate_width = 0U;
                         if (!self->shape_visual_line(
@@ -726,7 +751,7 @@ struct LinuxTextBackend::Impl final {
                         if (candidate <= line_start) continue;
                         const std::int32_t shape_limit = trim_line_terminator(
                             utf16, line_start, candidate);
-                        if (shape_limit <= line_start) return false;
+                        if (shape_limit <= line_start) continue;
                         std::uint64_t ignored_width = 0U;
                         if (!self->shape_visual_line(
                                 source,
@@ -760,7 +785,7 @@ struct LinuxTextBackend::Impl final {
         // assistive semantics and renderer clusters cannot diverge. Until that
         // contract exists, fail closed rather than drawing an untracked glyph.
         if (truncated && constraints.overflow == ParagraphOverflowMode::ellipsis) return false;
-        return output.glyph_count != 0U && output.line_count != 0U;
+        return output.line_count != 0U;
     }
 
     [[nodiscard]] static bool shape_text(
