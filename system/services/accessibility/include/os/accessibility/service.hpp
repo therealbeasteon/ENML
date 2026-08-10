@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
 
 #include <os/accessibility/broker.hpp>
 #include <os/accessibility/transport.hpp>
@@ -86,10 +87,15 @@ private:
         std::uint64_t session_id {0U};
         os::core::PeerIdentity application {};
         os::ipc::Channel channel {};
+        // Persistent client preserves monotonically increasing RPC request ids
+        // across snapshot/action calls on this capability. Reconstructing the
+        // client for every call would silently reuse request id 1.
+        std::optional<AccessibilitySessionClient> client {};
     };
 
     [[nodiscard]] SessionSlot* find(os::core::PeerIdentity application) noexcept;
     [[nodiscard]] const SessionSlot* find(os::core::PeerIdentity application) const noexcept;
+    static void clear(SessionSlot& slot) noexcept;
 
     AccessibilityBrokerClient broker_;
     os::core::PeerIdentity self_ {};
