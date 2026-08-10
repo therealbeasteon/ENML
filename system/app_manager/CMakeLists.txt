@@ -1,6 +1,7 @@
 add_library(emnl_app_manager STATIC
     src/manager_linux.cpp
     src/lifecycle.cpp
+    src/lifecycle_snapshot.cpp
     src/storage_integration.cpp
     src/key_integration.cpp
     src/runtime_session.cpp
