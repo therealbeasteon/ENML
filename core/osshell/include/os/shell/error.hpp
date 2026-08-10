@@ -17,6 +17,8 @@ inline constexpr std::uint32_t invalid_lifecycle_snapshot = 7U;
 inline constexpr std::uint32_t stale_lifecycle_snapshot = 8U;
 inline constexpr std::uint32_t invalid_scene_snapshot = 9U;
 inline constexpr std::uint32_t stale_scene_snapshot = 10U;
+inline constexpr std::uint32_t invalid_activation_intent = 11U;
+inline constexpr std::uint32_t stale_activation_intent = 12U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error shell_error(std::uint32_t code) noexcept {
