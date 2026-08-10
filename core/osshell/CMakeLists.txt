@@ -2,6 +2,7 @@ add_library(osshell STATIC
     src/task_model.cpp
     src/activation.cpp
     src/preview_policy.cpp
+    src/chrome.cpp
 )
 
 target_include_directories(osshell PUBLIC include)
