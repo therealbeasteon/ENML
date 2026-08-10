@@ -99,10 +99,12 @@ inline constexpr ResourceBudget service_budgets[] {
         .service_id = 0x0000F030U,
         .principal_high = system_principal_high,
         .principal_low = 0x000000000000F030ULL,
-        // Provisional: no measurement exists yet. Calibrate from the first
-        // green run rather than leaving these inherited.
-        .max_resident_kib = 16384U,
-        .max_ready_ms = 1000U,
+        // Measured 5264 KiB (x86-64) / 4744 KiB (AArch64), ready in 2 ms,
+        // 0 idle wakeups. The provider, hierarchy and durable registry cost
+        // roughly 1.7 MiB over a bare service, and initialize fast enough not
+        // to register against the shared 250 ms startup ceiling.
+        .max_resident_kib = 6656U,
+        .max_ready_ms = 250U,
         .max_idle_wakeups_per_second = 5U,
         .idle_window_ms = 1000U,
         .requires_state_directory = true,
