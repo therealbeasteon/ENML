@@ -165,24 +165,11 @@ private:
     [[nodiscard]] os::core::Result<void>
     publish_process_to_service(ProcessEntry& entry) noexcept;
 
-    [[nodiscard]] LaunchTarget*
-    find_target(const os::package::PackageGenerationRecord& package) noexcept;
-    [[nodiscard]] const LaunchTarget*
-    find_target(const os::package::PackageGenerationRecord& package) const noexcept;
-    [[nodiscard]] LaunchTarget*
-    find_target(
-        const os::package::ApplicationIdentity& application,
-        os::package::PackageGenerationId generation) noexcept;
-    [[nodiscard]] const LaunchTarget*
-    find_target(
-        const os::package::ApplicationIdentity& application,
-        os::package::PackageGenerationId generation) const noexcept;
-    [[nodiscard]] ApplicationProfile*
-    find_profile(const os::package::ApplicationIdentity& application, os::core::UserId user) noexcept;
-    [[nodiscard]] const ApplicationProfile*
-    find_profile(const os::package::ApplicationIdentity& application, os::core::UserId user) const noexcept;
-    [[nodiscard]] InstanceSlot* find_instance(os::core::ApplicationInstanceId instance_id) noexcept;
-    [[nodiscard]] const InstanceSlot* find_instance(os::core::ApplicationInstanceId instance_id) const noexcept;
+    [[nodiscard]] ProcessEntry* find_process_by_pid(pid_t native_pid) noexcept;
+    [[nodiscard]] const ProcessEntry* find_process_by_pid(pid_t native_pid) const noexcept;
+    [[nodiscard]] ProcessEntry* find_process_by_id(os::core::ProcessId process_id) noexcept;
+    void remove_process_entry(os::core::ProcessId process_id) noexcept;
+    void prune_dead_processes() noexcept;
 };
 
 } // namespace os::supervisor
