@@ -33,10 +33,11 @@ Implemented:
 - Q6 density-independent geometry, safe-inset responsive layout, 100–300% text scale and minimum touch targets;
 - revision-bound accessibility snapshots/actions with stale-request rejection;
 - `AccessibilityBridgeAuthority` restricting privileged access to a trusted accessibility principal;
+- strong `AccessibilitySessionId` binding so a valid revision/node request cannot be replayed against another runtime session;
 - accessibility actions re-authorized through the same live `SemanticTree` invariants;
 - no OCR/framebuffer scraping, accessibility polling loop or dedicated accessibility worker.
 
-Editable accessibility text remains deferred until bounded caret/selection/text-input/IME semantics exist.
+Editable accessibility text remains deferred until bounded caret/selection/text-input/IME semantics exist. Cross-process accessibility session transport remains to be implemented above this authority seam.
 
 ### Collections
 
@@ -78,7 +79,7 @@ Implemented:
 
 ENML still does **not** claim a production Unicode/font backend, final font assets/hinting, color-font support or GPU glyph atlas. A reviewed renderer-private production implementation must plug into the existing seams before production text support is claimed.
 
-### Input routing and authenticated targeting transport
+### Input routing, authenticated targeting and exact-owner delivery
 
 Implemented:
 
@@ -91,14 +92,22 @@ Implemented:
 - bounded integer surface-pixel→semantic-Q6 normalization with non-integer scale support and half-open edge rejection;
 - authenticated compositor RPC operations for hit-test and pre-delivery validation;
 - separate `InputCompositorClient` privileged facade rather than adding global-scene operations to the ordinary app client;
-- every privileged request passes normal kernel-credential RPC validation and then the trusted input-principal check;
+- every privileged compositor request passes kernel-credential RPC validation and then the trusted input-principal check;
 - fixed bounded `SurfaceInputHit` wire encoding validates enums, local coordinates and role/trust consistency;
-- cross-process `SOCK_SEQPACKET`/`fork()` integration proves trusted-principal success and ordinary-principal denial using real kernel packet credentials;
+- cross-process compositor integration proves trusted-principal success and ordinary-principal denial using real kernel packet credentials;
+- authenticated post-READY application runtime-session operation for acquiring a private input event endpoint, with no app-supplied target/process/surface/native descriptor;
+- App Manager provisions a fresh `SOCK_SEQPACKET` pair only after matching packet `SCM_CREDENTIALS` against the exact broker-bound application identity;
+- fixed 84-byte `ApplicationInputEventV1` preserving exact target `PeerIdentity`, surface/frame identity, surface size and local pointer data without global coordinates/device identifiers;
+- `ApplicationManager::deliver_input_event()` routes only by exact live `PeerIdentity`, not caller-selected `ApplicationInstanceId`;
+- trusted and application receive-side monotonic sequence guards reject replay; trusted sequence state survives endpoint reacquisition;
+- retained App Manager sender is nonblocking so a stalled application cannot block trusted input/lifecycle work or create an unbounded userspace event backlog;
+- application receive stream rejects a structurally valid event addressed to another bootstrap identity;
+- brokered App Manager integration proves endpoint acquisition, wrong-owner denial, replay denial and exact event receipt before continuing existing service-restart/reacquisition checks;
 - no application-facing `/dev/input`, evdev structure, global scene state or input polling worker.
 
-The remaining input work is the final trusted input-service→owning-app event transport plus later gesture/multitouch/keyboard/IME contracts. Applications must never choose the target surface as authority.
+The remaining input work is later hardware adapter/device ownership plus explicit multitouch/gesture/pointer-capture/keyboard/IME contracts. Those later pieces feed this authority chain; they do not replace it.
 
-See `docs/M3_2_INPUT_ROUTING.md`.
+See `docs/M3_2_INPUT_ROUTING.md` and `docs/M3_2_INPUT_DELIVERY.md`.
 
 ### Motion and power discipline
 
@@ -116,15 +125,15 @@ The actual ENML trust mark and private compositor rendering remain intentionally
 
 ### Validation status
 
-Code head `62c42d6e8a60ad34de929258d04352bfc31a8301` completed the M3 Display/Compositor matrix successfully on GCC, Clang, ASan/UBSan and native AArch64, including the authenticated input transport integration gate. Its M3 Semantic UI gates were also green where completed before the subsequent documentation/CI-scoping commits.
+Head `d8994bd99fb28fca035331235964fe48f5374ad4` was fully green on both M3 matrices before the exact-owner application input-delivery tranche.
 
-The current head extends that validated code only with input-transport documentation, exit-criteria/status synchronization and CI scoping so branch pushes do not duplicate PR display validation. The **current head still must be green** on the required M3 matrices before the PR leaves draft; an older successful code head is not sufficient for merge readiness.
+The later application-delivery code has passed the current M3 Display/Compositor matrix, including app runtime-session/input-event focused gates. A legacy M1 workflow initially failed only because its broad `application_` CTest regex discovered the new M3-only input-event test without building that target; the CTest name has now been scoped out of the M1 regex while retaining the M3 display label/target. The **new exact current head must complete all required workflows successfully** before the PR leaves draft.
 
-M3 PR workflows use concurrency grouping so superseded validation is cancelled rather than accumulating an unbounded queue. Display branch pushes are now scoped to `main`; feature branches validate through the pull-request event instead of running duplicate push+PR display matrices.
+M3 PR workflows use concurrency grouping so superseded validation is cancelled rather than accumulating an unbounded queue. Display feature-branch pushes are scoped to `pull_request`; push validation remains on `main`.
 
 ### Remaining M3.2 work
 
-- finish authenticated accessibility transport/session ownership and final trusted input-service→application event delivery;
+- implement authenticated cross-process accessibility session transport above `AccessibilityBridgeAuthority` without introducing an unbounded serialized tree or polling loop;
 - integrate/review a production renderer-private Unicode/font provider/shaper/raster backend;
 - improve contour quality toward bounded analytic/interior coverage and strengthen depth/lighting without obscuring focus/state;
 - connect collection content/change publication to bounded message/OSIDL records;
