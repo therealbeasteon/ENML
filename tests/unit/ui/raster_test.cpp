@@ -114,6 +114,7 @@ int main() {
     assert(raster.value().surfaces_filled == 2U);
     assert(raster.value().shadows_drawn == 1U);
     assert(raster.value().lit_edges_drawn == 1U);
+    assert(raster.value().shaded_edges_drawn == 1U);
     assert(raster.value().partial_coverage_writes > 0U);
     assert(raster.value().pixel_writes >= width * height);
 
@@ -153,8 +154,53 @@ int main() {
     assert(pixels[6U * width + 28U] == partial_shadowed_surface);
 
     // Focus is rendered as an explicit edge treatment rather than encoded only
-    // by material/transparency, keeping interaction state legible.
+    // by material/transparency, keeping interaction state legible after both
+    // leading highlight and trailing occlusion have been applied.
     assert(pixels[4U * width + 5U] == focus);
+
+    // Inset material reverses the directional edge model and does not cast an
+    // external positive-offset shadow. Its leading edge darkens into the
+    // surface while the trailing edge catches the highlight, producing a
+    // recessed reading with no blur surface or shader.
+    std::array<os::ui::Rgba8, width * height> inset_pixels{};
+    auto inset_commands = test_commands();
+    auto& inset = inset_commands.commands[1];
+    inset.bounds = os::ui::LogicalRect{
+        .x_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(8U)),
+        .y_q6 = static_cast<std::int32_t>(os::ui::logical_from_dp(6U)),
+        .width_q6 = os::ui::logical_from_dp(12U),
+        .height_q6 = os::ui::logical_from_dp(8U),
+    };
+    inset.visual.token.background = os::ui::ColorRole::surface_elevated;
+    inset.visual.token.material_tint = os::ui::ColorRole::transparent;
+    inset.visual.token.outline = os::ui::ColorRole::transparent;
+    inset.visual.token.material = os::ui::OpticalMaterialRole::opaque;
+    inset.visual.token.depth = os::ui::DepthRole::inset;
+    inset.visual.material.tint_percent = 0U;
+    inset.visual.material.specular_percent = 20U;
+    inset.visual.depth.offset_q6 = os::ui::logical_from_dp(1U);
+    inset.visual.depth.opacity_percent = 30U;
+    inset.contour.role = os::ui::CurveRole::rectilinear;
+    inset.contour.radii = {};
+    inset.contour.smoothing_percent = 0U;
+    inset.focus_visible = false;
+    const os::ui::RasterTarget inset_target{
+        .pixels = inset_pixels.data(),
+        .pixel_count = inset_pixels.size(),
+        .width = width,
+        .height = height,
+        .stride = width,
+        .scale = os::ui::RasterScale{1U, os::ui::logical_units_per_dp},
+    };
+    auto inset_raster = os::ui::rasterize_opaque_materials(
+        inset_commands, theme, inset_target);
+    assert(inset_raster);
+    assert(inset_raster.value().shadows_drawn == 0U);
+    assert(inset_raster.value().lit_edges_drawn == 1U);
+    assert(inset_raster.value().shaded_edges_drawn == 1U);
+    assert(inset_pixels[6U * width + 8U] == os::ui::Rgba8{27U, 27U, 36U, 255U});
+    assert(inset_pixels[13U * width + 19U] == os::ui::Rgba8{72U, 70U, 83U, 255U});
+    assert(inset_pixels[14U * width + 20U] == surface);
 
     // With smoothing removed, the same top-right sample's center falls outside
     // the circular corner and therefore remains the root surface in the primary
