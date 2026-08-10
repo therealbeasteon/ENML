@@ -14,6 +14,7 @@
 #include <os/app/bootstrap.hpp>
 #include <os/app/input_event.hpp>
 #include <os/app/service_session.hpp>
+#include <os/collection/session.hpp>
 #include <os/core/error.hpp>
 #include <os/core/native_handle.hpp>
 #include <os/ipc/constants.hpp>
@@ -22,6 +23,7 @@
 #include <os/keys/service.hpp>
 #include <os/storage/path.hpp>
 #include <os/storage/service.hpp>
+#include <os/ui/types.hpp>
 
 namespace {
 
@@ -93,6 +95,53 @@ acquire_after_restart(
             expected.begin());
 }
 
+struct RuntimeCollectionSource final {};
+
+bool collection_snapshot(void*, os::ui::CollectionDataSnapshot& output) noexcept {
+    output = os::ui::CollectionDataSnapshot{
+        .revision = os::ui::CollectionRevision{1U},
+        .item_count = 1U,
+    };
+    return true;
+}
+
+bool collection_key(
+    void*,
+    os::ui::CollectionRevision revision,
+    std::uint32_t item_index,
+    os::ui::CollectionItemKey& output) noexcept {
+    if (revision != os::ui::CollectionRevision{1U} || item_index != 0U) return false;
+    output = os::ui::CollectionItemKey{0xC011EC7U};
+    return true;
+}
+
+bool collection_content(
+    void*,
+    os::ui::CollectionRevision revision,
+    std::uint32_t item_index,
+    os::ui::CollectionItemKey item_key,
+    os::ui::CollectionItemContent& output) noexcept {
+    if (revision != os::ui::CollectionRevision{1U} || item_index != 0U ||
+        item_key != os::ui::CollectionItemKey{0xC011EC7U}) {
+        return false;
+    }
+    auto primary = os::ui::make_semantic_text("Runtime collection");
+    if (!primary) return false;
+    output = os::ui::CollectionItemContent{
+        .primary_label = primary.value(),
+        .enabled = true,
+        .selected = false,
+    };
+    return true;
+}
+
+bool collection_changes(
+    void*,
+    os::ui::CollectionRevision,
+    os::ui::CollectionChangeSet&) noexcept {
+    return false;
+}
+
 } // namespace
 
 int main() {
@@ -136,12 +185,13 @@ int main() {
     auto initial_path = os::storage::RelativePath::parse("m2-10-initial.bin");
     auto input_ready_path = os::storage::RelativePath::parse("m3-input-ready.bin");
     auto input_delivered_path = os::storage::RelativePath::parse("m3-input-delivered.bin");
+    auto collection_ready_path = os::storage::RelativePath::parse("m3-collection-ready.bin");
     auto session_ready_path = os::storage::RelativePath::parse("m2-10-session-ready.bin");
     auto key_reacquired_path = os::storage::RelativePath::parse("m2-10-key-reacquired.bin");
     auto heartbeat_path = os::storage::RelativePath::parse("m2-10-storage-heartbeat.bin");
     auto storage_reacquired_path = os::storage::RelativePath::parse("m2-10-storage-reacquired.bin");
     if (!initial_path || !input_ready_path || !input_delivered_path ||
-        !session_ready_path || !key_reacquired_path ||
+        !collection_ready_path || !session_ready_path || !key_reacquired_path ||
         !heartbeat_path || !storage_reacquired_path) {
         return 17;
     }
@@ -221,6 +271,45 @@ int main() {
             scratch)) {
         return 65;
     }
+
+    // Collection publication uses the same authenticated runtime lifecycle but
+    // mints a distinct bounded capability for each source. The app receives
+    // only its producer endpoint and the fresh session id; it cannot name the
+    // trusted consumer or another process.
+    auto collection_endpoint_result = runtime.acquire_collection(scratch);
+    if (!collection_endpoint_result) return 66;
+    auto collection_endpoint = std::move(collection_endpoint_result).value();
+    if (!collection_endpoint.valid() || collection_endpoint.session_id != 1U) return 67;
+
+    RuntimeCollectionSource collection_source{};
+    os::collection::CollectionSessionServer collection_server{
+        os::collection::CollectionSessionId{collection_endpoint.session_id},
+        os::collection::CollectionSessionBackend{
+            .data = os::ui::CollectionDataSourceBackend{
+                .context = &collection_source,
+                .snapshot = collection_snapshot,
+                .item_key_at = collection_key,
+                .item_content_at = collection_content,
+            },
+            .changes = os::ui::CollectionChangeSourceBackend{
+                .context = &collection_source,
+                .changes_since = collection_changes,
+            },
+        },
+    };
+    if (!collection_server.valid()) return 68;
+
+    const std::array<std::byte, 1U> collection_ready_marker{std::byte{0xE3}};
+    if (!storage_root.atomic_replace(
+            collection_ready_path.value(),
+            collection_ready_marker,
+            scratch)) {
+        return 69;
+    }
+    // Pull-only flow control: the producer blocks for exactly the one snapshot
+    // request issued by the trusted consumer; no notification queue or worker
+    // exists behind this capability.
+    if (!collection_server.dispatch_once(collection_endpoint.channel, scratch)) return 70;
 
     // The bootstrap-v2 service set is a strict allow-list. The runtime session
     // cannot be used as a general service bus or to expand application policy.
