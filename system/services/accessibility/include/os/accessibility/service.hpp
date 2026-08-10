@@ -22,6 +22,14 @@ inline constexpr std::uint32_t accessibility_service_op_snapshot = 2U;
 inline constexpr std::uint32_t accessibility_service_op_action = 3U;
 inline constexpr std::uint32_t accessibility_service_op_release = 4U;
 
+// Separate principal for the trusted system component allowed to drive this
+// private administration endpoint. The identifier is public; Supervisor/runtime
+// identity publication is the authority. Applications are never assigned it.
+inline constexpr os::core::PrincipalId accessibility_admin_principal{
+    0x454E4D4C41434341ULL,
+    0x444D494E00000001ULL,
+};
+
 inline constexpr std::size_t accessibility_service_identity_request_size_v1 = 32U;
 inline constexpr std::size_t accessibility_service_claim_response_size_v1 = 40U;
 inline constexpr std::size_t accessibility_service_action_request_size_v1 = 46U;
@@ -32,6 +40,7 @@ inline constexpr std::uint32_t session_capacity = 200U;
 inline constexpr std::uint32_t duplicate_session = 201U;
 inline constexpr std::uint32_t unknown_session = 202U;
 inline constexpr std::uint32_t malformed_request = 203U;
+inline constexpr std::uint32_t authority_denied = 204U;
 } // namespace service_errors
 
 struct AccessibilityServiceActionRequest final {
@@ -87,9 +96,9 @@ private:
     std::array<SessionSlot, max_accessibility_service_sessions> sessions_ {};
 };
 
-// Private supervisor-side client. The endpoint is an unforgeable capability
-// returned by Supervisor::connect(); M3.2 intentionally does not register this
-// service id in the application ServiceBroker.
+// Private trusted-system client. The endpoint is an unforgeable capability
+// returned by Supervisor::connect() and every request is still authenticated by
+// the service using kernel credentials plus its Supervisor-published registry.
 class AccessibilityServiceClient final {
 public:
     explicit AccessibilityServiceClient(os::ipc::Channel& channel) noexcept
@@ -118,11 +127,16 @@ private:
 
 class AccessibilityServiceServer final {
 public:
-    explicit AccessibilityServiceServer(AccessibilityServiceRuntime& runtime) noexcept
-        : runtime_(&runtime) {}
+    AccessibilityServiceServer(
+        AccessibilityServiceRuntime& runtime,
+        os::ipc::PeerIdentityResolver& identity_resolver,
+        os::core::PrincipalId admin_principal = accessibility_admin_principal) noexcept
+        : runtime_(&runtime), identity_resolver_(&identity_resolver),
+          admin_principal_(admin_principal) {}
 
     [[nodiscard]] bool valid() const noexcept {
-        return runtime_ != nullptr && runtime_->valid();
+        return runtime_ != nullptr && runtime_->valid() && identity_resolver_ != nullptr &&
+            os::core::valid_principal(admin_principal_);
     }
 
     [[nodiscard]] os::core::Result<void> dispatch_once(
@@ -131,6 +145,8 @@ public:
 
 private:
     AccessibilityServiceRuntime* runtime_ {nullptr};
+    os::ipc::PeerIdentityResolver* identity_resolver_ {nullptr};
+    os::core::PrincipalId admin_principal_ {};
 };
 
 } // namespace os::accessibility
