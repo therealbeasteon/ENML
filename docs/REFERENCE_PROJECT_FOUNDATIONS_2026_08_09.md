@@ -78,9 +78,9 @@ Use for enduring OS-structure principles:
 
 ENML is not attempting binary or API compatibility with historical UNIX.
 
-### William Stallings — Operating Systems: Internals and Design Principles
+### William Stallings — Operating Systems: Internals and Design Principles, Seventh Edition
 
-Use for process/thread, memory, protection, concurrency, I/O, scheduling, virtualization and security architecture reasoning. Capability partitioning and resource limits are especially relevant to ENML's bounded trusted-service model.
+The newly added Seventh Edition copy makes the Stallings reference explicit. Use it for process/thread structure, concurrency, scheduling, memory management, protection/security, I/O and virtualization reasoning. Treat algorithms and examples as engineering evidence rather than current normative security guidance; ENML still owns its capability model, service decomposition and platform ABI.
 
 ### Operating System Concepts — Operating-System Structures chapter
 
@@ -89,6 +89,38 @@ Use for the separation of OS services, user interfaces, system calls, system pro
 ### The little book about OS development / Operating System Development from Scratch
 
 Use as implementation-learning material for boot, early kernel, interrupts, memory and simple system construction. These sources are not production-security specifications. ENML's production decisions must remain stricter than educational examples.
+
+### Andrew S. Tanenbaum — Modern Operating Systems, Second Edition
+
+Use as a historical systems-architecture reference for the OS as both an extended machine and a resource manager, and for processes, memory, I/O, files, embedded systems and synchronization. The edition is old enough that concrete platform/security recommendations must not be treated as current standards. Its enduring abstractions are useful; its period-specific implementation assumptions are not ENML requirements.
+
+### Remzi H. Arpaci-Dusseau and Andrea C. Arpaci-Dusseau — Operating Systems: Three Easy Pieces
+
+Use the virtualization/concurrency/persistence framing as a disciplined way to reason about resource ownership and measurable tradeoffs. Particularly useful ENML implications are:
+
+- private virtual address spaces remain fundamental process-isolation machinery;
+- concurrency must be justified and synchronized rather than added casually;
+- policy should be separated from mechanism where practical;
+- performance claims should be measured rather than inferred from abstraction alone.
+
+OSTEP is a teaching/reference source, not an ENML ABI or kernel-layout template.
+
+### Thomas Anderson and Michael Dahlin — Operating Systems: Principles & Practice, Volume I: Kernels and Processes, Second Edition
+
+Use for protection, fault isolation, virtualization, resource allocation, concurrency and portability reasoning. The distinction between **security policy** (what is permitted) and **enforcement mechanism** (how it is enforced) is directly relevant to ENML's principal/capability architecture. The hardware-abstraction discussion also reinforces ENML's rule that board/device specifics remain below narrow private adaptation boundaries.
+
+Do not copy its teaching kernel organization or platform-specific examples. ENML should preserve stable semantic interfaces while allowing the private hardware substrate to change.
+
+### Cox, Kaashoek and Morris — xv6: a simple, Unix-like teaching operating system (RISC-V)
+
+Use xv6 as a concrete code-level reference for understanding RISC-V privilege transitions, traps/system calls, process address spaces, page tables, scheduling, locks, interrupt handling and file-system recovery. It is especially useful as a second-architecture check against accidentally making ENML's private OS contracts ARM64-specific.
+
+Important guardrails:
+
+- xv6 is deliberately a small teaching system, not a production mobile-security architecture;
+- its monolithic layout, process model, driver arrangement and syscall surface are not ENML compatibility targets;
+- RISC-V `ecall`/`sret`, supervisor mode and Sv39 examples are architecture-specific mechanisms, while isolation, trap mediation and page-table ownership are the transferable principles;
+- ENML's present native validation target remains AArch64, but portable private boundaries should leave room for another architecture without rewriting application semantics.
 
 ## Mobile and radio security
 
@@ -165,9 +197,9 @@ Do not copy Android structure, One UI components, large-radius focus blocks, ico
 
 Use for discovery, user goals, workflow mapping, wireframes, prototypes, usability evaluation, reusable components and developer handoff. ENML does not treat a mockup as architecture: semantics, accessibility, trust, layout and renderer capability remain independent layers.
 
-## Current implications for M3.2
+## Current implications for M3.2 and later platform work
 
-The original references reinforce the current M3.2 direction:
+The reference set reinforces the current direction:
 
 1. Application pixels are not trusted UI authority.
 2. Secure-system attribution must be minted by a trusted compositor/service boundary, not by a style token an application can request.
@@ -177,6 +209,10 @@ The original references reinforce the current M3.2 direction:
 6. Mobile/radio, storage/key, display/compositor and application authorities remain distinct trust domains.
 7. A future duress path requires its own reviewed threat model and must not be reduced to a second-password trick.
 8. Historical or superseded sources are never used to make current compliance claims.
+9. Process isolation, virtual memory, trap mediation and resource ownership should remain explicit even when Linux currently supplies the private kernel substrate.
+10. Policy/enforcement and hardware/semantic boundaries should remain separable enough that a later board, kernel or architecture port does not force application-ABI redesign.
+11. Concurrency is not a default solution: ENML continues to prefer event-driven/on-demand work and introduces threads only when there is a measurable reason.
+12. Educational kernels such as xv6 are used to validate understanding of mechanisms, never as shortcuts around ENML's stronger mobile security and lifecycle requirements.
 
 ## Reference-update policy
 
