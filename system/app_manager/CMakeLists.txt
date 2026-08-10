@@ -7,6 +7,7 @@ add_library(emnl_app_manager STATIC
     src/input_delivery.cpp
     src/accessibility_broker.cpp
     src/accessibility_control.cpp
+    src/collection_broker.cpp
 )
 
 add_library(emnl::app_manager ALIAS emnl_app_manager)
@@ -25,6 +26,7 @@ target_link_libraries(emnl_app_manager
         emnl::storage_service
         emnl::key_service
         emnl::osaccessibility
+        emnl::oscollection
         emnl_warnings
 )
 
