@@ -4,9 +4,13 @@ This document extends `REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md` with the add
 
 ## Strict source rule
 
+**References teach principles. ENML determines implementation. External systems are not the design specification.**
+
 For ENML architecture, security, kernel/runtime, UI/UX, power/performance, networking, cryptography, recovery and implementation-design decisions, the supplied ENML reference library is the allowed external guidance set.
 
 Do **not** introduce design claims, security recommendations, architecture patterns, compatibility assumptions or implementation requirements from unrelated web pages, blog posts, vendor marketing, forums, unsupplied books/papers, or other external research unless the project owner explicitly authorizes a new source.
+
+Even inside the allowed reference set, an external system's mechanism is not automatically ENML's mechanism. Extract the principle, failure mode, constraint or tradeoff; then derive the implementation from ENML's mission, threat model, resource/power targets, existing subsystem boundaries and measured behavior. ENML owns its ABI, service topology, wire formats, visual grammar, naming and compatibility decisions.
 
 Repository code, repository tests, compiler/runtime diagnostics and measured behavior are evidence about ENML itself and remain valid engineering inputs. Third-party libraries may exist as private implementation dependencies, but their presence does not make their vendor architecture or public API a design reference for ENML. Public ENML contracts must continue to be derived from ENML requirements and the supplied reference set.
 
@@ -96,4 +100,4 @@ Every future ENML development slice should be defensible from:
 3. existing ENML architecture/invariants;
 4. repository tests, compiler/sanitizer diagnostics and measured runtime behavior.
 
-If a design decision requires guidance that is absent from those inputs, stop short of inventing a new external authority. Record the gap and either choose a conservative ENML-local implementation that does not make unsupported claims, or wait for an explicitly supplied/authorized reference.
+The references constrain reasoning by teaching principles and failure modes; they do not choose ENML's implementation for us. If a design decision requires guidance that is absent from those inputs, stop short of inventing a new external authority. Record the gap and either choose a conservative ENML-local implementation that does not make unsupported claims, or wait for an explicitly supplied/authorized reference.
