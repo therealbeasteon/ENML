@@ -3,7 +3,7 @@ add_library(osshell STATIC
 )
 
 target_include_directories(osshell PUBLIC include)
-target_link_libraries(osshell PUBLIC oscore ospkg osdisplay emnl_warnings)
+target_link_libraries(osshell PUBLIC osapp oscore ospkg osdisplay emnl_warnings)
 target_compile_features(osshell PUBLIC cxx_std_20)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
