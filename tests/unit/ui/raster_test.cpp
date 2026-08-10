@@ -120,6 +120,7 @@ int main() {
     const auto focus = theme.colors[color_index(os::ui::ColorRole::focus)];
     const os::ui::Rgba8 panel_fill{48U, 33U, 75U, 255U};
     const os::ui::Rgba8 shadowed_surface{6U, 8U, 14U, 255U};
+    const os::ui::Rgba8 partial_shadowed_surface{7U, 9U, 15U, 255U};
 
     // Root fill proves an actual pixel target is written.
     assert(pixels[0] == surface);
@@ -139,9 +140,16 @@ int main() {
     assert(interior_edge != surface);
     assert(interior_edge != focus);
 
-    // Depth has a useful opaque fallback before blur/alpha exists: the floating
-    // panel darkens already-painted support pixels at its positive offset.
+    // Depth has a useful opaque fallback before blur/alpha exists: a fully
+    // covered part of the floating panel shadow darkens support by the entire
+    // requested 20%.
     assert(pixels[18U * width + 28U] == shadowed_surface);
+
+    // The top-right shadow silhouette is coverage-aware too. At (28,6), three
+    // of four fixed samples are inside the offset swept contour, so the 20%
+    // shadow is attenuated to 15% rather than producing a jagged binary step.
+    // This pixel lies outside the panel itself and therefore isolates shadow AA.
+    assert(pixels[6U * width + 28U] == partial_shadowed_surface);
 
     // Focus is rendered as an explicit edge treatment rather than encoded only
     // by material/transparency, keeping interaction state legible.
