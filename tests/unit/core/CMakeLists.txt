@@ -9,6 +9,7 @@ function(add_emnl_core_test name source)
 endfunction()
 
 add_emnl_core_test(result_test result_test.cpp)
+add_emnl_core_test(result_trap_test result_trap_test.cpp)
 add_emnl_core_test(checked_test checked_test.cpp)
 add_emnl_core_test(strong_id_test strong_id_test.cpp)
 add_emnl_core_test(native_handle_test native_handle_test.cpp)

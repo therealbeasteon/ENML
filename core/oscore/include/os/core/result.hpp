@@ -1,6 +1,5 @@
 #pragma once
 
-#include <cassert>
 #include <concepts>
 #include <memory>
 #include <new>
@@ -8,6 +7,7 @@
 #include <utility>
 
 #include <os/core/error.hpp>
+#include <os/core/panic.hpp>
 
 namespace os::core {
 
@@ -82,23 +82,33 @@ public:
     [[nodiscard]] explicit constexpr operator bool() const noexcept { return has_value_; }
     [[nodiscard]] constexpr bool has_value() const noexcept { return has_value_; }
 
+    // Reading the wrong alternative is a broken invariant, not a recoverable
+    // error, and the guard must survive NDEBUG. See os/core/panic.hpp.
     [[nodiscard]] T& value() & noexcept {
-        assert(has_value_);
+        if (!has_value_) {
+            invariant_violated();
+        }
         return storage_.value;
     }
 
     [[nodiscard]] const T& value() const & noexcept {
-        assert(has_value_);
+        if (!has_value_) {
+            invariant_violated();
+        }
         return storage_.value;
     }
 
     [[nodiscard]] T&& value() && noexcept {
-        assert(has_value_);
+        if (!has_value_) {
+            invariant_violated();
+        }
         return std::move(storage_.value);
     }
 
     [[nodiscard]] Error error() const noexcept {
-        assert(!has_value_);
+        if (has_value_) {
+            invariant_violated();
+        }
         return storage_.error;
     }
 
@@ -131,10 +141,19 @@ public:
     [[nodiscard]] explicit constexpr operator bool() const noexcept { return has_value_; }
     [[nodiscard]] constexpr bool has_value() const noexcept { return has_value_; }
 
-    constexpr void value() const noexcept { assert(has_value_); }
+    // These stay constexpr: the trap branch is unreachable for a correctly used
+    // Result, so constant evaluation still succeeds. A misuse detected at
+    // compile time becomes a compile error, which is the outcome we want.
+    constexpr void value() const noexcept {
+        if (!has_value_) {
+            invariant_violated();
+        }
+    }
 
     [[nodiscard]] constexpr Error error() const noexcept {
-        assert(!has_value_);
+        if (has_value_) {
+            invariant_violated();
+        }
         return error_;
     }
 
