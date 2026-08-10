@@ -59,6 +59,67 @@ int main() {
     assert(measured);
     assert(measured.value().width_q6 != 0U);
 
+    // The production paragraph seam now uses ICU line-break analysis plus
+    // HarfBuzz shaping instead of the fake unit-test paragraph backend.
+    auto paragraph = os::ui::make_semantic_text("ENML keeps background work quiet");
+    assert(paragraph);
+    const os::ui::ParagraphConstraints wrap_constraints{
+        .max_width_q6 = os::ui::logical_from_dp(110U),
+        .max_lines = 4U,
+        .wrap = os::ui::ParagraphWrapMode::word,
+        .overflow = os::ui::ParagraphOverflowMode::clip,
+        .base_direction = os::ui::ParagraphBaseDirection::auto_detect,
+    };
+    auto wrapped = os::ui::shape_paragraph_with_fonts(
+        paragraph.value(),
+        style.value(),
+        faces.value(),
+        wrap_constraints,
+        backend.paragraph_shaper());
+    assert(wrapped);
+    assert(os::ui::paragraph_layout_valid(
+        paragraph.value(), style.value(), wrap_constraints, wrapped.value()));
+    assert(wrapped.value().line_count >= 2U);
+    assert(wrapped.value().line_count <= wrap_constraints.max_lines);
+
+    // ICU resolves the visual runs while HarfBuzz shapes each directional run.
+    // Hebrew bytes remain cluster offsets into the original SemanticText; the
+    // application still cannot submit glyph ids or reorder renderer runs.
+    auto mixed = os::ui::make_semantic_text("ENML \xD7\x90\xD7\x91\xD7\x92 42");
+    assert(mixed);
+    const os::ui::ParagraphConstraints bidi_constraints{
+        .max_width_q6 = os::ui::logical_from_dp(200U),
+        .max_lines = 1U,
+        .wrap = os::ui::ParagraphWrapMode::no_wrap,
+        .overflow = os::ui::ParagraphOverflowMode::clip,
+        .base_direction = os::ui::ParagraphBaseDirection::auto_detect,
+    };
+    auto bidi = os::ui::shape_paragraph_with_fonts(
+        mixed.value(),
+        style.value(),
+        faces.value(),
+        bidi_constraints,
+        backend.paragraph_shaper());
+    assert(bidi);
+    assert(os::ui::paragraph_layout_valid(
+        mixed.value(), style.value(), bidi_constraints, bidi.value()));
+    bool saw_rtl = false;
+    bool saw_ltr = false;
+    for (std::size_t index = 0U; index < bidi.value().run_count; ++index) {
+        saw_rtl = saw_rtl ||
+            bidi.value().runs[index].direction == os::ui::TextDirection::right_to_left;
+        saw_ltr = saw_ltr ||
+            bidi.value().runs[index].direction == os::ui::TextDirection::left_to_right;
+    }
+    assert(saw_rtl);
+    assert(saw_ltr);
+
+    const auto command_backend = backend.command_backend();
+    assert(command_backend.fonts.resolve != nullptr);
+    assert(command_backend.paragraphs.shape != nullptr);
+    assert(command_backend.line_metrics.resolve != nullptr);
+    assert(command_backend.glyphs.resolve != nullptr);
+
     const os::ui::FontFaceDescriptor* face =
         faces.value().find(shaped.value().glyphs[0].family);
     assert(face != nullptr);
@@ -119,8 +180,10 @@ int main() {
     assert(!invalid.valid());
     assert(invalid.font_provider().resolve == nullptr);
     assert(invalid.text_shaper().shape == nullptr);
+    assert(invalid.paragraph_shaper().shape == nullptr);
     assert(invalid.line_metrics().resolve == nullptr);
     assert(invalid.glyph_masks().resolve == nullptr);
+    assert(invalid.command_backend().paragraphs.shape == nullptr);
 
     return 0;
 }
