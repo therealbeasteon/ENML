@@ -1,23 +1,15 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 
-#include <os/app/lifecycle.hpp>
 #include <os/app/manager.hpp>
+#include <os/app/shell_lifecycle_client.hpp>
 #include <os/core/result.hpp>
 #include <os/core/span.hpp>
 #include <os/ipc/channel.hpp>
 #include <os/ipc/rpc.hpp>
 
 namespace os::app {
-
-// Private App Manager control namespace for the trusted phone shell. Knowledge
-// of this numeric ServiceId is not authority: every request is authenticated
-// from SCM_CREDENTIALS through the trusted identity resolver before any
-// lifecycle state is returned.
-inline constexpr os::core::ServiceId shell_lifecycle_control_service_id{0x0000F016U};
-inline constexpr std::uint32_t shell_lifecycle_operation_snapshot = 1U;
 
 using ShellLifecycleSnapshotFn = os::core::Result<ApplicationLifecycleSnapshot> (*)(
     void* context) noexcept;
@@ -52,18 +44,6 @@ public:
 private:
     ShellLifecycleBackend backend_ {};
     os::ipc::PeerIdentityResolver* identity_resolver_ {nullptr};
-};
-
-class ShellLifecycleControlClient final {
-public:
-    explicit ShellLifecycleControlClient(os::ipc::Channel& channel) noexcept
-        : connection_(channel) {}
-
-    [[nodiscard]] os::core::Result<ApplicationLifecycleSnapshot> snapshot(
-        os::core::MutableByteSpan scratch) noexcept;
-
-private:
-    os::ipc::ClientConnection connection_;
 };
 
 } // namespace os::app
