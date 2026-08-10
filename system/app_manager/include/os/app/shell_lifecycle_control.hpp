@@ -4,6 +4,7 @@
 
 #include <os/app/manager.hpp>
 #include <os/app/shell_lifecycle_client.hpp>
+#include <os/core/native_handle.hpp>
 #include <os/core/result.hpp>
 #include <os/core/span.hpp>
 #include <os/ipc/channel.hpp>
@@ -13,11 +14,18 @@ namespace os::app {
 
 using ShellLifecycleSnapshotFn = os::core::Result<ApplicationLifecycleSnapshot> (*)(
     void* context) noexcept;
+using ShellTakeCompositorCapabilityFn = os::core::Result<os::core::NativeHandle> (*)(
+    void* context) noexcept;
 
-// Internal composition seam only. Function pointers never cross IPC.
+// Internal composition seam only. Function pointers and backing contexts never
+// cross IPC. The optional compositor handoff is deliberately separate from the
+// lifecycle context so boot composition can provide a move-only control channel
+// without teaching ApplicationManager about compositor implementation details.
 struct ShellLifecycleBackend final {
-    void* context {nullptr};
+    void* snapshot_context {nullptr};
     ShellLifecycleSnapshotFn snapshot {nullptr};
+    void* compositor_context {nullptr};
+    ShellTakeCompositorCapabilityFn take_compositor_capability {nullptr};
 };
 
 [[nodiscard]] ShellLifecycleBackend shell_lifecycle_backend(
@@ -36,7 +44,7 @@ public:
 
     // Handles exactly one bounded request. Unauthorized callers receive one
     // generic access-denied result before operation or payload validation so the
-    // interface cannot be used as an application-lifecycle enumeration oracle.
+    // interface cannot be used as an application-lifecycle or capability oracle.
     [[nodiscard]] os::core::Result<void> dispatch_once(
         os::ipc::Channel& channel,
         os::core::MutableByteSpan scratch) noexcept;
