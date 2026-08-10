@@ -97,12 +97,13 @@ bool wait_for_file(
     os::app::ApplicationManager& manager,
     int directory_fd,
     const char* name) {
-    // The restart path deliberately exercises SIGKILL + supervisor readiness +
-    // policy republish + application reacquisition. Native AArch64 runners can
-    // transiently take longer than x86 to complete that full chain, so keep a
-    // bounded 12-second integration budget rather than treating scheduler
-    // variance as an authorization/lifecycle failure.
-    for (std::size_t attempt = 0U; attempt < 2400U; ++attempt) {
+    // This fixture deliberately stacks old-capability death observation,
+    // supervisor restart/readiness, policy republish and explicit application
+    // reacquisition. The child itself has two separately bounded retry phases,
+    // so the outer lifecycle observer must cover their combined worst-case plus
+    // scheduler variance. Keep the integration timeout bounded at 30 seconds;
+    // no production service timeout or authorization rule is relaxed here.
+    for (std::size_t attempt = 0U; attempt < 6000U; ++attempt) {
         auto maintained = manager.maintain();
         if (!maintained) {
             std::fprintf(
