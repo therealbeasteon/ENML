@@ -6,6 +6,7 @@ add_library(emnl_app_manager STATIC
     src/runtime_session.cpp
     src/input_delivery.cpp
     src/accessibility_broker.cpp
+    src/accessibility_control.cpp
 )
 
 add_library(emnl::app_manager ALIAS emnl_app_manager)
