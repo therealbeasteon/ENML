@@ -53,13 +53,27 @@ acquire_after_restart(
     os::core::ServiceId service,
     std::uint64_t known_generation,
     os::core::MutableByteSpan scratch) noexcept {
-    // Restart/re-readiness is asynchronous. `acquire()` is intentionally a
-    // one-shot operation with no hidden reconnect thread; callers may retry the
-    // explicit `not_running` state until the trusted lifecycle loop publishes a
-    // ready replacement generation.
+    // Process death and Supervisor waitpid observation are separate events. An
+    // old object socket can report peer_died a scheduling instant before the
+    // lifecycle loop has reaped that service process. During that window a
+    // runtime acquire may still be labelled with known_generation. Such an
+    // endpoint is never accepted as a replacement: close it and retry until the
+    // trusted Supervisor publishes a genuinely newer generation.
+    //
+    // `acquire()` remains a one-shot operation with no hidden reconnect worker;
+    // this explicit test/application policy is bounded and event-driven by the
+    // caller. `not_running` and same-generation observations are both transient
+    // states while the lifecycle loop converges.
     for (std::size_t attempt = 0U; attempt < 1000U; ++attempt) {
         auto acquired = runtime.acquire(service, known_generation, scratch);
-        if (acquired) return acquired;
+        if (acquired) {
+            if (acquired.value().generation != known_generation) {
+                return acquired;
+            }
+            acquired.value().channel.close();
+            short_delay();
+            continue;
+        }
         if (!is_service_not_running(acquired.error())) return acquired.error();
         short_delay();
     }
@@ -257,10 +271,7 @@ int main() {
         os::keys::key_service_id,
         old_key_generation,
         scratch);
-    if (!fresh_key_endpoint ||
-        fresh_key_endpoint.value().generation == old_key_generation) {
-        return 29;
-    }
+    if (!fresh_key_endpoint) return 29;
     auto fresh_key_channel = std::move(fresh_key_endpoint).value().channel;
     os::ipc::ClientConnection fresh_key_connection{fresh_key_channel};
     os::keys::KeyClient fresh_keys{fresh_key_connection};
@@ -300,10 +311,7 @@ int main() {
         os::storage::storage_service_id,
         old_storage_generation,
         scratch);
-    if (!fresh_storage_endpoint ||
-        fresh_storage_endpoint.value().generation == old_storage_generation) {
-        return 35;
-    }
+    if (!fresh_storage_endpoint) return 35;
     auto fresh_storage_channel = std::move(fresh_storage_endpoint).value().channel;
     os::ipc::ClientConnection fresh_storage_connection{fresh_storage_channel};
     os::storage::StorageClient fresh_storage{fresh_storage_connection};
