@@ -10,7 +10,8 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 - focus, effective visibility and action authorization have one source of truth in `SemanticTree`;
 - accessibility meaning comes from semantic projection, not framebuffer scraping/OCR;
 - accessibility snapshots are revision-bound and stale action requests fail closed;
-- platform accessibility transport design preserves application/session ownership and does not require an idle polling loop;
+- accessibility privilege is bound to a trusted principal and a nonzero runtime `AccessibilitySessionId` so revision/node tuples cannot be replayed against another session;
+- cross-process accessibility transport preserves exact application/session ownership and does not require an idle polling loop or unbounded serialized tree;
 - editable-text accessibility is not exposed until the text-input/IME payload contract is defined.
 
 ### Collections
@@ -32,7 +33,11 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 - no application receives `/dev/input`, evdev structures or compositor-private scene state;
 - global-scene hit-test/validation RPC is authenticated with kernel packet credentials plus a supervisor-resolved trusted input principal;
 - ordinary application principals cannot use the privileged input operations even when they possess a compositor endpoint;
-- the remaining target-process event transport cannot be redirected by an application-supplied target ID and must preserve the compositor-issued owner/surface/frame identity through delivery.
+- an application obtains its private runtime input endpoint only through its already-authenticated App Manager session and supplies no target process/principal/surface/native descriptor in that request;
+- target-process delivery preserves the compositor-issued exact owner/surface/frame identity and routes only to a live instance with the same `PeerIdentity`;
+- changing the target identity cannot redirect an event to another or merely convenient running application;
+- trusted and application receive sides reject replay/non-monotonic event sequences, including across endpoint reacquisition;
+- a stalled application cannot block trusted delivery indefinitely or create an unbounded userspace input queue; delivery uses a bounded nonblocking transport and fails closed when unavailable.
 
 ### Rendering and visual identity
 
@@ -59,13 +64,14 @@ This checklist defines what “good enough to merge M3.2” means. It is intenti
 
 - M3 Semantic UI passes GCC, Clang, ASan/UBSan and native AArch64;
 - M3 Display/Compositor passes GCC, Clang, ASan/UBSan and native AArch64;
+- M1/M2 workflows touched by shared App Manager/runtime-session changes remain green;
 - the current head, not merely an older baseline, is green before the PR leaves draft;
 - focused tests cover stale/replay/ownership/malformed paths for each new security boundary;
 - CI concurrency cancels superseded M3 PR runs so development does not create an ever-growing validation backlog.
 
 ## Allowed to remain later work
 
-M3.2 does not need to pretend to finish DRM/KMS/GPU hardware backends, production shader stacks, telephony/radio, verified boot/attestation, production TEE/HSM/TPM providers, recovery/update, complete suspend/resume/power management, final app SDK/marketplace policy or every final ENML visual asset.
+M3.2 does not need to pretend to finish raw hardware input-device discovery, full gesture/multitouch policy, DRM/KMS/GPU hardware backends, production shader stacks, telephony/radio, verified boot/attestation, production TEE/HSM/TPM providers, recovery/update, complete suspend/resume/power management, final app SDK/marketplace policy or every final ENML visual asset.
 
 Those are later milestones. M3.2 is complete when the semantic UI, renderer, text, input, accessibility, collection and trusted-presentation contracts are stable enough that those later layers do not need to bypass or replace them.
 
