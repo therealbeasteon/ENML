@@ -19,6 +19,8 @@ inline constexpr std::uint32_t invalid_scene_snapshot = 9U;
 inline constexpr std::uint32_t stale_scene_snapshot = 10U;
 inline constexpr std::uint32_t invalid_activation_intent = 11U;
 inline constexpr std::uint32_t stale_activation_intent = 12U;
+inline constexpr std::uint32_t preview_capture_denied = 13U;
+inline constexpr std::uint32_t stale_preview_grant = 14U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error shell_error(std::uint32_t code) noexcept {
