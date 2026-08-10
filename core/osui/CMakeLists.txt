@@ -27,3 +27,10 @@ target_compile_features(osui PUBLIC cxx_std_20)
 target_compile_options(osui PRIVATE
     $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
 )
+
+if(EMNL_BUILD_LINUX_TEXT_BACKEND)
+    if(NOT CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        message(FATAL_ERROR "EMNL_BUILD_LINUX_TEXT_BACKEND currently requires Linux")
+    endif()
+    add_subdirectory(platform/linux)
+endif()
