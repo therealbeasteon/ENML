@@ -97,11 +97,13 @@ target_compile_options(m2_broker_test_app PRIVATE
 
 # M2.10 keeps bootstrap fd 3 as the private runtime service session after READY.
 # This fixture observes current service generations, proves unauthorized
-# ServiceIds are denied, then reacquires Storage and Keys after real Supervisor
-# restarts while the original object capabilities remain stale.
+# ServiceIds are denied, acquires bounded input/collection capabilities, then
+# reacquires Storage and Keys after real Supervisor restarts while the original
+# object capabilities remain stale.
 add_executable(m2_runtime_session_test_app runtime_session_test_app.cpp)
 target_link_libraries(m2_runtime_session_test_app PRIVATE
     emnl::osapp
+    emnl::oscollection
     emnl::storage_service
     emnl::key_service
     emnl_warnings
