@@ -21,6 +21,11 @@ inline constexpr int service_endpoint_fd = 4;
 // only when ServiceLaunchConfig carries an already-authorized directory fd.
 // Applications never inherit this descriptor through the public service path.
 inline constexpr int service_state_directory_fd = 5;
+// Optional move/capability channel supplied only by trusted service composition.
+// The Supervisor retains the source descriptor and duplicates it into each
+// service generation at this fixed private fd. It is never exposed by
+// Supervisor::connect() or the application ServiceBroker.
+inline constexpr int service_private_capability_fd = 6;
 
 struct BootstrapRecordV1 final {
     os::core::PeerIdentity identity {};
