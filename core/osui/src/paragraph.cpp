@@ -58,12 +58,32 @@ namespace {
     return false;
 }
 
+[[nodiscard]] bool style_valid(const ResolvedTextStyle& style) noexcept {
+    if (style.metrics.size_q6 == 0U || style.metrics.size_q6 > max_logical_dimension_q6 ||
+        style.metrics.line_height_q6 == 0U ||
+        style.metrics.line_height_q6 > max_logical_dimension_q6 ||
+        style.metrics.weight < 1U || style.metrics.weight > 1000U ||
+        style.fallback.count == 0U ||
+        style.fallback.count > style.fallback.families.size()) {
+        return false;
+    }
+
+    for (std::size_t index = 0U; index < style.fallback.count; ++index) {
+        if (!font_family_valid(style.fallback.families[index])) return false;
+        for (std::size_t earlier = 0U; earlier < index; ++earlier) {
+            if (style.fallback.families[earlier] == style.fallback.families[index]) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
 [[nodiscard]] bool faces_valid(
     const ResolvedTextStyle& style,
     const FontFaceSet& faces) noexcept {
-    if (style.fallback.count == 0U ||
-        style.fallback.count > style.fallback.families.size() ||
-        faces.count != style.fallback.count || faces.count > faces.faces.size()) {
+    if (!style_valid(style) || faces.count != style.fallback.count ||
+        faces.count > faces.faces.size()) {
         return false;
     }
     for (std::size_t index = 0U; index < faces.count; ++index) {
@@ -98,7 +118,7 @@ bool paragraph_layout_valid(
     const ResolvedTextStyle& style,
     const ParagraphConstraints& constraints,
     const ShapedText& shaped) noexcept {
-    return constraints_valid(constraints) &&
+    return constraints_valid(constraints) && style_valid(style) &&
         shaped_text_valid(source, style, shaped) &&
         layout_fits(source, style, constraints, shaped);
 }
@@ -109,7 +129,8 @@ os::core::Result<ShapedText> shape_paragraph_with_fonts(
     const FontFaceSet& faces,
     const ParagraphConstraints& constraints,
     FontAwareParagraphShaperBackend backend) noexcept {
-    if (!semantic_text_valid(source) || !constraints_valid(constraints)) {
+    if (!semantic_text_valid(source) || !constraints_valid(constraints) ||
+        !style_valid(style)) {
         return ui_error(errors::invalid_paragraph_layout);
     }
     if (!faces_valid(style, faces)) return ui_error(errors::invalid_font_face);
