@@ -81,11 +81,11 @@ jobs:
 
       - name: Fuzz ${{ matrix.target }}
         env:
-          # Matches the existing smoke job. Leak detection on these harnesses is
-          # a separate change: it needs the known allocation behavior of the
-          # osidlc compiler triaged first, and turning it on blind would make
-          # the nightly signal unreliable on day one.
-          ASAN_OPTIONS: detect_leaks=0
+          # Leak detection is on here and in the per-PR smoke job. A leak in a
+          # parser reachable from untrusted input is a denial-of-service
+          # surface, so a nightly that cannot see one is missing the finding it
+          # is best placed to make.
+          ASAN_OPTIONS: detect_leaks=1
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           # Validation runs on a fuzz-infrastructure PR only need to prove the
           # plumbing works, not to search; the nightly run does the searching.
@@ -125,7 +125,7 @@ jobs:
           corpus="build/fuzz/corpus/${{ matrix.target }}"
           merged="build/fuzz/merged/${{ matrix.target }}"
           mkdir -p "$merged"
-          ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/${{ matrix.target }} \
+          ASAN_OPTIONS=detect_leaks=1 ./build/fuzz/fuzz/${{ matrix.target }} \
             -merge=1 "$merged" "$corpus"
           rm -rf "$corpus"
           mv "$merged" "$corpus"

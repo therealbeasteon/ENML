@@ -55,15 +55,18 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF
           -DEMNL_BUILD_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++
       - name: Build
-        run: cmake --build build/fuzz --parallel 2
-      - name: IPC decoder smoke
-        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/ipc_decoder_fuzz -runs=1000
-      - name: OSIDL compiler smoke
-        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/osidlc_compiler_fuzz -runs=1000
-      - name: RPC error envelope smoke
-        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/rpc_error_fuzz -runs=1000
-      - name: Package manifest analyzer smoke
-        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/package_manifest_fuzz -runs=5000
+        run: .github/scripts/run-build.sh 'fuzz-smoke' build/fuzz --parallel 2
+      # Every target, with leak detection on. A leak in a parser reachable from
+      # untrusted input is a denial-of-service surface, not untidiness.
+      - name: Fuzz smoke
+        run: >-
+          .github/scripts/run-fuzz-smoke.sh build/fuzz
+          ipc_decoder_fuzz=1000
+          osidlc_compiler_fuzz=1000
+          rpc_error_fuzz=1000
+          package_manifest_fuzz=5000
+          storage_relative_path_fuzz=5000
+          boot_state_fuzz=5000
 
   arm64-native:
     runs-on: ubuntu-24.04-arm
