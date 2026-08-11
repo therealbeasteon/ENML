@@ -1,5 +1,6 @@
 add_library(emnl_ossandbox STATIC
     src/sandbox_linux.cpp
+    src/substrate_linux.cpp
 )
 
 add_library(emnl::ossandbox ALIAS emnl_ossandbox)
