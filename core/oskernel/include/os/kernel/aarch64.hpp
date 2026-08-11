@@ -43,49 +43,29 @@ decode_boot_exception_level(std::uint64_t current_el) noexcept {
     }
 }
 
-// Convert an interval into architectural counter ticks without floating point
-// and without overflowing an intermediate. CNTFRQ_EL0 is architecturally a
-// 32-bit frequency field, but this helper accepts uint64_t and therefore checks
-// the stronger caller-independent bound explicitly.
+// CNTFRQ_EL0 exposes a 32-bit counter frequency. Keeping that width in the
+// contract matters: it gives the conversion a simple, reviewable overflow proof
+// instead of pretending an arbitrary uint64 frequency is architectural input.
 [[nodiscard]] inline os::core::Result<std::uint64_t> nanoseconds_to_ticks(
     std::uint64_t nanoseconds,
-    std::uint64_t frequency_hz) noexcept {
-    if (frequency_hz == 0ULL) {
+    std::uint32_t frequency_hz) noexcept {
+    if (frequency_hz == 0U) {
         return error(errors::invalid_counter_frequency);
     }
 
+    const std::uint64_t frequency = static_cast<std::uint64_t>(frequency_hz);
     const std::uint64_t whole_seconds = nanoseconds / nanoseconds_per_second;
     const std::uint64_t remainder_ns = nanoseconds % nanoseconds_per_second;
 
-    if (whole_seconds > (std::numeric_limits<std::uint64_t>::max() / frequency_hz)) {
+    if (whole_seconds > (std::numeric_limits<std::uint64_t>::max() / frequency)) {
         return error(errors::timer_out_of_range);
     }
-    const std::uint64_t whole_ticks = whole_seconds * frequency_hz;
+    const std::uint64_t whole_ticks = whole_seconds * frequency;
 
-    // Split the remainder product when an arbitrary future platform frequency
-    // would overflow. The common architectural case (<= 32-bit CNTFRQ) takes
-    // the direct exact-integer path.
-    std::uint64_t fractional_ticks = 0ULL;
-    if (remainder_ns != 0ULL) {
-        if (frequency_hz <= (std::numeric_limits<std::uint64_t>::max() / remainder_ns)) {
-            fractional_ticks = (remainder_ns * frequency_hz) / nanoseconds_per_second;
-        } else {
-            const std::uint64_t frequency_whole = frequency_hz / nanoseconds_per_second;
-            const std::uint64_t frequency_remainder = frequency_hz % nanoseconds_per_second;
-            if (remainder_ns > (std::numeric_limits<std::uint64_t>::max() / frequency_whole) &&
-                frequency_whole != 0ULL) {
-                return error(errors::timer_out_of_range);
-            }
-            const std::uint64_t part_a = remainder_ns * frequency_whole;
-            const std::uint64_t part_b =
-                (remainder_ns * frequency_remainder) / nanoseconds_per_second;
-            if (part_a > (std::numeric_limits<std::uint64_t>::max() - part_b)) {
-                return error(errors::timer_out_of_range);
-            }
-            fractional_ticks = part_a + part_b;
-        }
-    }
-
+    // remainder_ns < 1e9 and frequency <= UINT32_MAX, so the product is below
+    // 2^64 by construction.
+    const std::uint64_t fractional_ticks =
+        (remainder_ns * frequency) / nanoseconds_per_second;
     if (whole_ticks > (std::numeric_limits<std::uint64_t>::max() - fractional_ticks)) {
         return error(errors::timer_out_of_range);
     }
@@ -97,31 +77,21 @@ decode_boot_exception_level(std::uint64_t current_el) noexcept {
 // contract that observed machine time never decreases.
 [[nodiscard]] inline std::uint64_t ticks_to_nanoseconds_saturating(
     std::uint64_t ticks,
-    std::uint64_t frequency_hz) noexcept {
-    if (frequency_hz == 0ULL) return 0ULL;
+    std::uint32_t frequency_hz) noexcept {
+    if (frequency_hz == 0U) return 0ULL;
 
-    const std::uint64_t whole_seconds = ticks / frequency_hz;
-    const std::uint64_t remainder_ticks = ticks % frequency_hz;
+    const std::uint64_t frequency = static_cast<std::uint64_t>(frequency_hz);
+    const std::uint64_t whole_seconds = ticks / frequency;
+    const std::uint64_t remainder_ticks = ticks % frequency;
     if (whole_seconds >
         (std::numeric_limits<std::uint64_t>::max() / nanoseconds_per_second)) {
         return std::numeric_limits<std::uint64_t>::max();
     }
     const std::uint64_t whole_ns = whole_seconds * nanoseconds_per_second;
 
-    std::uint64_t fractional_ns = 0ULL;
-    if (remainder_ticks != 0ULL) {
-        if (remainder_ticks <=
-            (std::numeric_limits<std::uint64_t>::max() / nanoseconds_per_second)) {
-            fractional_ns = (remainder_ticks * nanoseconds_per_second) / frequency_hz;
-        } else {
-            // remainder_ticks < frequency_hz. Divide first if multiplication
-            // cannot be represented; this branch is for frequencies wider than
-            // the architectural CNTFRQ field and intentionally loses only the
-            // sub-nanosecond remainder.
-            fractional_ns = remainder_ticks / (frequency_hz / nanoseconds_per_second);
-        }
-    }
-
+    // remainder_ticks < frequency <= UINT32_MAX, so this product is bounded.
+    const std::uint64_t fractional_ns =
+        (remainder_ticks * nanoseconds_per_second) / frequency;
     if (whole_ns > (std::numeric_limits<std::uint64_t>::max() - fractional_ns)) {
         return std::numeric_limits<std::uint64_t>::max();
     }
