@@ -22,7 +22,7 @@ jobs:
       - name: Build key foundation, hierarchy, policy, product and persistence gates
         run: >-
           cmake --build --preset host-debug
-          --target key_registry_test key_random_id_source_test key_hierarchy_test key_policy_test
+          --target key_registry_test key_random_id_source_test key_hierarchy_test key_profile_root_erasure_test key_policy_test
           key_control_policy_test key_service_identity_test key_service_aead_test key_nonce_independence_test
           key_provider_persistence_test key_registry_persistence_test
           key_service_persistence_restart_test key_service_rpc_aead_test
@@ -44,7 +44,7 @@ jobs:
       - name: Build key product gates with sanitizers
         run: >-
           cmake --build --preset host-asan
-          --target key_registry_test key_random_id_source_test key_hierarchy_test key_policy_test
+          --target key_registry_test key_random_id_source_test key_hierarchy_test key_profile_root_erasure_test key_policy_test
           key_control_policy_test key_service_identity_test key_service_aead_test key_nonce_independence_test
           key_provider_persistence_test key_registry_persistence_test
           key_service_persistence_restart_test key_service_rpc_aead_test
@@ -70,7 +70,7 @@ jobs:
       - name: Build key foundation, hierarchy, policy, product and persistence gates
         run: >-
           cmake --build build/m2-keys-clang
-          --target key_registry_test key_random_id_source_test key_hierarchy_test key_policy_test
+          --target key_registry_test key_random_id_source_test key_hierarchy_test key_profile_root_erasure_test key_policy_test
           key_control_policy_test key_service_identity_test key_service_aead_test key_nonce_independence_test
           key_provider_persistence_test key_registry_persistence_test
           key_service_persistence_restart_test key_service_rpc_aead_test
@@ -94,7 +94,7 @@ jobs:
       - name: Build key foundation, hierarchy, policy, product and persistence gates natively
         run: >-
           cmake --build --preset host-debug
-          --target key_registry_test key_random_id_source_test key_hierarchy_test key_policy_test
+          --target key_registry_test key_random_id_source_test key_hierarchy_test key_profile_root_erasure_test key_policy_test
           key_control_policy_test key_service_identity_test key_service_aead_test key_nonce_independence_test
           key_provider_persistence_test key_registry_persistence_test
           key_service_persistence_restart_test key_service_rpc_aead_test
