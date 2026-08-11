@@ -32,13 +32,7 @@ jobs:
             report="${report}${flag} -> ${count} occurrences%0A"
           done
           sample="$(grep -m1 -o -- '-fstack-protector[^ ]*' build/host-debug/build.ninja || echo NONE)"
-          report="${report}first stack-protector token seen: ${sample}%0A"
-          bin="$(find build/host-debug -type f -perm -u+x -name 'system.storage' | head -1)"
-          report="${report}binary: ${bin}%0A"
-          report="${report}symbol table lines: $(readelf -sW "$bin" | wc -l)%0A"
-          report="${report}symbols matching chk: $(readelf -sW "$bin" | grep -c -i chk || true)%0A"
-          report="${report}linked against: $(readelf -dW "$bin" | grep -c NEEDED || true) shared objects%0A"
-          report="${report}canary-ish symbols: $(readelf -sW "$bin" | grep -i -o -E '__stack[a-z_]*|__memcpy_chk' | sort -u | tr '\n' ' ' || true)"
+          report="${report}first stack-protector token seen: ${sample}"
           echo "::notice title=hardening flags::${report}"
       - name: Verify binary hardening
         run: >-

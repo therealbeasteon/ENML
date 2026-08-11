@@ -83,6 +83,29 @@ compute object sizes and emits a warning otherwise, which `-Werror` would make
 fatal. Most CI configurations are Debug. This is a real reduction in what the
 gates prove, not a technicality.
 
+**There is no time protection, and constant-time comparison is not it.** The
+cache-locking work in the references is explicit that timing attacks exploit
+*resource sharing*, and that the two established defences are constant-time code
+and resource isolation - the first costing wasted work and depending on
+micro-architectural behaviour the ISA does not promise, the second costing
+either performance or silicon. It also names three leakage sources found on a
+real core: cache accesses, unaligned data requests, and division and modulo,
+which are not constant-time instructions on many implementations.
+
+The consequence for ENML is that time protection is an *operating system*
+responsibility requiring platform cooperation, not a property individual
+functions can have. The reference design's OS is responsible for granting
+partitioning permission to the processes that need it, handling failed
+acquisitions, and - the part that is a security bug rather than a feature -
+reclaiming partitions held by processes that were killed. ENML's supervisor
+already owns exactly that shape of problem for identities and descriptors, and
+owns none of it for micro-architectural resources.
+
+`constant_time_equal` is a point fix for one class of comparison. It is not
+time protection and must not be described as such. Representing what
+partitioning a platform provides belongs in the capability vocabulary alongside
+the boot roots of trust and device DMA confinement, and does not exist yet.
+
 **No side-channel testing of any kind.** Constant-timeness rests on the shape of
 the implementation and its optimisation barrier. The unit tests establish
 correctness only; timing cannot be asserted meaningfully on a shared runner, and

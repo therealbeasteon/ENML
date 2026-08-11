@@ -219,3 +219,9 @@ Known gap, recorded rather than papered over: `AeadTag` and `AeadNonce` expose
 their bytes as public `std::array` members, so `a.bytes == b.bytes` still
 compiles and is still variable-time. The rule above is the control; closing it
 properly means wrapping the storage so the naive comparison cannot be written.
+
+Division and modulo are not constant-time instructions on many implementations,
+and neither are unaligned accesses. A secret must never influence a divisor, a
+shift amount taken from data, or an alignment. This is a separate rule from
+avoiding secret-indexed tables and is missed more often, because the code looks
+arithmetic rather than table-driven.
