@@ -218,9 +218,23 @@ stands, independent of milestone numbering.
 - [x] **M5.0** AEAD nonces are provider-owned by invariant, not by accident.
       A caller cannot influence the IV, no nonce repeats under a key, and a
       test asserts all three properties whose absence produced CVE-2021-25444.
-- [ ] **M5.0** Verified boot foundation. Design and exit criteria are written;
-      completion is blocked on choosing a target SoC, since a chain of trust is
-      rooted in specific silicon.
+- [x] **M5.0** `BootStateV1` — the verified boot state record. Bounded,
+      explicitly little-endian, fail-closed. The default state is unverified,
+      unknown discriminants are rejected rather than defaulted, and coherence
+      (a verified state must measure something; a closed device must measure
+      every link) is enforced at the parser. Fuzzed, and gated on GCC, Clang,
+      sanitizers and native AArch64.
+- [x] **M5.0** Design revised against the boot references: the
+      patched-configuration problem resolved with a signed allow-list, static
+      versus dynamic root of trust made an explicit platform assessment, and
+      update safety (paired slots, rollback as its own step, chosen verity
+      failure policy) added.
+- [ ] **M5.0** Verified boot itself. Completion is blocked on choosing a target
+      SoC, since a chain of trust is rooted in specific silicon.
+- [ ] **M5.0** Signed boot state. The record is not self-authenticating; it is
+      trusted because trusted early boot produces it and it crosses no
+      untrusted boundary. Attestation would require a signature and its own
+      threat model.
 
 ---
 
