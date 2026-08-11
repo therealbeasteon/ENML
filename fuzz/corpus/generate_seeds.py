@@ -249,6 +249,59 @@ def boot_state_seeds() -> dict[str, bytes]:
     }
 
 
+# core/oskeys/include/os/keys/persistence.hpp
+KEY_REGISTRY_MAGIC = 0x3147524B  # "KRG1" little-endian
+KEY_REGISTRY_VERSION = 1
+KEY_REGISTRY_HEADER_BYTES = 32
+
+
+def key_registry_snapshot(record_count: int, total_version_count: int, body: bytes,
+                          total_size: int | None = None) -> bytes:
+    """One KRG1 snapshot header, followed by whatever body is supplied.
+
+    total_size must equal the real file length or the header is rejected before
+    any record is read, so it is computed rather than supplied unless a seed is
+    deliberately testing that check.
+    """
+    size = KEY_REGISTRY_HEADER_BYTES + len(body) if total_size is None else total_size
+    header = b"".join((
+        struct.pack("<I", KEY_REGISTRY_MAGIC),
+        struct.pack("<H", KEY_REGISTRY_VERSION),
+        struct.pack("<H", KEY_REGISTRY_HEADER_BYTES),
+        struct.pack("<I", size),
+        struct.pack("<H", record_count),
+        struct.pack("<H", 0),
+        struct.pack("<I", total_version_count),
+        struct.pack("<I", 0),
+        struct.pack("<Q", 0),
+    ))
+    assert len(header) == KEY_REGISTRY_HEADER_BYTES, len(header)
+    return header + body
+
+
+def key_registry_seeds() -> dict[str, bytes]:
+    """Straddle the header checks, which are what a mutator cannot reach alone.
+
+    total_size must match the file length exactly, so an unseeded run never gets
+    past the header no matter how long it runs.
+    """
+    return {
+        "empty_registry": key_registry_snapshot(0, 0, b""),
+        "record_count_max": key_registry_snapshot(128, 0, b""),
+        "record_count_over_max": key_registry_snapshot(129, 0, b""),
+        "version_count_max": key_registry_snapshot(0, 128 * 8, b""),
+        "version_count_over_max": key_registry_snapshot(0, 128 * 8 + 1, b""),
+        # One record claimed but no body: the record read must fail rather than
+        # consume whatever follows in memory.
+        "record_claimed_absent": key_registry_snapshot(1, 1, b""),
+        # Header claims a length the file does not have, in both directions.
+        "total_size_too_large": key_registry_snapshot(0, 0, b"", total_size=4096),
+        "total_size_too_small": key_registry_snapshot(0, 0, bytes(64), total_size=32),
+        # Truncated below the header.
+        "short_header": key_registry_snapshot(0, 0, b"")[:16],
+    }
+
+
 def write_seeds(root: pathlib.Path, target: str, seeds: dict[str, bytes]) -> int:
     directory = root / target
     directory.mkdir(parents=True, exist_ok=True)
@@ -270,6 +323,7 @@ def main(argv: list[str]) -> int:
     written += write_seeds(
         root, "storage_relative_path_fuzz", storage_relative_path_seeds())
     written += write_seeds(root, "boot_state_fuzz", boot_state_seeds())
+    written += write_seeds(root, "keys_registry_snapshot_fuzz", key_registry_seeds())
 
     # osidlc seeds are the checked-in interface definitions themselves. They are
     # the only guaranteed-valid OSIDL in existence, so nothing synthetic here

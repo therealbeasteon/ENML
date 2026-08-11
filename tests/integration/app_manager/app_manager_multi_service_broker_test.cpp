@@ -90,7 +90,13 @@ pkg::ManifestPath parse_manifest_path(std::string_view value) {
 bool wait_until_gone(
     os::app::ApplicationManager& manager,
     os::core::ApplicationInstanceId instance) {
-    for (std::size_t attempt = 0U; attempt < 200U; ++attempt) {
+    // Bounded at 30 seconds rather than one, matching the M2.10 runtime
+    // session fixture. Instance teardown waits on a child exiting and being
+    // reaped, which is subject to scheduler variance, and this suite runs four
+    // jobs concurrently on shared CI runners. No production timeout or
+    // authorization rule is relaxed; this only widens how long the harness
+    // waits for work the OS has already been asked to do.
+    for (std::size_t attempt = 0U; attempt < 6000U; ++attempt) {
         timespec delay{.tv_sec = 0, .tv_nsec = 5'000'000L};
         (void)::nanosleep(&delay, nullptr);
         auto maintained = manager.maintain();
