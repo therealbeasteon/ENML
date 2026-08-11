@@ -389,6 +389,19 @@ much code has to be trusted.
       position, monopolise the processor - has no path here, and `yield`
       forfeits rather than banks. Starvation is deliberate and argued rather
       than overlooked.
+- [x] **M7.1f** The four tables composed into one kernel, in
+      `docs/M7_1_KERNEL_COMPOSITION.md`. Four individually correct state
+      machines are not a kernel. A thread's death now reaches all four in one
+      operation that reports what each released - the failure it guards is a
+      forgotten call, which leaves a capability outliving its holder or an
+      interrupt line nobody owns, and neither fails loudly. The scheduler's view
+      of runnability and effective priority is recomputed from the rendezvous
+      after every operation rather than patched along each path, on M7.1b's
+      argument that an adjustment missed once stays wrong. This is what makes
+      priority inheritance actually reach the scheduler: before it, M7.1b
+      computed the right value and nothing carried it across, so a priority-zero
+      server serving a priority-nine client still lost the processor to an
+      unrelated thread at five.
 - [x] **M7.3a** Machine-layer contract defined before implementation, in
       `docs/M7_3_MACHINE.md`. Assembly may live only behind it; nothing in it
       makes a policy decision. Device memory is a kind rather than a hint,
