@@ -7,10 +7,6 @@
 namespace os::ui {
 namespace {
 
-[[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
-    return os::core::make_error(os::core::ErrorDomain::ui, code);
-}
-
 struct Extent final {
     std::int64_t left {0};
     std::int64_t top {0};
