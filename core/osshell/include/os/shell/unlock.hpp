@@ -99,6 +99,60 @@ inline constexpr std::uint32_t attempts_before_backoff = 5U;
 inline constexpr std::uint64_t initial_backoff_nanoseconds = 30'000'000'000U;
 inline constexpr std::uint64_t maximum_backoff_nanoseconds = 3'600'000'000'000U;
 
+// Erasure after repeated wrong credentials is the owner's choice, and so is the
+// count. The reference platform offers exactly this - users "can choose to have
+// the device automatically wiped if the passcode is entered incorrectly after 10
+// consecutive attempts", and the threshold can be set lower.
+//
+// Off unless chosen. Not because it is a weak feature - it is the strongest one
+// here - but because irreversible destruction that a user did not ask for is a
+// different product, and a setting nobody opted into is one they cannot be said
+// to have understood.
+inline constexpr std::uint32_t default_erasure_threshold = 10U;
+
+// The threshold is bounded at both ends, and both bounds do work.
+//
+// Below the floor the feature stops distinguishing an attacker from an owner
+// with cold hands: a threshold of two is a device that erases itself the second
+// time somebody fumbles in the dark. Above the ceiling the escalating backoff has
+// already made the attempt cost hours, so a larger number buys nothing an
+// attacker notices and only delays the owner's protection.
+inline constexpr std::uint32_t minimum_erasure_threshold = 5U;
+inline constexpr std::uint32_t maximum_erasure_threshold = 20U;
+
+// What the platform can actually promise about destroying a key.
+//
+// The reference platform is explicit that this is the hard part: securely
+// erasing keys "is especially challenging to do so on flash storage, where
+// wear-leveling might mean multiple copies of data need to be erased", and it
+// solves it with storage dedicated to the purpose that addresses and erases
+// blocks at a very low level.
+//
+// ENML cannot assume that hardware exists. It can refuse to claim what it does
+// not have - the same discipline M5.5 applies to boot state, where a device
+// without an immutable first stage is not permitted to describe itself as
+// closed and verified. A phone that shows "device erased" while the flash
+// translation layer still holds recoverable copies has told its owner something
+// false at the moment it mattered most.
+enum class PlatformErasure : std::uint8_t {
+    // Key material lives where it can be destroyed for real. Destroying it makes
+    // the data cryptographically unrecoverable, which is the only erasure that
+    // survives a laboratory.
+    effaceable = 1U,
+    // Keys are destroyed as well as the storage stack allows, and no
+    // forensic-grade claim is available. Honest, and much weaker.
+    best_effort = 2U,
+};
+
+[[nodiscard]] constexpr bool valid_platform_erasure(PlatformErasure value) noexcept {
+    switch (value) {
+    case PlatformErasure::effaceable:
+    case PlatformErasure::best_effort:
+        return true;
+    }
+    return false;
+}
+
 // What the verifier concluded about a submitted credential.
 //
 // Producing this is a constant-time comparison against stored verifiers, and it
@@ -165,6 +219,43 @@ struct UnlockOutcome final {
 class UnlockAuthority final {
 public:
     UnlockAuthority() noexcept = default;
+    explicit UnlockAuthority(PlatformErasure erasure) noexcept;
+
+    // Turns erasure-on-repeated-failure on or off, and sets the count.
+    //
+    // The owner's decision, made once and applied to every attempt after it.
+    // Refused outside the bounds above rather than clamped: silently accepting a
+    // threshold of two and enforcing five would mean the setting shown to the
+    // user is not the setting in force, and the user is the only party who can
+    // weigh this trade.
+    [[nodiscard]] os::core::Result<void> configure_erasure(
+        bool enabled,
+        std::uint32_t threshold = default_erasure_threshold) noexcept;
+
+    [[nodiscard]] bool erasure_enabled() const noexcept;
+    [[nodiscard]] std::uint32_t erasure_threshold() const noexcept;
+
+    // Whether the owner has decided about erasure at all.
+    //
+    // False until `configure_erasure` is called either way, and the shell must
+    // not complete setup while it is false. This is deliberately not a default.
+    //
+    // Defaulting it off makes the device quietly weaker than its owner believes;
+    // defaulting it on destroys somebody's photographs the first time a child
+    // guesses at a lock screen. Both failure modes are silent, and the thing
+    // they have in common is that nobody chose. A setting whose wrong value
+    // cannot be undone is one the owner has to be asked about once, in words,
+    // while nothing is on fire.
+    [[nodiscard]] bool erasure_choice_made() const noexcept;
+
+    // Whether destroying a key on this platform actually defeats a laboratory.
+    //
+    // A static fact about the hardware, not a per-attempt one, so it is asked
+    // rather than reported on an outcome. The shell needs it to describe the
+    // setting honestly: on a platform that cannot truly efface, "erase all data"
+    // is a weaker promise and saying so is the difference between a security
+    // feature and a reassuring noise.
+    [[nodiscard]] bool forensic_erasure_available() const noexcept;
 
     // Evaluates one attempt.
     //
@@ -211,6 +302,11 @@ private:
     std::uint64_t locked_until_ {0U};
     std::uint64_t last_submit_ {0U};
     bool destroyed_ {false};
+
+    PlatformErasure erasure_ {PlatformErasure::best_effort};
+    bool erasure_enabled_ {false};
+    bool erasure_chosen_ {false};
+    std::uint32_t erasure_threshold_ {default_erasure_threshold};
 };
 
 } // namespace os::shell

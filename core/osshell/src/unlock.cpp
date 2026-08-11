@@ -27,8 +27,50 @@ inline constexpr std::uint32_t maximum_counted_attempts = 1024U;
 
 } // namespace
 
+UnlockAuthority::UnlockAuthority(PlatformErasure erasure) noexcept
+    : erasure_(valid_platform_erasure(erasure) ? erasure : PlatformErasure::best_effort) {
+    // An unrecognised value degrades to the weaker claim rather than the
+    // stronger one. Every other default in this file fails closed; a platform
+    // capability that failed *open* would have the device promising a laboratory
+    // could not recover the data because an enum was out of range.
+}
+
 bool UnlockAuthority::protected_domain_destroyed() const noexcept {
     return destroyed_;
+}
+
+bool UnlockAuthority::erasure_enabled() const noexcept {
+    return erasure_enabled_;
+}
+
+bool UnlockAuthority::erasure_choice_made() const noexcept {
+    return erasure_chosen_;
+}
+
+std::uint32_t UnlockAuthority::erasure_threshold() const noexcept {
+    return erasure_threshold_;
+}
+
+bool UnlockAuthority::forensic_erasure_available() const noexcept {
+    return erasure_ == PlatformErasure::effaceable;
+}
+
+os::core::Result<void> UnlockAuthority::configure_erasure(
+    bool enabled,
+    std::uint32_t threshold) noexcept {
+    if (enabled &&
+        (threshold < minimum_erasure_threshold || threshold > maximum_erasure_threshold)) {
+        return shell_error(errors::invalid_erasure_threshold);
+    }
+    erasure_enabled_ = enabled;
+    // Recorded whichever way it went. Declining is a decision, and a device that
+    // cannot tell "the owner said no" from "nobody has been asked" will ask
+    // again forever or never ask at all.
+    erasure_chosen_ = true;
+    if (enabled) {
+        erasure_threshold_ = threshold;
+    }
+    return {};
 }
 
 std::uint32_t UnlockAuthority::consecutive_invalid_attempts() const noexcept {
@@ -116,12 +158,31 @@ os::core::Result<UnlockOutcome> UnlockAuthority::submit(
         if (backoff != 0U) {
             locked_until_ = now_nanoseconds + backoff;
         }
+
+        // Erasure on repeated failure, if the owner asked for it.
+        //
+        // Destruction of the key, not overwriting of the data. The reference
+        // platform is explicit that secure erasure is "especially challenging on
+        // flash storage, where wear-leveling might mean multiple copies of data
+        // need to be erased" - so overwriting is the one approach that cannot
+        // deliver what this feature promises, and destroying the key that makes
+        // the data readable is the one that can. It is the same directive the
+        // duress path emits, because it is the same operation: exactly one way
+        // to make data unrecoverable, reached by two different judgements.
+        //
+        // Whether it actually defeats a laboratory depends on the platform, and
+        // `forensic_erasure_available()` is how a caller finds out rather than
+        // assuming.
+        const bool erase = erasure_enabled_ && !destroyed_ &&
+            invalid_attempts_ >= erasure_threshold_;
+        if (erase) destroyed_ = true;
+
         // No history is written. An unrecognised guess is not one of the user's
         // credentials, so letting it set the iteration baseline would let an
         // attacker arm the lock by typing nonsense.
         return os::core::Result<UnlockOutcome>{UnlockOutcome{
             UnlockDisposition::refused,
-            false,
+            erase,
             release_at,
             later_of(release_at, locked_until_)}};
     }

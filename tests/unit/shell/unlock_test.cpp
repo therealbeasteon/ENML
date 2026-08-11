@@ -317,5 +317,126 @@ int main() {
                    "time going backwards was computed on")) return 1;
     }
 
+    // Erasure on repeated failure is off unless the owner turns it on.
+    // Irreversible destruction nobody asked for is a different product.
+    {
+        UnlockAuthority authority;
+        if (!check(!authority.erasure_enabled(), "erasure was on by default")) return 1;
+        // And the absence of a decision is distinguishable from a decision to
+        // decline, so the shell knows it still has to ask.
+        if (!check(!authority.erasure_choice_made(), "an unasked device claimed a decision")) {
+            return 1;
+        }
+
+        std::uint64_t now = 0U;
+        for (std::uint32_t i = 0U; i < 40U; ++i) {
+            (void)must_submit(authority, now, CredentialClass::invalid,
+                              os::shell::invalid_credential_tag_value);
+            now = authority.locked_until_nanoseconds() + second;
+        }
+        if (!check(!authority.protected_domain_destroyed(),
+                   "guessing destroyed the domain without the owner asking")) return 1;
+    }
+
+    // Turned on, it destroys the key at the chosen count - and it is the key,
+    // not the data. Overwriting cannot survive a flash translation layer; a
+    // destroyed key can.
+    {
+        UnlockAuthority authority;
+        if (!check(static_cast<bool>(authority.configure_erasure(true, 5U)),
+                   "configuring erasure was refused")) return 1;
+        if (!check(authority.erasure_enabled() && authority.erasure_threshold() == 5U,
+                   "the setting was not recorded")) return 1;
+
+        std::uint64_t now = 0U;
+        bool destroyed_on = false;
+        for (std::uint32_t i = 1U; i <= 5U; ++i) {
+            const auto outcome = must_submit(authority, now, CredentialClass::invalid,
+                                             os::shell::invalid_credential_tag_value);
+            if (outcome.destroy_protected_domain) {
+                destroyed_on = true;
+                if (!check(i == 5U, "erasure fired before the chosen count")) return 1;
+            }
+            now = authority.locked_until_nanoseconds() + second;
+        }
+        if (!check(destroyed_on, "the chosen count did not erase")) return 1;
+        if (!check(authority.protected_domain_destroyed(), "destruction was not recorded")) {
+            return 1;
+        }
+
+        // One shot. The key service must not be told to destroy twice.
+        const auto after = must_submit(authority, now, CredentialClass::invalid,
+                                       os::shell::invalid_credential_tag_value);
+        if (!check(!after.destroy_protected_domain, "erasure was issued twice")) return 1;
+    }
+
+    // A correct credential before the threshold clears the count, so the owner
+    // who fumbles and then succeeds keeps their data.
+    {
+        UnlockAuthority authority;
+        (void)authority.configure_erasure(true, 5U);
+
+        std::uint64_t now = 0U;
+        for (std::uint32_t i = 0U; i < 4U; ++i) {
+            (void)must_submit(authority, now, CredentialClass::invalid,
+                              os::shell::invalid_credential_tag_value);
+            now += second;
+        }
+        (void)must_submit(authority, now, CredentialClass::nominal, nominal_tag);
+        if (!check(authority.consecutive_invalid_attempts() == 0U, "the count did not clear")) {
+            return 1;
+        }
+
+        now += second;
+        for (std::uint32_t i = 0U; i < 4U; ++i) {
+            (void)must_submit(authority, now, CredentialClass::invalid,
+                              os::shell::invalid_credential_tag_value);
+            now += second;
+        }
+        if (!check(!authority.protected_domain_destroyed(),
+                   "a successful unlock did not save the owner's data")) return 1;
+    }
+
+    // The threshold is bounded at both ends, and refused rather than clamped -
+    // a setting shown to the user that is not the setting in force is worse than
+    // no setting.
+    {
+        UnlockAuthority authority;
+        if (!check(refused_with(
+                       authority.configure_erasure(true, os::shell::minimum_erasure_threshold - 1U),
+                       os::shell::errors::invalid_erasure_threshold),
+                   "a threshold below the floor was accepted")) return 1;
+        if (!check(refused_with(
+                       authority.configure_erasure(true, os::shell::maximum_erasure_threshold + 1U),
+                       os::shell::errors::invalid_erasure_threshold),
+                   "a threshold above the ceiling was accepted")) return 1;
+        if (!check(!authority.erasure_enabled(), "a refused configuration took effect")) return 1;
+
+        // Turning it off needs no threshold at all.
+        if (!check(static_cast<bool>(authority.configure_erasure(false, 0U)),
+                   "disabling erasure was refused")) return 1;
+        if (!check(authority.erasure_choice_made(),
+                   "declining was not recorded as a decision")) return 1;
+    }
+
+    // What the platform can actually promise is asked, not assumed. On hardware
+    // that cannot truly efface, the shell must not describe this as putting the
+    // data beyond a laboratory.
+    {
+        UnlockAuthority best_effort{os::shell::PlatformErasure::best_effort};
+        if (!check(!best_effort.forensic_erasure_available(),
+                   "a best-effort platform claimed forensic erasure")) return 1;
+
+        UnlockAuthority effaceable{os::shell::PlatformErasure::effaceable};
+        if (!check(effaceable.forensic_erasure_available(),
+                   "an effaceable platform did not report it")) return 1;
+
+        // An unrecognised capability degrades to the weaker claim. Every other
+        // default here fails closed and so does this one.
+        UnlockAuthority garbled{static_cast<os::shell::PlatformErasure>(0)};
+        if (!check(!garbled.forensic_erasure_available(),
+                   "an invalid platform capability claimed forensic erasure")) return 1;
+    }
+
     return 0;
 }

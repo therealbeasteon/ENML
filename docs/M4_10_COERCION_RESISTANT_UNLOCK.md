@@ -159,10 +159,8 @@ cannot signal, and that is a real gap rather than a solved case.
 the attacker controls, and shipping one would invite users to rely on it in
 exactly the situation where it fails.
 
-**Auto-wipe after N failures.** Deliberately absent. It is a denial of service
-that anyone who holds the phone for two minutes can mount against its owner, and
-with key stretching and escalating backoff it buys little that is not already
-bought.
+*(Auto-wipe after N failures was listed here as deliberately absent. That
+position was wrong and has been reversed - see below.)*
 
 ## What is not decided yet
 
@@ -185,3 +183,66 @@ the remaining UI work.
 destruction is as durable as the storage beneath it. `MonotonicSecurityState` is
 still an interface boundary only, as M2 records, and until it is real an attacker
 with an image of the device taken beforehand is outside what this defends.
+
+
+## M4.10a - Erasure after repeated failure
+
+This was originally recorded as a deliberate non-feature, on the grounds that it
+is a denial of service anyone holding the phone for two minutes can mount. The
+project owner overruled it, and the objection turns out to be answerable rather
+than fatal.
+
+**The denial of service is priced out by the backoff that already exists.**
+Reaching a threshold of ten takes roughly a quarter of an hour of uninterrupted
+wrong entries, because attempts five onward each cost an escalating lockout. Two
+minutes with the phone is not enough. The reference platform reaches the same
+arrangement from the same direction: escalating delays first, and erasure at ten
+as something the owner may switch on.
+
+**Overwriting cannot deliver what this feature promises.** The reference is
+explicit, and it is the single most important technical fact here: securely
+erasing keys "is especially challenging to do so on flash storage, where
+wear-leveling might mean multiple copies of data need to be erased." A flash
+translation layer keeps copies at addresses nothing above it can name. Any design
+that answers "wipe the device" by writing over the data is making a promise the
+storage stack will not keep.
+
+So erasure is **destruction of the key**, and it emits the same directive the
+duress path does. There is exactly one way to make data unrecoverable in this
+system, reached by two different judgements - which is also why there is one code
+path to review rather than two.
+
+**Whether that defeats a laboratory is a property of the hardware, and is asked
+rather than assumed.** The reference platform solves this with storage dedicated
+to the purpose, addressing and erasing blocks at a very low level. ENML cannot
+assume such hardware exists, so `PlatformErasure` records what the platform can
+actually do and `forensic_erasure_available()` reports it. On hardware that
+cannot truly efface, the setting is still worth having and the shell must not
+describe it as putting data beyond recovery. This is M5.5's discipline again: a
+device that cannot back a claim does not make it. Showing "device erased" over a
+flash layer still holding readable copies would be lying to the owner at the
+moment it mattered most.
+
+**The threshold is the owner's, within bounds, and refused rather than clamped.**
+Below five the feature stops distinguishing an attacker from an owner with cold
+hands. Above twenty the backoff has already made the attempt cost hours. A
+threshold outside those is refused, because silently enforcing a different number
+from the one displayed means the setting shown is not the setting in force.
+
+**And there is deliberately no default.** `erasure_choice_made()` starts false and
+the shell must not complete setup while it is. Defaulting it off makes the device
+quietly weaker than its owner believes; defaulting it on destroys somebody's
+photographs the first time a child guesses at a lock screen. Both failure modes
+are silent, and what they share is that nobody chose. A setting whose wrong value
+cannot be undone is one the owner has to be asked about once, in words, while
+nothing is on fire. Declining is recorded as a decision, so the device can tell
+"the owner said no" from "nobody has been asked".
+
+### Still not claimed
+
+Erasure is as durable as the counter behind it. An attacker who can power-cycle
+the device to reset `consecutive_invalid_attempts` defeats the threshold
+entirely, and nothing in this tree yet makes that counter survive a reboot -
+`MonotonicSecurityState` remains an interface boundary only, as M2 records. Until
+it is real, the threshold protects against someone guessing at a lock screen and
+not against someone willing to pull the battery between attempts.
