@@ -336,8 +336,14 @@ much code has to be trusted.
       low-priority thread cannot park a shared server and stall threads it
       outranks. A dead caller stops donating.
 - [ ] **M7.1c** Capability transfer as a state machine.
-- [ ] **M7.2** Machine layer - context switch, MMU, timer, interrupt
-      controller. The only part that cannot be tested on the host.
+- [x] **M7.3a** Machine-layer contract defined before implementation, in
+      `docs/M7_3_MACHINE.md`. Assembly may live only behind it; nothing in it
+      makes a policy decision. Device memory is a kind rather than a hint,
+      interrupts mask per source rather than globally, time is nanoseconds
+      rather than ticks, and contexts stay opaque.
+- [ ] **M7.3b** Host implementation, so the portable kernel stays testable
+      while the real machine layer is written.
+- [ ] **M7.3c** AArch64 implementation, against the ISA reference.
 - [ ] **M7.3** Boot on the emulated reference platform.
 - [ ] **M7.4** Anonymous attestation. Signing the boot state without minting a
       device identifier, which is the ring-signature and zero-knowledge
