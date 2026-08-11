@@ -327,8 +327,13 @@ much code has to be trusted.
       with a hard ceiling enforced by test. Fifteen calls against a permitted
       sixteen, for reference against the fourteen that carried an entire
       operating system in the references.
-- [ ] **M7.1** Host-testable kernel core: message passing and capability
-      transfer as pure state machines, fuzzed on the development host.
+- [x] **M7.1a** Message passing as a pure state machine, host-testable with no
+      hardware. Reply is bound to a received message rather than a thread id,
+      exiting releases everyone blocked on you, and nothing is queued in the
+      kernel so there is no depth to exhaust.
+- [ ] **M7.1b** Capability transfer as a state machine, and priority
+      inheritance so a low-priority client cannot stall a high-priority one
+      through a shared server.
 - [ ] **M7.2** Machine layer - context switch, MMU, timer, interrupt
       controller. The only part that cannot be tested on the host.
 - [ ] **M7.3** Boot on the emulated reference platform.

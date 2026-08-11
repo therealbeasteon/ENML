@@ -1,5 +1,6 @@
 add_library(oskernel STATIC
     src/abi.cpp
+    src/rendezvous.cpp
 )
 
 add_library(emnl::oskernel ALIAS oskernel)
