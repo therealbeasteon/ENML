@@ -191,3 +191,37 @@ implementation depends on hand-written pointer annotations whose omission
 produces an incorrectly marshaled structure - a memory-safety bug manufactured
 by the boundary meant to contain one. ENML has generated, typed, bounded wire
 formats already; there will be no annotation dialect.
+
+## Secrets and timing
+
+Never compare secret bytes with `==`, `memcmp`, or `std::equal`. All three
+short-circuit at the first differing byte, so the time taken reveals how much of
+the value the caller already has, and an attacker who can submit candidates and
+observe the answer recovers it byte by byte. Use
+`os::core::constant_time_equal`. This covers authentication tags, key material,
+capability tokens and anything else where being wrong should not be
+distinguishable from being nearly right. Digests of public content - package
+content digests, boot stage measurements - are not secrets and may be compared
+normally.
+
+Wipe key material, nonces, tags and plaintexts before they go out of scope,
+using `os::core::secure_zero`. A plain zeroing loop has no observable effect by
+the language's rules and a compiler may delete it, leaving the secret in a stack
+frame that will be reused or a page that may be swapped.
+
+A production cipher implementation must not use secret-indexed lookup tables.
+The table-driven AES construction is precisely the target of the cache attacks
+in the references, which recover a full key from a phone with no privileges at
+all. Use the platform's cryptographic instructions where they exist and a
+data-independent implementation where they do not.
+
+Known gap, recorded rather than papered over: `AeadTag` and `AeadNonce` expose
+their bytes as public `std::array` members, so `a.bytes == b.bytes` still
+compiles and is still variable-time. The rule above is the control; closing it
+properly means wrapping the storage so the naive comparison cannot be written.
+
+Division and modulo are not constant-time instructions on many implementations,
+and neither are unaligned accesses. A secret must never influence a divisor, a
+shift amount taken from data, or an alignment. This is a separate rule from
+avoiding secret-indexed tables and is missed more often, because the code looks
+arithmetic rather than table-driven.
