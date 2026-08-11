@@ -79,6 +79,12 @@ if(EMNL_HARDENED_BINARIES AND CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
     endforeach()
 
     set(CMAKE_POSITION_INDEPENDENT_CODE ON)
+
+    message(STATUS
+        "EMNL hardening: stack-protector=${EMNL_HAS_STACK_PROTECTOR} "
+        "stack-clash=${EMNL_HAS_STACK_CLASH} "
+        "branch-protection=${EMNL_HAS_BRANCH_PROTECTION} "
+        "cf-protection=${EMNL_HAS_CF_PROTECTION}")
 endif()
 
 add_library(emnl_warnings INTERFACE)

@@ -22,6 +22,13 @@ jobs:
       # Feature-testing a flag proves the compiler accepted it, not that the
       # mitigation reached the artifact. Checked against real service binaries
       # rather than a trivial test, so the stack-protector check is meaningful.
+      # Distinguishes "the flag never reached the compile line" from "the flag
+      # was applied and instrumented nothing", which the ELF alone cannot.
+      - name: Report hardening flags in the build
+        run: |
+          for flag in fstack-protector-strong fstack-clash-protection mbranch-protection fcf-protection _GLIBCXX_ASSERTIONS; do
+            echo "$flag -> $(grep -c -- "$flag" build/host-debug/build.ninja || true) occurrences"
+          done
       - name: Verify binary hardening
         run: >-
           .github/scripts/check-hardening.sh 'host-debug'
