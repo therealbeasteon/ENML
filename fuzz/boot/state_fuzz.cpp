@@ -40,6 +40,23 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
         }
     }
 
+    // Capabilities are a closed set; an unknown bit must never survive parsing.
+    if ((state.capabilities() & ~os::boot::known_platform_capabilities) != 0U) {
+        __builtin_trap();
+    }
+
+    // A closed, verified device must declare an immutable first stage, and any
+    // rollback claim must be backed by a monotonic counter. Both are claims the
+    // platform has to be able to support, not fields a producer may assert.
+    if (state.verified() && state.lifecycle() == os::boot::LifecycleState::closed &&
+        !state.provides(os::boot::PlatformCapability::immutable_first_stage)) {
+        __builtin_trap();
+    }
+    if (state.security_version() != 0U &&
+        !state.provides(os::boot::PlatformCapability::monotonic_counter)) {
+        __builtin_trap();
+    }
+
     // The stage table must be internally consistent: every index below the
     // count resolves, and no kind appears twice.
     if (state.stage_count() > os::boot::max_boot_stages) {
@@ -79,6 +96,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     if (reparsed.value().verified() != state.verified() ||
         reparsed.value().lifecycle() != state.lifecycle() ||
         reparsed.value().security_version() != state.security_version() ||
+        reparsed.value().capabilities() != state.capabilities() ||
         reparsed.value().stage_count() != state.stage_count()) {
         __builtin_trap();
     }

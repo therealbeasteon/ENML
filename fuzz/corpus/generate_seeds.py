@@ -198,7 +198,7 @@ def boot_stage(kind: int, seed: int) -> bytes:
 
 
 def boot_state(lifecycle: int, verification: int, security_version: int, stages: bytes,
-               stage_count: int) -> bytes:
+               stage_count: int, capabilities: int = 0) -> bytes:
     header = b"".join((
         BOOT_STATE_MAGIC,
         struct.pack("<H", BOOT_STATE_HEADER_BYTES),
@@ -208,7 +208,7 @@ def boot_state(lifecycle: int, verification: int, security_version: int, stages:
         struct.pack("<Q", security_version),
         struct.pack("<H", stage_count),
         struct.pack("<H", 0),
-        struct.pack("<I", 0),
+        struct.pack("<I", capabilities),
         struct.pack("<I", 0),
     ))
     assert len(header) == BOOT_STATE_HEADER_BYTES, len(header)
@@ -221,15 +221,18 @@ def boot_state_seeds() -> dict[str, bytes]:
     The interesting behaviour is the accept/reject boundary between a complete
     closed chain and every near-miss, so the seeds sit on both sides of it.
     """
+    # immutable_first_stage | monotonic_counter
+    backed = 0x01 | 0x10
     full_kinds = [1, 2, 3, 4, 5]
     full = b"".join(boot_stage(kind, kind * 40) for kind in full_kinds)
     kernel_only = boot_stage(3, 90)
 
     return {
         # Accepted.
-        "closed_verified_full": boot_state(2, 2, 7, full, len(full_kinds)),
-        "open_verified_kernel_only": boot_state(1, 2, 1, kernel_only, 1),
-        "closed_failed_full": boot_state(2, 1, 7, full, len(full_kinds)),
+        "closed_verified_full": boot_state(2, 2, 7, full, len(full_kinds), backed),
+        "open_verified_kernel_only": boot_state(1, 2, 1, kernel_only, 1, 0x10),
+        "closed_failed_full": boot_state(2, 1, 7, full, len(full_kinds), backed),
+        "bare_platform_verified": boot_state(1, 2, 0, kernel_only, 1, 0),
         "open_failed_empty": boot_state(1, 1, 0, b"", 0),
         # Rejected, and each for a different reason.
         "closed_verified_partial": boot_state(2, 2, 7, kernel_only, 1),
@@ -239,6 +242,9 @@ def boot_state_seeds() -> dict[str, bytes]:
         "stage_count_over_max": boot_state(1, 1, 0, full, 9),
         "duplicate_stage": boot_state(1, 1, 0, boot_stage(3, 1) + boot_stage(3, 2), 2),
         "unknown_stage_kind": boot_state(1, 1, 0, boot_stage(6, 1), 1),
+        "unknown_capability": boot_state(1, 1, 0, kernel_only, 1, 0x80000000),
+        "closed_verified_no_root": boot_state(2, 2, 0, full, len(full_kinds), 0x04),
+        "rollback_claim_unbacked": boot_state(1, 1, 5, kernel_only, 1, 0x01),
         "trailing_byte": boot_state(1, 1, 0, kernel_only, 1) + bytes([0]),
     }
 
