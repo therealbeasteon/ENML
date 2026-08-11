@@ -30,6 +30,14 @@ target_compile_options(boot_profile_unlock_test PRIVATE
 add_test(NAME boot_profile_unlock_test COMMAND boot_profile_unlock_test)
 set_tests_properties(boot_profile_unlock_test PROPERTIES LABELS "m5-boot")
 
+add_executable(boot_profile_protector_test profile_protector_test.cpp)
+target_link_libraries(boot_profile_protector_test PRIVATE emnl::osboot emnl_warnings)
+target_compile_options(boot_profile_protector_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME boot_profile_protector_test COMMAND boot_profile_protector_test)
+set_tests_properties(boot_profile_protector_test PROPERTIES LABELS "m5-boot")
+
 add_executable(boot_transparency_test transparency_test.cpp)
 target_link_libraries(boot_transparency_test PRIVATE emnl::osboot emnl_warnings)
 target_compile_options(boot_transparency_test PRIVATE
