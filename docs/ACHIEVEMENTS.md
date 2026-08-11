@@ -220,7 +220,12 @@ more, which is the provider, hierarchy and durable registry.
       platform.
 - [ ] **M6.2** IOMMU programming, so `iommu_confined` is enforced rather than
       recorded.
-- [ ] **M6.3** Interrupt authority, with its own threat model.
+- [x] **M6.3** Interrupt authority, with its own threat model, in
+      `docs/M7_1_INTERRUPT.md` - the document M6.0 said this needed before it
+      could be more than half a specification. The OS half is implemented and
+      gated as M7.1d below. The half that needs a controller - turning a real
+      signal into a dispatch - does not exist yet, and neither does binding
+      attach to a capability rather than to a role.
 - [ ] **M6.4** Check-then-commit device reconfiguration: validate a whole batch,
       then apply all of it or none.
 
@@ -344,6 +349,17 @@ much code has to be trusted.
       passing a capability on is itself a right, and attenuation only
       attenuates. A dead thread holds nothing. Removal is bounded by the
       delegation ceiling and uses no scratch memory.
+- [x] **M7.1d** Interrupt dispatch as a state machine, in
+      `docs/M7_1_INTERRUPT.md`. The reference design puts a driver's handler in
+      interrupt context to avoid waking it per interrupt; the same references
+      record what that costs - a driver that can disable interrupts can also die
+      there, and dispatching as fast as a device asserts is receive livelock.
+      Cookie keeps the goal and refuses both mechanisms: no user code runs in
+      interrupt context at all, the kernel coalesces and reports the count so a
+      driver still wakes once per burst, and a source stays masked from dispatch
+      until its driver reports the device quiet - so interrupt load is bounded by
+      driver progress rather than by the device. The wakeup-per-burst cost is
+      recorded rather than discovered.
 - [x] **M7.3a** Machine-layer contract defined before implementation, in
       `docs/M7_3_MACHINE.md`. Assembly may live only behind it; nothing in it
       makes a policy decision. Device memory is a kind rather than a hint,
