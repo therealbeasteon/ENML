@@ -135,3 +135,19 @@ annotation cannot be wrong. Attacks that assume a permissive default (implicit
 capture, ambient authority, default-open policy) do not apply because the
 corresponding defaults are closed, which is the property to keep rather than a
 result to record once.
+
+## Corrections
+
+The intermittent M2 suite failure was previously diagnosed as a one-second
+teardown bound in two broker helpers, and those bounds were widened on that
+basis. A later occurrence, with annotations that name the test, shows the
+diagnosis was wrong: the failing test is
+`app_manager_runtime_service_session_test` - neither of the two that were
+widened, and one that already carried a thirty-second bound - and it **aborts
+in under a second** rather than timing out. An abort that fast is a failed
+assertion, not a scheduling delay.
+
+The widened bounds are harmless and remain, but they did not fix this and were
+never shown to. The real cause is still unknown; `run-ctest.sh` now carries the
+tail of the log so the next occurrence reports which assertion fired.
+

@@ -33,6 +33,21 @@ ctest "$@" --output-on-failure -L "$label" >"$log" 2>&1 || status=$?
 # Which tests failed, plus the pass/fail tally.
 report="$(grep -E '\*\*\*|tests passed|tests failed|The following tests FAILED|^[[:space:]]+[0-9]+ - |^[0-9]+: ' "$log" || true)"
 
+# On failure, carry the tail of the log as well.
+#
+# The summary above names the test and how it died but never says why. A test
+# that aborts has already written the reason - a failed assertion prints its
+# expression, a standard-library precondition violation prints its message - and
+# that line is the whole difference between "an intermittent test failed again"
+# and knowing which invariant broke. Relying on the per-test output prefix was
+# not enough: the format varies with CTest version, and the one occurrence this
+# was built for produced a summary with no prefixed lines at all.
+if [ "$status" -ne 0 ]; then
+    report="${report}
+--- log tail ---
+$(tail -n 40 "$log")"
+fi
+
 if [ -n "$report" ]; then
     encoded=''
     while IFS= read -r line; do
