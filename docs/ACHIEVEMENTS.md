@@ -211,6 +211,11 @@ more, which is the provider, hierarchy and durable registry.
       `docs/SECURITY_REVIEW.md` with its gaps stated as gaps. Two were fixed by
       it: the tree had no constant-time comparison primitive and no runtime
       binary hardening at all.
+- [x] **M6.2** Time protection, OS half. `PartitionLedger` grants, refuses and
+      reclaims partitioned micro-architectural resources, enforcing that a
+      reservation never consumes the shared remainder and that a dead
+      principal holds nothing. The mechanism itself is a platform port and
+      does not exist yet.
 - [ ] **M6.1** First driver split against the policy, on the emulated reference
       platform.
 - [ ] **M6.2** IOMMU programming, so `iommu_confined` is enforced rather than

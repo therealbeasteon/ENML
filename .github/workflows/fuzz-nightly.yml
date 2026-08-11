@@ -66,6 +66,8 @@ jobs:
             dictionary: fuzz/dict/krg1.dict
           - target: device_access_fuzz
             dictionary: fuzz/dict/device_access.dict
+          - target: time_protection_fuzz
+            dictionary: ''
     steps:
       - uses: actions/checkout@v4
 

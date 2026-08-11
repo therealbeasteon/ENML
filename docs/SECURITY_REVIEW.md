@@ -102,9 +102,14 @@ already owns exactly that shape of problem for identities and descriptors, and
 owns none of it for micro-architectural resources.
 
 `constant_time_equal` is a point fix for one class of comparison. It is not
-time protection and must not be described as such. Representing what
-partitioning a platform provides belongs in the capability vocabulary alongside
-the boot roots of trust and device DMA confinement, and does not exist yet.
+time protection and must not be described as such.
+
+Partly addressed since: `os::time::PartitionLedger` (M6.2) is the OS half -
+capabilities, granting, refusal and reclamation on death, with the rule that a
+reservation may never consume the shared remainder. The half that actually
+partitions hardware is a platform port and does not exist, so **ENML still has
+no time protection**. The accounting being correct is a precondition for it,
+not a substitute.
 
 **No side-channel testing of any kind.** Constant-timeness rests on the shape of
 the implementation and its optimisation barrier. The unit tests establish
@@ -130,3 +135,19 @@ annotation cannot be wrong. Attacks that assume a permissive default (implicit
 capture, ambient authority, default-open policy) do not apply because the
 corresponding defaults are closed, which is the property to keep rather than a
 result to record once.
+
+## Corrections
+
+The intermittent M2 suite failure was previously diagnosed as a one-second
+teardown bound in two broker helpers, and those bounds were widened on that
+basis. A later occurrence, with annotations that name the test, shows the
+diagnosis was wrong: the failing test is
+`app_manager_runtime_service_session_test` - neither of the two that were
+widened, and one that already carried a thirty-second bound - and it **aborts
+in under a second** rather than timing out. An abort that fast is a failed
+assertion, not a scheduling delay.
+
+The widened bounds are harmless and remain, but they did not fix this and were
+never shown to. The real cause is still unknown; `run-ctest.sh` now carries the
+tail of the log so the next occurrence reports which assertion fired.
+
