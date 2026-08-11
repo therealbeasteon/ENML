@@ -331,9 +331,11 @@ much code has to be trusted.
       hardware. Reply is bound to a received message rather than a thread id,
       exiting releases everyone blocked on you, and nothing is queued in the
       kernel so there is no depth to exhaust.
-- [ ] **M7.1b** Capability transfer as a state machine, and priority
-      inheritance so a low-priority client cannot stall a high-priority one
-      through a shared server.
+- [x] **M7.1b** Priority inheritance: a server runs at the priority of the most
+      urgent thread waiting on it, recomputed rather than adjusted, so a
+      low-priority thread cannot park a shared server and stall threads it
+      outranks. A dead caller stops donating.
+- [ ] **M7.1c** Capability transfer as a state machine.
 - [ ] **M7.2** Machine layer - context switch, MMU, timer, interrupt
       controller. The only part that cannot be tested on the host.
 - [ ] **M7.3** Boot on the emulated reference platform.

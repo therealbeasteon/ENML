@@ -202,5 +202,67 @@ int main() {
                    "creation past the ceiling accepted")) return 1;
     }
 
+    // Priority inheritance. A server runs at the priority of whoever is
+    // waiting for it, so a low-priority thread cannot park a shared server and
+    // stall the high-priority threads that need it.
+    {
+        os::kernel::Rendezvous kernel;
+        constexpr os::kernel::Priority low = 1U;
+        constexpr os::kernel::Priority high = 9U;
+
+        if (!check(static_cast<bool>(kernel.create_thread(server, low)) &&
+                   static_cast<bool>(kernel.create_thread(client, low)) &&
+                   static_cast<bool>(kernel.create_thread(bystander, high)),
+                   "creation with priorities failed")) return 1;
+
+        auto effective = kernel.effective_priority_of(server);
+        if (!check(effective && effective.value() == low,
+                   "idle server did not run at its own priority")) return 1;
+
+        // A low-priority client parks the server's work. On its own this does
+        // not raise the server.
+        (void)kernel.send(client, server);
+        (void)kernel.receive(server);
+        effective = kernel.effective_priority_of(server);
+        if (!check(effective && effective.value() == low,
+                   "low-priority caller raised the server")) return 1;
+
+        // A high-priority thread now needs the same server. Without
+        // inheritance it waits behind work running at low priority, which is
+        // the inversion: it is stalled by a thread it outranks.
+        (void)kernel.send(bystander, server);
+        effective = kernel.effective_priority_of(server);
+        if (!check(effective && effective.value() == high,
+                   "server did not inherit the waiting thread's priority")) return 1;
+        auto base = kernel.base_priority_of(server);
+        if (!check(base && base.value() == low, "inheritance overwrote the base priority")) return 1;
+
+        // The donation ends when the waiting ends, and it is recomputed rather
+        // than decremented - a server left permanently high is as much a defect
+        // as one left too low.
+        (void)kernel.reply(server, client);
+        auto collected = kernel.receive(server);
+        if (!check(static_cast<bool>(collected) && collected.value() == bystander,
+                   "server did not collect the waiting high-priority caller")) return 1;
+        effective = kernel.effective_priority_of(server);
+        if (!check(effective && effective.value() == high,
+                   "server dropped priority while still serving the caller")) return 1;
+
+        (void)kernel.reply(server, bystander);
+        effective = kernel.effective_priority_of(server);
+        if (!check(effective && effective.value() == low,
+                   "server stayed elevated after its callers were answered")) return 1;
+
+        // A caller that dies while waiting stops donating, or a crashed
+        // high-priority client would pin a server forever.
+        (void)kernel.send(bystander, server);
+        effective = kernel.effective_priority_of(server);
+        if (!check(effective && effective.value() == high, "donation not applied")) return 1;
+        (void)kernel.exit_thread(bystander);
+        effective = kernel.effective_priority_of(server);
+        if (!check(effective && effective.value() == low,
+                   "a dead caller kept donating its priority")) return 1;
+    }
+
     return 0;
 }
