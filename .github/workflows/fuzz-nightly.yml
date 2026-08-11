@@ -51,6 +51,8 @@ jobs:
             dictionary: ''
           - target: storage_relative_path_fuzz
             dictionary: fuzz/dict/storage_path.dict
+          - target: boot_state_fuzz
+            dictionary: fuzz/dict/boot_state.dict
     steps:
       - uses: actions/checkout@v4
 

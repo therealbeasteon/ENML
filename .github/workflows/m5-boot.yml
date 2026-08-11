@@ -1,0 +1,64 @@
+name: M5 Verified Boot
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  boot-gcc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build boot state gates
+        run: cmake --build --preset host-debug --target boot_state_test --parallel 2
+      - name: Test boot state gates
+        run: .github/scripts/run-ctest.sh '^m5-boot$' 'boot-gcc' --preset host-debug
+
+  boot-sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-asan
+      - name: Build boot state gates with sanitizers
+        run: cmake --build --preset host-asan --target boot_state_test --parallel 2
+      - name: Test boot state gates with sanitizers
+        run: .github/scripts/run-ctest.sh '^m5-boot$' 'boot-sanitizers' --preset host-asan
+
+  boot-clang:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure with Clang
+        run: >-
+          cmake -S . -B build/m5-boot-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Build boot state gates
+        run: cmake --build build/m5-boot-clang --target boot_state_test --parallel 2
+      - name: Test boot state gates
+        run: .github/scripts/run-ctest.sh '^m5-boot$' 'boot-clang' --test-dir build/m5-boot-clang
+
+  # The boot state record is consumed on the primary target architecture, and
+  # its parser is explicitly little-endian by construction rather than by host
+  # accident. Native AArch64 is what proves that.
+  boot-arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record machine
+        run: |
+          uname -m
+          test "$(uname -m)" = "aarch64"
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build boot state gates natively
+        run: cmake --build --preset host-debug --target boot_state_test --parallel 2
+      - name: Test boot state gates natively
+        run: .github/scripts/run-ctest.sh '^m5-boot$' 'boot-arm64-native' --preset host-debug
