@@ -148,6 +148,17 @@ in under a second** rather than timing out. An abort that fast is a failed
 assertion, not a scheduling delay.
 
 The widened bounds are harmless and remain, but they did not fix this and were
-never shown to. The real cause is still unknown; `run-ctest.sh` now carries the
-tail of the log so the next occurrence reports which assertion fired.
+never shown to.
+
+The log tail added for that purpose then caught it:
+
+    app_manager_runtime_service_session_test.cpp:446:
+    Assertion `manager.uninstall_application(application)' failed.
+
+`uninstall_application` collapses the durable no-active-generation commit,
+profile revocation against Storage and Keys, identity release, child teardown
+and a final `maintain()` into a single `first_error`, and the test discarded it.
+It now prints the domain and code before asserting, so the next occurrence names
+the stage. No fix has been attempted, because which stage fails is still
+unknown and the previous attempt to fix this without that evidence was wrong.
 
