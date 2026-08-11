@@ -5,13 +5,6 @@
 #include <os/ui/contrast.hpp>
 
 namespace os::shell {
-namespace {
-
-[[nodiscard]] constexpr os::core::Error shell_error(std::uint32_t code) noexcept {
-    return os::core::make_error(os::core::ErrorDomain::shell, code);
-}
-
-} // namespace
 
 bool ConsentGrant::authorizes(
     os::core::PeerIdentity principal,

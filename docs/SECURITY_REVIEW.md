@@ -158,7 +158,26 @@ The log tail added for that purpose then caught it:
 `uninstall_application` collapses the durable no-active-generation commit,
 profile revocation against Storage and Keys, identity release, child teardown
 and a final `maintain()` into a single `first_error`, and the test discarded it.
-It now prints the domain and code before asserting, so the next occurrence names
-the stage. No fix has been attempted, because which stage fails is still
-unknown and the previous attempt to fix this without that evidence was wrong.
+It now prints the domain and code before asserting.
+
+A later occurrence, in a different job, produced the diagnosis outright:
+
+    m2.10 child failure stage=key-marker exit=32 domain=2 code=8
+    Assertion `wait_for_file(manager, data_fd,
+    "m2-10-storage-reacquired.bin")' failed
+
+Domain 2 code 8 is `ipc::peer_died`. The child fixture reacquires the **key**
+service after its restart, then writes its key-marker through the **storage**
+capability it acquired before any restart - and this test restarts storage too.
+The loop immediately below that write tolerates `peer_died` on the same handle,
+because observing the old storage capability die is its purpose. The marker
+write does not, so if the storage restart lands one statement earlier than the
+fixture assumes, the child exits 32 and the parent then waits the full thirty
+seconds for a marker that will never be written.
+
+That accounts for both observed shapes: the 0.8-second abort and the
+30-second one are the same race caught at different points. The fix is to make
+the marker write tolerate `peer_died` and reacquire storage before retrying,
+which is a restructure of the fixture's ordering rather than a one-line change,
+and is not attempted here.
 
