@@ -30,6 +30,8 @@ inline constexpr std::uint32_t invalid_credential_class = 20U;
 inline constexpr std::uint32_t invalid_credential_tag = 21U;
 inline constexpr std::uint32_t unlock_time_reversed = 22U;
 inline constexpr std::uint32_t invalid_erasure_threshold = 23U;
+inline constexpr std::uint32_t invalid_credential_length = 24U;
+inline constexpr std::uint32_t duress_credential_too_similar = 25U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error shell_error(std::uint32_t code) noexcept {

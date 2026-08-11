@@ -53,3 +53,14 @@ endif()
 
 add_test(NAME shell_unlock_test COMMAND shell_unlock_test)
 set_tests_properties(shell_unlock_test PROPERTIES LABELS "m4-shell")
+
+add_executable(shell_credential_rule_test credential_rule_test.cpp)
+target_link_libraries(shell_credential_rule_test PRIVATE osshell emnl_warnings)
+target_compile_features(shell_credential_rule_test PRIVATE cxx_std_20)
+
+if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
+    target_compile_options(shell_credential_rule_test PRIVATE -fno-exceptions -fno-rtti)
+endif()
+
+add_test(NAME shell_credential_rule_test COMMAND shell_credential_rule_test)
+set_tests_properties(shell_credential_rule_test PROPERTIES LABELS "m4-shell")

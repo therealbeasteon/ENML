@@ -23,7 +23,7 @@ jobs:
       - name: Build shell gates
         run: >-
           cmake --build --preset host-debug
-          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test
+          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test shell_credential_rule_test
           shell_lifecycle_control_test display_exact_activation_test
           shell_compositor_control_test
           --parallel 2
@@ -42,7 +42,7 @@ jobs:
       - name: Build shell gates
         run: >-
           cmake --build build/m4-shell-clang
-          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test
+          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test shell_credential_rule_test
           shell_lifecycle_control_test display_exact_activation_test
           shell_compositor_control_test
           --parallel 2
@@ -58,7 +58,7 @@ jobs:
       - name: Build shell gates with sanitizers
         run: >-
           cmake --build --preset host-asan
-          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test
+          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test shell_credential_rule_test
           shell_lifecycle_control_test display_exact_activation_test
           shell_compositor_control_test
           --parallel 2
@@ -76,7 +76,7 @@ jobs:
       - name: Build shell gates natively
         run: >-
           cmake --build --preset host-debug
-          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test
+          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test shell_credential_rule_test
           shell_lifecycle_control_test display_exact_activation_test
           shell_compositor_control_test
           --parallel 2
