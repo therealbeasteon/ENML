@@ -286,3 +286,45 @@ else observes the device - not a job queued for a reboot to finish.
 Nothing in the tree enforces the non-interruptibility. `system.keys` acting on
 the directive within the uniform envelope is the wiring M4.10 already recorded as
 outstanding, and this adds a requirement to it rather than satisfying one.
+
+## M4.10e - Repeated failure is duress
+
+Direction from the project owner: brute force should be considered duress, and
+entering the wrong credential enough times should be treated as duress. That is a
+correction to the architecture rather than a rename, and it improves it.
+
+M4.10a and the duress path had become two routes to the same destruction. One
+concept with two triggers should be one reaction, and a reaction that varies by
+trigger is a way to tell the triggers apart - the screening problem the whole
+design is built to avoid, reappearing in a new place. So reaching the threshold
+now takes the duress *response* as well: the protected domain is destroyed and
+the device presents an ordinary unlock onto whatever survives.
+
+**The observable half is the point.** Refusing at the threshold tells an attacker
+the data is still there and that guessing is not the way in. That is not a dead
+end for him; it is a signpost, and what it points at is the owner. Coercing the
+owner is precisely what the rest of this document defends against, so a lock
+screen that ends a failed brute-force attempt by advertising "keep trying
+something else" has made the situation worse. An unlock onto an empty device ends
+the attempt instead: he believes he is through, and there is nothing behind it.
+
+**What is granted is unprotected by construction.** The protected domain has no
+key by the time access is released. Granting the remainder to someone who guessed
+wrong ten times asserts only that unprotected data is unprotected.
+
+**The owner who trips it opted in.** They get exactly what a duress unlock gets,
+which is the cost of the setting and is why the setting has no default and must
+be chosen in words during setup.
+
+The device also stops refusing after the threshold, and continues to present the
+granted response. A device that reverted to refusals would be announcing that the
+threshold had been reached, which is the same disclosure by a slower route -
+the same reasoning that refuses escalating an anonymous verifier to linked.
+
+### Still not claimed
+
+What "whatever survives" contains is not specified anywhere in the tree. A decoy
+profile that is convincing, and that does not itself leak the existence of the
+protected one, is unbuilt and is a harder problem than the policy above. Until it
+exists, the granted response is honest about the mechanism and silent about the
+experience.

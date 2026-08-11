@@ -356,6 +356,15 @@ int main() {
             if (outcome.destroy_protected_domain) {
                 destroyed_on = true;
                 if (!check(i == 5U, "erasure fired before the chosen count")) return 1;
+                // Repeated failure is duress, so it takes the duress response:
+                // an ordinary-looking unlock onto what survives. Refusing here
+                // would tell the attacker the data is still there and send him
+                // after the owner instead.
+                if (!check(outcome.disposition == UnlockDisposition::granted,
+                           "the threshold refused instead of presenting an unlock")) return 1;
+            } else if (!check(outcome.disposition == UnlockDisposition::refused,
+                              "a guess below the threshold was not refused")) {
+                return 1;
             }
             now = authority.locked_until_nanoseconds() + second;
         }
@@ -364,7 +373,9 @@ int main() {
             return 1;
         }
 
-        // One shot. The key service must not be told to destroy twice.
+        // One shot. The key service must not be told to destroy twice - but the
+        // response stays the same, because a device that starts refusing again
+        // after the threshold would be announcing that the threshold was hit.
         const auto after = must_submit(authority, now, CredentialClass::invalid,
                                        os::shell::invalid_credential_tag_value);
         if (!check(!after.destroy_protected_domain, "erasure was issued twice")) return 1;
@@ -507,6 +518,36 @@ int main() {
         if (!check(refused_with(authority.restore(unchosen),
                                 os::shell::errors::invalid_erasure_threshold),
                    "erasure enabled without ever being chosen was restored")) return 1;
+    }
+
+    // Repeated failure and an explicit duress credential are one concept with
+    // two triggers, so an observer cannot tell which one fired. Same
+    // disposition, same timing, same accepting-again time.
+    {
+        UnlockAuthority by_credential;
+        const auto duress_path =
+            must_submit(by_credential, 0U, CredentialClass::duress, duress_tag);
+
+        UnlockAuthority by_guessing;
+        (void)by_guessing.configure_erasure(true, os::shell::minimum_erasure_threshold);
+        UnlockOutcome guess_path{};
+        std::uint64_t now = 0U;
+        for (std::uint32_t i = 0U; i < os::shell::minimum_erasure_threshold; ++i) {
+            guess_path = must_submit(by_guessing, now, CredentialClass::invalid,
+                                     os::shell::invalid_credential_tag_value);
+            now = by_guessing.locked_until_nanoseconds() + second;
+        }
+
+        if (!check(guess_path.disposition == duress_path.disposition,
+                   "the two duress triggers produced different dispositions")) return 1;
+        if (!check(guess_path.destroy_protected_domain && duress_path.destroy_protected_domain,
+                   "a duress trigger did not destroy")) return 1;
+        if (!check(guess_path.accepting_again_at_nanoseconds ==
+                       guess_path.release_at_nanoseconds,
+                   "the granted threshold left the device locked")) return 1;
+        if (!check(by_guessing.protected_domain_destroyed() &&
+                       by_credential.protected_domain_destroyed(),
+                   "destruction was not recorded for both triggers")) return 1;
     }
 
     return 0;

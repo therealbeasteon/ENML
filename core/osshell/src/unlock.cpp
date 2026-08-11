@@ -199,16 +199,45 @@ os::core::Result<UnlockOutcome> UnlockAuthority::submit(
         // Whether it actually defeats a laboratory depends on the platform, and
         // `forensic_erasure_available()` is how a caller finds out rather than
         // assuming.
-        const bool erase = erasure_enabled_ && !destroyed_ &&
+        const bool reached_threshold = erasure_enabled_ &&
             invalid_attempts_ >= erasure_threshold_;
+        const bool erase = reached_threshold && !destroyed_;
         if (erase) destroyed_ = true;
+
+        // Repeated failure *is* duress, so it takes the duress response too.
+        //
+        // The two were separate paths reaching the same destruction, which was
+        // the wrong shape: one concept with two triggers is one reaction, and a
+        // reaction that differs by trigger is a way to tell the triggers apart.
+        //
+        // The response that matters is the observable one. Refusing tells an
+        // attacker the data is still there and that guessing is not the way in -
+        // which points him at the owner, and the next thing he tries is the one
+        // this whole document exists to defend against. Presenting an ordinary
+        // unlock onto what survives ends the attack instead: he believes he is
+        // through, and there is nothing behind it.
+        //
+        // What he is granted is by construction the domain that was not
+        // protected, because the protected one no longer has a key. Granting it
+        // to someone who guessed wrong ten times says only that unprotected data
+        // is unprotected.
+        //
+        // The owner who reaches this by accident opted into it, and gets exactly
+        // what a duress unlock gets. That is the cost of the setting and it is
+        // stated where the setting is chosen.
+        if (reached_threshold) {
+            locked_until_ = 0U;
+            invalid_attempts_ = 0U;
+            return os::core::Result<UnlockOutcome>{UnlockOutcome{
+                UnlockDisposition::granted, erase, release_at, release_at}};
+        }
 
         // No history is written. An unrecognised guess is not one of the user's
         // credentials, so letting it set the iteration baseline would let an
         // attacker arm the lock by typing nonsense.
         return os::core::Result<UnlockOutcome>{UnlockOutcome{
             UnlockDisposition::refused,
-            erase,
+            false,
             release_at,
             later_of(release_at, locked_until_)}};
     }

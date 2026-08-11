@@ -110,6 +110,19 @@ inline constexpr std::uint64_t maximum_backoff_nanoseconds = 3'600'000'000'000U;
 // to have understood.
 inline constexpr std::uint32_t default_erasure_threshold = 10U;
 
+// Reaching the threshold is treated as duress, not as a separate event.
+//
+// Repeated failure and an explicit duress credential are one concept with two
+// triggers, so they take one reaction: the protected domain is destroyed and the
+// device presents an ordinary unlock onto whatever survives. A reaction that
+// differed by trigger would be a way to tell the triggers apart, which is the
+// screening problem in a new place.
+//
+// The observable half is the point. Refusing at the threshold tells an attacker
+// the data is still there and that guessing is not the way in - which points him
+// at the owner, and coercing the owner is what the rest of this design exists to
+// defend against. An unlock onto an empty device ends the attempt instead.
+
 // The threshold is bounded at both ends, and both bounds do work.
 //
 // Below the floor the feature stops distinguishing an attacker from an owner
