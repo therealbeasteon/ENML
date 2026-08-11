@@ -328,3 +328,48 @@ profile that is convincing, and that does not itself leak the existence of the
 protected one, is unbuilt and is a harder problem than the policy above. Until it
 exists, the granted response is honest about the mechanism and silent about the
 experience.
+
+## M4.10f - No trace, and the one this design was leaving
+
+Direction from the project owner: when duress is triggered, user data is wiped
+with no trace. Crypto-erasure already delivers the data half. The "no trace"
+half was being violated by this design's own persistence, added two milestones
+earlier for a good reason.
+
+`PersistedUnlockState` stored `protected_domain_destroyed`, so that a restarted
+device would not be asked to destroy the same domain twice. That boolean is
+**evidence that destruction happened**, written to durable storage on purpose,
+and it survives precisely because it was made durable. An examiner reading it
+learns a duress event occurred, which in a coercion scenario is the fact that
+gets somebody hurt. The feature intended to protect the owner was recording that
+they had used it.
+
+It is replaced by `DomainPresence`, which the key service supplies from what it
+actually finds. A key that is not there is not there whether it was destroyed an
+hour ago or never created, so deriving the state from ground truth carries the
+same information with none of the confession.
+
+The erasure settings were a second trace, and a subtler one. A device still
+carrying "erase after five attempts" is a device announcing that its owner
+anticipated coercion - which is a statement about the owner, not about the data,
+and it outlives the data. They are now cleared when the domain is destroyed, so
+the persisted record of a wiped device is byte-for-byte the record of a device
+that was never configured. A test asserts exactly that equality, and asserts that
+it is not comparing a wiped record against an identical unwiped one.
+
+The owner who trips this loses the setting along with the data it protected, and
+that is the correct pairing: a setting guarding nothing is not a protection, it
+is a statement.
+
+### What "no trace" still does not cover
+
+The claim is now defensible at this layer and nowhere else. Trace-freedom is a
+whole-system property and the rest of the system has not been audited for it:
+what `system.keys` writes when it destroys, what the storage layer leaves in a
+flash translation layer it does not control, what any log or crash record
+retains, and whether a surviving profile is shaped like one that never had a
+sibling. Any of those can reintroduce the confession this milestone removed.
+
+M4.10 declined to claim forensic indistinguishability after the fact. That
+declination stands. What changed is that this component no longer actively
+undermines it.

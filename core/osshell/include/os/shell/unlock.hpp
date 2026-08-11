@@ -230,6 +230,32 @@ struct UnlockOutcome final {
 };
 
 
+// Whether the protected key domain still exists, as the key service finds it.
+//
+// This replaces a stored "already destroyed" flag, and the reason is the whole
+// point of a duress wipe. A boolean saying destruction happened is *evidence
+// that destruction happened*. An examiner reading it learns a duress event
+// occurred, which in a coercion scenario is the fact that gets somebody hurt -
+// and it survives precisely because it was written down to be durable.
+//
+// The absence of the key is the same information without the confession. A key
+// that is not there is not there whether it was destroyed an hour ago or never
+// created, so deriving the state from ground truth costs nothing and says
+// nothing.
+enum class DomainPresence : std::uint8_t {
+    present = 1U,
+    absent = 2U,
+};
+
+[[nodiscard]] constexpr bool valid_domain_presence(DomainPresence value) noexcept {
+    switch (value) {
+    case DomainPresence::present:
+    case DomainPresence::absent:
+        return true;
+    }
+    return false;
+}
+
 // Everything about an unlock authority that has to outlive a reboot.
 //
 // M4.10a recorded the hole this closes: erasure is only as durable as the
@@ -247,7 +273,6 @@ struct UnlockOutcome final {
 // rather than discovered.
 struct PersistedUnlockState final {
     std::uint32_t invalid_attempts {0U};
-    bool protected_domain_destroyed {false};
     bool erasure_enabled {false};
     bool erasure_choice_made {false};
     std::uint32_t erasure_threshold {default_erasure_threshold};
@@ -341,7 +366,9 @@ public:
     // quietly clamping it would mean the device enforcing something other than
     // what is stored - which is exactly the position an attacker who can edit
     // the record wants it in.
-    [[nodiscard]] os::core::Result<void> restore(const PersistedUnlockState& state) noexcept;
+    [[nodiscard]] os::core::Result<void> restore(
+        const PersistedUnlockState& state,
+        DomainPresence presence) noexcept;
 
     [[nodiscard]] bool protected_domain_destroyed() const noexcept;
 
@@ -351,6 +378,8 @@ public:
 
 private:
     [[nodiscard]] std::uint64_t backoff_for(std::uint32_t invalid_attempts) const noexcept;
+    // Marks the domain destroyed and clears everything that would testify to it.
+    void forget_after_destruction() noexcept;
 
     // Iteration history. Deliberately a tag and a time, with no room to record a
     // class - the rule cannot consult what is not stored.

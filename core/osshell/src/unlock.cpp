@@ -37,10 +37,15 @@ UnlockAuthority::UnlockAuthority(PlatformErasure erasure) noexcept
 
 PersistedUnlockState UnlockAuthority::persisted_state() const noexcept {
     return PersistedUnlockState{
-        invalid_attempts_, destroyed_, erasure_enabled_, erasure_chosen_, erasure_threshold_};
+        invalid_attempts_, erasure_enabled_, erasure_chosen_, erasure_threshold_};
 }
 
-os::core::Result<void> UnlockAuthority::restore(const PersistedUnlockState& state) noexcept {
+os::core::Result<void> UnlockAuthority::restore(
+    const PersistedUnlockState& state,
+    DomainPresence presence) noexcept {
+    if (!valid_domain_presence(presence)) {
+        return shell_error(errors::invalid_domain_presence);
+    }
     if (state.erasure_enabled &&
         (state.erasure_threshold < minimum_erasure_threshold ||
          state.erasure_threshold > maximum_erasure_threshold)) {
@@ -53,12 +58,31 @@ os::core::Result<void> UnlockAuthority::restore(const PersistedUnlockState& stat
     }
 
     invalid_attempts_ = state.invalid_attempts;
-    destroyed_ = state.protected_domain_destroyed;
+    // Derived from what the key service actually found, never from a record
+    // saying it happened. See DomainPresence.
+    destroyed_ = presence == DomainPresence::absent;
     erasure_enabled_ = state.erasure_enabled;
     erasure_chosen_ = state.erasure_choice_made;
     erasure_threshold_ = state.erasure_threshold;
     // Time-derived state is deliberately not restored. See PersistedUnlockState.
     return {};
+}
+
+void UnlockAuthority::forget_after_destruction() noexcept {
+    destroyed_ = true;
+    // The erasure settings describe a domain that no longer exists, and a device
+    // that still carries them is a device announcing its owner anticipated
+    // coercion. Cleared so the persisted record of a wiped device is the record
+    // of a device that was never configured - which is what "no trace" has to
+    // mean if it means anything.
+    //
+    // The owner who trips this loses the setting along with the data it
+    // protected. That is the correct pairing: a setting guarding nothing is not
+    // a protection, it is a statement.
+    erasure_enabled_ = false;
+    erasure_chosen_ = false;
+    erasure_threshold_ = default_erasure_threshold;
+    invalid_attempts_ = 0U;
 }
 
 bool UnlockAuthority::protected_domain_destroyed() const noexcept {
@@ -202,7 +226,7 @@ os::core::Result<UnlockOutcome> UnlockAuthority::submit(
         const bool reached_threshold = erasure_enabled_ &&
             invalid_attempts_ >= erasure_threshold_;
         const bool erase = reached_threshold && !destroyed_;
-        if (erase) destroyed_ = true;
+        if (erase) forget_after_destruction();
 
         // Repeated failure *is* duress, so it takes the duress response too.
         //
@@ -254,7 +278,7 @@ os::core::Result<UnlockOutcome> UnlockAuthority::submit(
     // destruction that has not happened yet is a destruction that did not
     // happen.
     const bool destroy = (classification == CredentialClass::duress) && !destroyed_;
-    if (destroy) destroyed_ = true;
+    if (destroy) forget_after_destruction();
 
     // The iteration rule. Note what it reads: a tag, a time, and nothing else.
     //

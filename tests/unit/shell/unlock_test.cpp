@@ -465,12 +465,16 @@ int main() {
 
         // A fresh authority, as after a restart.
         UnlockAuthority after;
-        if (!check(static_cast<bool>(after.restore(saved)), "restore refused")) return 1;
+        if (!check(static_cast<bool>(after.restore(saved, os::shell::DomainPresence::present)), "restore refused")) return 1;
         if (!check(after.consecutive_invalid_attempts() == 3U,
                    "rebooting reset the guess count")) return 1;
         if (!check(after.erasure_enabled() && after.erasure_threshold() == 5U,
                    "the owner's setting did not survive")) return 1;
         if (!check(after.erasure_choice_made(), "the owner's decision did not survive")) return 1;
+        // And the record itself carries no field saying destruction happened.
+        // That flag was the trace this design cannot afford.
+        if (!check(!after.protected_domain_destroyed(),
+                   "an intact device reported itself destroyed")) return 1;
 
         // Two more guesses reach the threshold that the reboot was meant to dodge.
         (void)must_submit(after, 0U, CredentialClass::invalid,
@@ -487,7 +491,7 @@ int main() {
         UnlockAuthority before;
         (void)must_submit(before, 0U, CredentialClass::duress, duress_tag);
         UnlockAuthority after;
-        if (!check(static_cast<bool>(after.restore(before.persisted_state())), "restore refused")) {
+        if (!check(static_cast<bool>(after.restore(before.persisted_state(), os::shell::DomainPresence::absent)), "restore refused")) {
             return 1;
         }
         if (!check(after.protected_domain_destroyed(), "destruction did not survive a restart")) {
@@ -508,14 +512,14 @@ int main() {
         tampered.erasure_enabled = true;
         tampered.erasure_choice_made = true;
         tampered.erasure_threshold = os::shell::maximum_erasure_threshold + 1U;
-        if (!check(refused_with(authority.restore(tampered),
+        if (!check(refused_with(authority.restore(tampered, os::shell::DomainPresence::present),
                                 os::shell::errors::invalid_erasure_threshold),
                    "an out-of-range threshold was restored")) return 1;
 
         os::shell::PersistedUnlockState unchosen{};
         unchosen.erasure_enabled = true;
         unchosen.erasure_choice_made = false;
-        if (!check(refused_with(authority.restore(unchosen),
+        if (!check(refused_with(authority.restore(unchosen, os::shell::DomainPresence::present),
                                 os::shell::errors::invalid_erasure_threshold),
                    "erasure enabled without ever being chosen was restored")) return 1;
     }
@@ -548,6 +552,44 @@ int main() {
         if (!check(by_guessing.protected_domain_destroyed() &&
                        by_credential.protected_domain_destroyed(),
                    "destruction was not recorded for both triggers")) return 1;
+    }
+
+    // A wiped device leaves no record that it was wiped.
+    //
+    // The persisted state of a device whose domain was destroyed must be the
+    // persisted state of a device that was never configured. A stored "already
+    // destroyed" flag is a confession that survives precisely because it was
+    // made durable, and the erasure settings are a second one - they say the
+    // owner anticipated coercion.
+    {
+        UnlockAuthority configured;
+        (void)configured.configure_erasure(true, 5U);
+        const auto untouched = configured.persisted_state();
+
+        UnlockAuthority wiped;
+        (void)wiped.configure_erasure(true, 5U);
+        (void)must_submit(wiped, 0U, CredentialClass::duress, duress_tag);
+        if (!check(wiped.protected_domain_destroyed(), "the duress path did not destroy")) {
+            return 1;
+        }
+
+        const auto residue = wiped.persisted_state();
+        UnlockAuthority fresh;
+        if (!check(residue == fresh.persisted_state(),
+                   "a wiped device's record differs from an unconfigured one")) return 1;
+        if (!check(!(residue == untouched),
+                   "the test compared a wiped record against an identical one")) return 1;
+
+        // And restoring that record onto a device whose key is gone still knows
+        // the domain is gone - from the key's absence, not from a flag.
+        UnlockAuthority after;
+        if (!check(static_cast<bool>(
+                       after.restore(residue, os::shell::DomainPresence::absent)),
+                   "restore refused")) return 1;
+        if (!check(after.protected_domain_destroyed(),
+                   "destruction was not derived from the missing key")) return 1;
+        const auto again = must_submit(after, 0U, CredentialClass::duress, duress_tag);
+        if (!check(!again.destroy_protected_domain, "destruction was issued twice")) return 1;
     }
 
     return 0;
