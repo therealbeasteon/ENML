@@ -66,6 +66,12 @@ inline constexpr std::uint32_t invalid_collection_content = 56U;
 inline constexpr std::uint32_t accessibility_authority_denied = 57U;
 inline constexpr std::uint32_t invalid_render_damage = 58U;
 inline constexpr std::uint32_t accessibility_session_mismatch = 59U;
+inline constexpr std::uint32_t invalid_decision_layout = 60U;
+inline constexpr std::uint32_t missing_negative_choice = 61U;
+inline constexpr std::uint32_t undersized_decision_target = 62U;
+inline constexpr std::uint32_t overlapping_decision_targets = 63U;
+inline constexpr std::uint32_t insufficient_target_separation = 64U;
+inline constexpr std::uint32_t disproportionate_decision_choice = 65U;
 }
 
 [[nodiscard]] constexpr os::core::Error ui_error(std::uint32_t code) noexcept {
