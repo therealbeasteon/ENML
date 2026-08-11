@@ -176,8 +176,17 @@ fixture assumes, the child exits 32 and the parent then waits the full thirty
 seconds for a marker that will never be written.
 
 That accounts for both observed shapes: the 0.8-second abort and the
-30-second one are the same race caught at different points. The fix is to make
-the marker write tolerate `peer_died` and reacquire storage before retrying,
-which is a restructure of the fixture's ordering rather than a one-line change,
-and is not attempted here.
+30-second one are the same race caught at different points.
+
+Fixed. The marker write now tolerates `peer_died`, records that the old storage
+capability has already died - which is what the heartbeat loop was waiting to
+establish, so that loop is skipped rather than spinning to its bound - and
+writes the marker through the reacquired root instead. The marker still means
+what it meant, and the parent still receives it.
+
+This is the third diagnosis of this failure. The first two were wrong because
+they were made without evidence: a bare `assert` on a bool, and a summary line
+naming only an exit code. What made the difference was carrying the failing
+test's own output into the annotation, which cost far less than the guesses
+did.
 
