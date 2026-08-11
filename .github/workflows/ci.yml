@@ -26,9 +26,14 @@ jobs:
       # was applied and instrumented nothing", which the ELF alone cannot.
       - name: Report hardening flags in the build
         run: |
+          report=""
           for flag in fstack-protector-strong fstack-clash-protection mbranch-protection fcf-protection _GLIBCXX_ASSERTIONS; do
-            echo "$flag -> $(grep -c -- "$flag" build/host-debug/build.ninja || true) occurrences"
+            count="$(grep -c -- "$flag" build/host-debug/build.ninja || true)"
+            report="${report}${flag} -> ${count} occurrences%0A"
           done
+          sample="$(grep -m1 -o -- '-fstack-protector[^ ]*' build/host-debug/build.ninja || echo NONE)"
+          report="${report}first stack-protector token seen: ${sample}"
+          echo "::notice title=hardening flags::${report}"
       - name: Verify binary hardening
         run: >-
           .github/scripts/check-hardening.sh 'host-debug'
