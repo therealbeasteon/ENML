@@ -16,7 +16,7 @@ jobs:
       - name: Configure
         run: cmake --preset host-debug
       - name: Build
-        run: cmake --build --preset host-debug --parallel 2
+        run: .github/scripts/run-build.sh 'debug' --preset host-debug --parallel 2
       - name: Test M0 only
         run: ctest --preset host-debug --output-on-failure -L '^m0$'
       # Feature-testing a flag proves the compiler accepted it, not that the

@@ -55,8 +55,16 @@ void show_and_frame(
         .surface = surface.id,
         .buffer = buffer_for(surface.id),
         .sequence = sequence,
+        .buffer_slot = 0U,
+        .damage_count = 1U,
     };
-    assert(compositor.submit_frame(owner, submission));
+    submission.damage[0] = {
+        0,
+        0,
+        surface.bounds.width,
+        surface.bounds.height,
+    };
+    assert(compositor.submit_frame(owner, submission, 1'000'000U));
 }
 
 } // namespace
