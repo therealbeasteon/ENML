@@ -16,7 +16,7 @@ jobs:
       - name: Configure
         run: cmake --preset host-debug
       - name: Build boot state gates
-        run: .github/scripts/run-build.sh 'boot-gcc' --preset host-debug --target boot_state_test boot_attestation_test --parallel 2
+        run: .github/scripts/run-build.sh 'boot-gcc' --preset host-debug --target boot_state_test boot_attestation_test boot_sealing_test --parallel 2
       - name: Test boot state gates
         run: .github/scripts/run-ctest.sh '^m5-boot$' 'boot-gcc' --preset host-debug
 
@@ -27,7 +27,7 @@ jobs:
       - name: Configure
         run: cmake --preset host-asan
       - name: Build boot state gates with sanitizers
-        run: .github/scripts/run-build.sh 'boot-sanitizers' --preset host-asan --target boot_state_test boot_attestation_test --parallel 2
+        run: .github/scripts/run-build.sh 'boot-sanitizers' --preset host-asan --target boot_state_test boot_attestation_test boot_sealing_test --parallel 2
       - name: Test boot state gates with sanitizers
         run: .github/scripts/run-ctest.sh '^m5-boot$' 'boot-sanitizers' --preset host-asan
 
@@ -41,7 +41,7 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           -DCMAKE_CXX_COMPILER=clang++
       - name: Build boot state gates
-        run: .github/scripts/run-build.sh 'boot-clang' build/m5-boot-clang --target boot_state_test boot_attestation_test --parallel 2
+        run: .github/scripts/run-build.sh 'boot-clang' build/m5-boot-clang --target boot_state_test boot_attestation_test boot_sealing_test --parallel 2
       - name: Test boot state gates
         run: .github/scripts/run-ctest.sh '^m5-boot$' 'boot-clang' --test-dir build/m5-boot-clang
 
@@ -59,6 +59,6 @@ jobs:
       - name: Configure
         run: cmake --preset host-debug
       - name: Build boot state gates natively
-        run: .github/scripts/run-build.sh 'boot-arm64-native' --preset host-debug --target boot_state_test boot_attestation_test --parallel 2
+        run: .github/scripts/run-build.sh 'boot-arm64-native' --preset host-debug --target boot_state_test boot_attestation_test boot_sealing_test --parallel 2
       - name: Test boot state gates natively
         run: .github/scripts/run-ctest.sh '^m5-boot$' 'boot-arm64-native' --preset host-debug

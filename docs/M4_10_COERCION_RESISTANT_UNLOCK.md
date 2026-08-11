@@ -246,3 +246,43 @@ entirely, and nothing in this tree yet makes that counter survive a reboot -
 `MonotonicSecurityState` remains an interface boundary only, as M2 records. Until
 it is real, the threshold protects against someone guessing at a lock screen and
 not against someone willing to pull the battery between attempts.
+
+## M4.10d - Non-interruptibility, and a source authorised outside the library
+
+The project owner authorised consulting sources outside the supplied reference
+library for this question. `docs/REFERENCE_ADDITIONS_2026_08_10.md` forbids that
+by default and names the owner as the only party who can lift it, so the
+authorisation is recorded here rather than left implicit. What follows is the one
+requirement that came from outside the library; everything else in M4.10 is from
+the supplied set.
+
+The only mainstream phone OS shipping a duress password states its own bar
+plainly: the wipe must guarantee data is unrecoverable **with no way to interrupt
+it**, and rebooting into a recovery environment to wipe is explicitly not
+acceptable. Entering it is indistinguishable from an ordinary unlock at the lock
+screen.
+
+Two of those ENML already had. The third is a requirement this design had not
+written down, and it is the one that decides the mechanism:
+
+**Erasure must complete without a reboot and must not be interruptible.** An
+attacker who sees a device restart into anything unusual knows what happened and
+pulls the battery. A wipe that walks a filesystem can be interrupted halfway, and
+half a wipe is a device that still holds the half that mattered.
+
+This is the strongest argument yet for cryptographic erasure over overwriting,
+and it is a different argument from the flash-wear one: destroying a single
+wrapping key is one small write that either happened or did not. There is no
+state in which it is half done. Overwriting user data is inherently interruptible
+because it is inherently long, and no amount of care makes a long operation
+atomic.
+
+So the directive M4.10a emits is not "begin wiping". It is "destroy this key",
+and the key service must treat it as an operation that completes before anything
+else observes the device - not a job queued for a reboot to finish.
+
+### What this does not yet do
+
+Nothing in the tree enforces the non-interruptibility. `system.keys` acting on
+the directive within the uniform envelope is the wiring M4.10 already recorded as
+outstanding, and this adds a requirement to it rather than satisfying one.
