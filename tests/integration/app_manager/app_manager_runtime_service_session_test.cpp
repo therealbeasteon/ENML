@@ -452,8 +452,7 @@ int main(int argc, char** argv) {
     if (!uninstalled) {
         std::fprintf(
             stderr,
-            "m2.10 uninstall error domain=%u code=%u
-",
+            "m2.10 uninstall error domain=%u code=%u\n",
             static_cast<unsigned>(uninstalled.error().domain),
             static_cast<unsigned>(uninstalled.error().code));
     }
