@@ -13,6 +13,11 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # Added while the count is zero. A gate written after the debt exists
+      # starts life failing and gets suppressed; one written at zero only ever
+      # has to hold a line.
+      - name: Hygiene
+        run: .github/scripts/check-hygiene.sh 'debug'
       - name: Configure
         run: cmake --preset host-debug
       - name: Build
