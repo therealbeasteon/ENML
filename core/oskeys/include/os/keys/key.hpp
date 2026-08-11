@@ -34,6 +34,15 @@ enum class KeyPurpose : std::uint32_t {
     profile_storage_aead = 2U,
 };
 
+[[nodiscard]] constexpr bool valid_purpose(KeyPurpose purpose) noexcept {
+    switch (purpose) {
+    case KeyPurpose::application_data_aead:
+    case KeyPurpose::profile_storage_aead:
+        return true;
+    }
+    return false;
+}
+
 using RightsMask = std::uint32_t;
 
 namespace key_rights {
@@ -52,8 +61,8 @@ struct KeyDescriptor final {
     RightsMask rights {0U};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return id.valid() && version != 0U && rights != 0U &&
-            (rights & ~key_rights::all) == 0U && valid_purpose(purpose);
+        return id.valid() && version != 0U && valid_purpose(purpose) && rights != 0U &&
+            (rights & ~key_rights::all) == 0U;
     }
 
     [[nodiscard]] friend constexpr auto operator<=>(
@@ -67,15 +76,6 @@ struct KeyOwner final {
 
     [[nodiscard]] friend constexpr auto operator<=>(const KeyOwner&, const KeyOwner&) = default;
 };
-
-[[nodiscard]] constexpr bool valid_purpose(KeyPurpose purpose) noexcept {
-    switch (purpose) {
-    case KeyPurpose::application_data_aead:
-    case KeyPurpose::profile_storage_aead:
-        return true;
-    }
-    return false;
-}
 
 [[nodiscard]] constexpr bool valid_rights(RightsMask value) noexcept {
     return value != 0U && (value & ~key_rights::all) == 0U;
