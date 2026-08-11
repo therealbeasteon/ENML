@@ -341,8 +341,12 @@ much code has to be trusted.
       makes a policy decision. Device memory is a kind rather than a hint,
       interrupts mask per source rather than globally, time is nanoseconds
       rather than ticks, and contexts stay opaque.
-- [ ] **M7.3b** Host implementation, so the portable kernel stays testable
-      while the real machine layer is written.
+- [x] **M7.3b** Host machine layer. The policy half is implemented for real -
+      alignment, page multiples, wrapping ranges, overlap, exact unmapping -
+      so the W^X and mapping rules are enforced now rather than deferred to
+      hardware. The half that needs a machine reports unsupported rather than
+      pretending. The tests are written against the contract, so the AArch64
+      layer must satisfy the same ones.
 - [ ] **M7.3c** AArch64 implementation, against the ISA reference.
 - [x] **M7.4a** Kernel hardening requirements stated up front, and the
       migration reframed as replacement rather than subtraction. A subsystem
