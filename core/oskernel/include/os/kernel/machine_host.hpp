@@ -56,8 +56,16 @@ struct HostPhysicalMapping final {
 };
 
 // Concrete host representation of the opaque machine-wide mapping authority.
-// All address spaces on one host-test machine bind to the same instance.
+// All address spaces on one host-test machine bind to the same instance. It is
+// deliberately non-copyable/non-movable: copying it would duplicate authority
+// records whose owner pointers still name the original address spaces.
 struct MachinePhysicalLedger final {
+    MachinePhysicalLedger() noexcept = default;
+    MachinePhysicalLedger(const MachinePhysicalLedger&) = delete;
+    MachinePhysicalLedger& operator=(const MachinePhysicalLedger&) = delete;
+    MachinePhysicalLedger(MachinePhysicalLedger&&) = delete;
+    MachinePhysicalLedger& operator=(MachinePhysicalLedger&&) = delete;
+
     std::array<HostPhysicalMapping, max_host_physical_mappings> mappings {};
     std::size_t occupied {0U};
 };
@@ -65,8 +73,15 @@ struct MachinePhysicalLedger final {
 // The host's concrete address space. Declared here rather than in machine.hpp
 // so the portable kernel still only ever sees an incomplete type: it stores
 // handles and hands them back, and the moment it can read one the portability
-// claim is gone.
+// claim is gone. Address spaces are also non-copyable/non-movable because the
+// physical ledger binds records to the exact object identity.
 struct MachineAddressSpace final {
+    MachineAddressSpace() noexcept = default;
+    MachineAddressSpace(const MachineAddressSpace&) = delete;
+    MachineAddressSpace& operator=(const MachineAddressSpace&) = delete;
+    MachineAddressSpace(MachineAddressSpace&&) = delete;
+    MachineAddressSpace& operator=(MachineAddressSpace&&) = delete;
+
     std::array<HostMapping, max_host_mappings> mappings {};
     std::size_t occupied {0U};
     MachinePhysicalLedger* physical_ledger {nullptr};
