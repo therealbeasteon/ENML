@@ -22,7 +22,16 @@ on:
   # A schedule-only workflow is never exercised before it is merged. Running a
   # short version whenever the fuzz infrastructure itself changes means a broken
   # harness, dictionary or seed generator is caught by the PR that breaks it
-  # rather than by a silent 3am failure. Ordinary PRs are unaffected.
+  # rather than by a silent 3am failure. Ordinary pushes and PRs are unaffected.
+  #
+  # Push is included as well as pull_request because targets gated behind a
+  # build option - the durable key-registry harness needs the host/CI crypto
+  # provider - are compiled by no other workflow. Without this a harness could
+  # be added, merged, and never built until the first nightly.
+  push:
+    paths:
+      - 'fuzz/**'
+      - '.github/workflows/fuzz-nightly.yml'
   pull_request:
     paths:
       - 'fuzz/**'
@@ -99,7 +108,7 @@ jobs:
           UBSAN_OPTIONS: halt_on_error=1:print_stacktrace=1
           # Validation runs on a fuzz-infrastructure PR only need to prove the
           # plumbing works, not to search; the nightly run does the searching.
-          DURATION: ${{ github.event.inputs.duration_seconds || (github.event_name == 'pull_request' && '60' || '600') }}
+          DURATION: ${{ github.event.inputs.duration_seconds || ((github.event_name == 'pull_request' || github.event_name == 'push') && '60' || '600') }}
         run: |
           set -euo pipefail
           corpus="build/fuzz/corpus/${{ matrix.target }}"
@@ -144,7 +153,7 @@ jobs:
       # PR validation runs must not write to the shared corpus cache: a 60-second
       # branch run would otherwise overwrite the accumulated nightly coverage.
       - name: Save accumulated corpus
-        if: success() && github.event_name != 'pull_request'
+        if: success() && github.event_name != 'pull_request' && github.event_name != 'push'
         uses: actions/cache/save@v4
         with:
           path: build/fuzz/corpus/${{ matrix.target }}
