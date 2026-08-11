@@ -34,6 +34,9 @@ struct HostMapping final {
     std::size_t length {0};
     MachinePermissions permissions {MachinePermissions::read};
     MachineMemoryKind kind {MachineMemoryKind::normal};
+    // Established by machine_map_kernel_stack, and the only kind of range a
+    // context may be prepared on.
+    bool kernel_stack {false};
     bool occupied {false};
 };
 

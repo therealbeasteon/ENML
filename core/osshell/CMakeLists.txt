@@ -3,6 +3,8 @@ add_library(osshell STATIC
     src/activation.cpp
     src/preview_policy.cpp
     src/consent.cpp
+    src/unlock.cpp
+    src/credential_rule.cpp
 )
 
 target_include_directories(osshell PUBLIC include)

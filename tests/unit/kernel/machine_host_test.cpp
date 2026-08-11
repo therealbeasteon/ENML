@@ -140,18 +140,116 @@ int main() {
         if (!check(second >= first, "monotonic time went backwards")) return 1;
     }
 
-    // Context preparation validates what it can.
+    // Context preparation validates what it can, and refuses a stack that was
+    // not established as one - the guard page rule reaching the operation that
+    // would otherwise quietly bypass it.
     {
+        os::kernel::MachineAddressSpace stack_space{};
         os::kernel::MachineContext context{};
-        if (!check(refused(os::kernel::machine_prepare_context(context, space, 0U, page),
+
+        if (!check(refused(os::kernel::machine_prepare_context(context, stack_space, 0U, page),
                            os::kernel::machine_errors::invalid_range),
                    "null entry accepted")) return 1;
-        if (!check(refused(os::kernel::machine_prepare_context(context, space, page, 1U),
+        if (!check(refused(os::kernel::machine_prepare_context(context, stack_space, page, 1U),
                            os::kernel::machine_errors::alignment),
                    "misaligned stack accepted")) return 1;
+        if (!check(refused(
+                       os::kernel::machine_prepare_context(context, stack_space, page, page * 8U),
+                       os::kernel::machine_errors::not_a_kernel_stack),
+                   "a context was prepared on memory that is not a kernel stack")) return 1;
+
+        // Establish one properly: guard page below, stack above it.
+        const std::uintptr_t stack_base = page * 4U;
+        const std::size_t stack_length = page * 2U;
+        if (!check(static_cast<bool>(os::kernel::machine_map_kernel_stack(
+                       stack_space, stack_base, page * 64U, stack_length)),
+                   "a well-formed kernel stack was refused")) return 1;
+
+        // Stacks grow down, so the pointer starts at the top of the range.
+        const std::uintptr_t stack_top = stack_base + stack_length;
         if (!check(static_cast<bool>(
-                       os::kernel::machine_prepare_context(context, space, page, page * 2U)),
-                   "valid context refused")) return 1;
+                       os::kernel::machine_prepare_context(context, stack_space, page, stack_top)),
+                   "a context on a real kernel stack was refused")) return 1;
+        // The bottom of the stack is not the stack pointer, and accepting it
+        // would put the guard page above the thread rather than below it.
+        if (!check(refused(
+                       os::kernel::machine_prepare_context(context, stack_space, page, stack_base),
+                       os::kernel::machine_errors::not_a_kernel_stack),
+                   "the bottom of a stack was accepted as a stack pointer")) return 1;
+    }
+
+    // Every kernel stack has an unmapped page below it. In userspace this is a
+    // compiler measure; here it is a mapping decision, and it is what turns an
+    // overflow into a fault rather than into the next thread's saved state.
+    {
+        os::kernel::MachineAddressSpace guarded{};
+        const std::uintptr_t stack_base = page * 4U;
+
+        // Occupy the page directly below where the stack would go.
+        if (!check(static_cast<bool>(os::kernel::machine_map(
+                       guarded, stack_base - page, page * 32U, page,
+                       os::kernel::MachinePermissions::read_write,
+                       os::kernel::MachineMemoryKind::normal)),
+                   "mapping the guard page location failed")) return 1;
+        if (!check(refused(os::kernel::machine_map_kernel_stack(
+                               guarded, stack_base, page * 64U, page * 2U),
+                           os::kernel::machine_errors::missing_guard_page),
+                   "a stack was established over an already-mapped guard page")) return 1;
+
+        // A stack with no room beneath it for a guard is refused rather than
+        // mapped and described as guarded.
+        os::kernel::MachineAddressSpace low{};
+        if (!check(refused(os::kernel::machine_map_kernel_stack(low, 0U, page, page),
+                           os::kernel::machine_errors::missing_guard_page),
+                   "a stack at the bottom of the address space was accepted")) return 1;
+    }
+
+    // The half of W^X no type can express: the same physical memory reached
+    // writably through one virtual mapping and executably through another. Each
+    // mapping is individually blameless; together they are the rule broken.
+    {
+        os::kernel::MachineAddressSpace aliased{};
+        const std::uintptr_t physical = page * 128U;
+
+        if (!check(static_cast<bool>(os::kernel::machine_map(
+                       aliased, page * 4U, physical, page,
+                       os::kernel::MachinePermissions::read_write,
+                       os::kernel::MachineMemoryKind::normal)),
+                   "the first mapping was refused")) return 1;
+        if (!check(refused(os::kernel::machine_map(
+                               aliased, page * 16U, physical, page,
+                               os::kernel::MachinePermissions::read_execute,
+                               os::kernel::MachineMemoryKind::normal),
+                           os::kernel::machine_errors::writable_executable_alias),
+                   "physical memory became writable and executable at once")) return 1;
+
+        // The same conflict in the other order is the same conflict.
+        os::kernel::MachineAddressSpace reversed{};
+        if (!check(static_cast<bool>(os::kernel::machine_map(
+                       reversed, page * 4U, physical, page,
+                       os::kernel::MachinePermissions::read_execute,
+                       os::kernel::MachineMemoryKind::normal)),
+                   "the first mapping was refused")) return 1;
+        if (!check(refused(os::kernel::machine_map(
+                               reversed, page * 16U, physical, page,
+                               os::kernel::MachinePermissions::read_write,
+                               os::kernel::MachineMemoryKind::normal),
+                           os::kernel::machine_errors::writable_executable_alias),
+                   "physical memory became executable and writable at once")) return 1;
+
+        // Two read-only views of the same memory are not a conflict, and neither
+        // are two writable ones. The rule is about the combination, not about
+        // aliasing itself - refusing all aliases would break shared buffers.
+        os::kernel::MachineAddressSpace shared{};
+        if (!check(static_cast<bool>(os::kernel::machine_map(
+                       shared, page * 4U, physical, page,
+                       os::kernel::MachinePermissions::read_write,
+                       os::kernel::MachineMemoryKind::normal)) &&
+                       static_cast<bool>(os::kernel::machine_map(
+                           shared, page * 16U, physical, page,
+                           os::kernel::MachinePermissions::read_write,
+                           os::kernel::MachineMemoryKind::normal)),
+                   "two writable views of one buffer were refused")) return 1;
     }
 
     // The operations that genuinely need a machine report unsupported rather

@@ -181,6 +181,23 @@ font policy, final font assets and licensing, multitouch and gesture contracts.
       converts the keys idle fix from argued-by-symmetry to measured: 0 idle
       wakeups per second.
 
+- [x] **M4.10** Coercion-resistant unlock authority, in
+      `docs/M4_10_COERCION_RESISTANT_UNLOCK.md`. The reference shows a single
+      panic PIN is "very easily defeated" by an attacker who just asks twice, and
+      warns that locking on receipt of the panic credential lets him screen — the
+      locking event must be invariant to which credential was entered. Its
+      schemes all assume a trusted verifier *elsewhere*, which a phone does not
+      have, so ENML derives its own: the panic reaction is irreversible
+      destruction of the protected key domain rather than a silent alarm nobody
+      will receive; it happens before access is granted and is not conditional on
+      the attempt succeeding; the iteration rule reads a tag and a time and never
+      stores the credential class, so the screening bug is unrepresentable rather
+      than merely absent; there is no separate success value for a duress unlock,
+      so nothing downstream can leak which occurred; and every disposition is
+      released on one uniform deadline, because the attacker is holding the
+      stopwatch. `t2 > t1` is a `static_assert`, since without it one coercion
+      episode would lock the owner out permanently.
+
 ### Measured baseline
 
 All three supervised services, both architectures, at the merge candidate:
@@ -220,7 +237,12 @@ more, which is the provider, hierarchy and durable registry.
       platform.
 - [ ] **M6.2** IOMMU programming, so `iommu_confined` is enforced rather than
       recorded.
-- [ ] **M6.3** Interrupt authority, with its own threat model.
+- [x] **M6.3** Interrupt authority, with its own threat model, in
+      `docs/M7_1_INTERRUPT.md` - the document M6.0 said this needed before it
+      could be more than half a specification. The OS half is implemented and
+      gated as M7.1d below. The half that needs a controller - turning a real
+      signal into a dispatch - does not exist yet, and neither does binding
+      attach to a capability rather than to a role.
 - [ ] **M6.4** Check-then-commit device reconfiguration: validate a whole batch,
       then apply all of it or none.
 
@@ -294,9 +316,10 @@ implicit is how a project starts believing its own marketing.
       surface on a phone and nothing in the tree addresses it.
 - [ ] Telephony and RCS.
 - [ ] Board bring-up, driver model and power management integration.
-- [ ] Lock-screen authentication, and a coercion-resistance design that is not a
-      naive second "panic PIN" — the supplied duress reference shows why simple
-      two-password schemes fail under repeated coercion.
+- [ ] Lock-screen authentication. The **coercion-resistant unlock authority**
+      now exists and is gated — see M4.10 below — but the credential rule that
+      decides what counts as a duress credential, the trusted unlock surface,
+      and the wiring from the destruction directive to `system.keys` do not.
 - [ ] Recovery, update and encrypted-backup policy.
 - [ ] Application distribution.
 - [ ] Whole-system boot-to-shell budget.
@@ -335,7 +358,50 @@ much code has to be trusted.
       urgent thread waiting on it, recomputed rather than adjusted, so a
       low-priority thread cannot park a shared server and stall threads it
       outranks. A dead caller stops donating.
-- [ ] **M7.1c** Capability transfer as a state machine.
+- [x] **M7.1c** Capability transfer as a state machine, in
+      `docs/M7_1_CAPABILITY.md`. The references record two defects as properties
+      of capability systems in general - revocation that is all-or-nothing, and
+      proliferation nothing controls - and ENML cannot inherit either, because
+      M2.3 already claims deterministic revocation one layer up. So a grant
+      derives a child, revoking removes the derivation subtree and nothing else,
+      passing a capability on is itself a right, and attenuation only
+      attenuates. A dead thread holds nothing. Removal is bounded by the
+      delegation ceiling and uses no scratch memory.
+- [x] **M7.1d** Interrupt dispatch as a state machine, in
+      `docs/M7_1_INTERRUPT.md`. The reference design puts a driver's handler in
+      interrupt context to avoid waking it per interrupt; the same references
+      record what that costs - a driver that can disable interrupts can also die
+      there, and dispatching as fast as a device asserts is receive livelock.
+      Cookie keeps the goal and refuses both mechanisms: no user code runs in
+      interrupt context at all, the kernel coalesces and reports the count so a
+      driver still wakes once per burst, and a source stays masked from dispatch
+      until its driver reports the device quiet - so interrupt load is bounded by
+      driver progress rather than by the device. The wakeup-per-burst cost is
+      recorded rather than discovered.
+- [x] **M7.1e** Scheduling, in `docs/M7_1_SCHEDULER.md` - which completes all
+      four kernel responsibilities as host-testable pure logic. Strict priority,
+      round-robin within it, and **no tick**: the scheduler returns the one
+      deadline it next needs, asks for no timer when nothing is competing, and
+      refills slices lazily from monotonic time. A periodic priority boost is a
+      periodic timer, and M4.7's measured idle-wakeup gate is why Cookie cannot
+      have one. Time is charged and never refunded, so the gaming attack the
+      references describe - relinquish just before the slice expires, keep your
+      position, monopolise the processor - has no path here, and `yield`
+      forfeits rather than banks. Starvation is deliberate and argued rather
+      than overlooked.
+- [x] **M7.1f** The four tables composed into one kernel, in
+      `docs/M7_1_KERNEL_COMPOSITION.md`. Four individually correct state
+      machines are not a kernel. A thread's death now reaches all four in one
+      operation that reports what each released - the failure it guards is a
+      forgotten call, which leaves a capability outliving its holder or an
+      interrupt line nobody owns, and neither fails loudly. The scheduler's view
+      of runnability and effective priority is recomputed from the rendezvous
+      after every operation rather than patched along each path, on M7.1b's
+      argument that an adjustment missed once stays wrong. This is what makes
+      priority inheritance actually reach the scheduler: before it, M7.1b
+      computed the right value and nothing carried it across, so a priority-zero
+      server serving a priority-nine client still lost the processor to an
+      unrelated thread at five.
 - [x] **M7.3a** Machine-layer contract defined before implementation, in
       `docs/M7_3_MACHINE.md`. Assembly may live only behind it; nothing in it
       makes a policy decision. Device memory is a kind rather than a hint,
@@ -352,10 +418,41 @@ much code has to be trusted.
       migration reframed as replacement rather than subtraction. A subsystem
       removed without being replaced restartable, capability-scoped and no
       slower is a regression however clean the header list looks.
-- [ ] **M7.4b** W^X kernel mappings, a guard page below every kernel stack and
+- [x] **M7.4b** W^X kernel mappings, a guard page below every kernel stack and
       the bounded-work-per-call rule, enforced as the machine layer is written
-      rather than added afterwards.
+      rather than added afterwards. Two of the three needed real mechanism.
+      `MachinePermissions` makes single-mapping W^X unrepresentable, but not
+      **aliasing** - one physical page mapped `read_write` at one address and
+      `read_execute` at another is writable and executable at once through two
+      blameless mappings, and it is now refused on the physical range. Two
+      writable views of one buffer still work, because the rule is the
+      combination and not the aliasing. The guard page moved from an intention
+      to `machine_map_kernel_stack`, the only way to get a stack, which refuses
+      unless the page below is unmapped - and `machine_prepare_context` now
+      refuses a stack that was not established that way, so the rule reaches the
+      operation that would otherwise bypass it. Written against the contract, so
+      M7.3c must satisfy the same tests. Cross-address-space aliasing is
+      recorded as not covered.
 - [ ] **M7.3** Boot on the emulated reference platform.
-- [ ] **M7.4** Anonymous attestation. Signing the boot state without minting a
-      device identifier, which is the ring-signature and zero-knowledge
-      question and is scoped separately.
+- [x] **M7.4c** Anonymous attestation *policy*, in
+      `docs/M7_4_ANONYMOUS_ATTESTATION.md`. The references answer this more
+      kindly than expected: one-time traceable ring signatures give anonymity
+      with **no group manager** - which matters because a group manager is a
+      de-anonymization backdoor and on a phone that party is the vendor - and
+      the construction "only requires a few hash evaluations", is post-quantum
+      resistant for the same reason, and signs in under a second for a ring of
+      2^10. A cryptographic surface whose mandatory primitive count is *one* is
+      the smallest honest answer to "lightweight". The scheme punishes a signer
+      who signs twice under one tag by de-anonymizing them, so ENML's own
+      contribution is the inversion: the OS refuses the second attestation
+      rather than letting the mathematics punish it. Linkage is the user's
+      choice per verifier, never the verifier's, and a grant that reveals
+      continuity says so. Bender-Katz-Morselli's strong definitions - anonymity
+      under full key exposure, unforgeability under insider corruption - are
+      recorded as a requirement, because a fleet of phones will eventually leak
+      a key and the weak definitions would lose anonymity for everyone at the
+      first one.
+- [ ] **M7.4** The attestation signature itself. It is a provider, on the M2.4
+      split. Ring membership - and therefore the actual anonymity set - is
+      undecided, and until it is, no privacy claim should be made from the
+      policy above.

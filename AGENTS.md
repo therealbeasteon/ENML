@@ -170,6 +170,27 @@ ctest --test-dir build/host-clang --output-on-failure
 
 Process-sensitive tests must run on GCC, Clang and native AArch64. Do not add them to the M0 qemu-user-safe set unless they are explicitly proven safe there.
 
+### Fast local check on Windows, before pushing
+
+`core/oscore` and `core/oskernel` are portable C++ with header-only `Result` and
+`panic`, so the kernel state machines build and run without CMake, without Linux
+and without CI. On a Windows box with the VS 2022 Build Tools:
+
+```sh
+cmd /c '"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && cl /nologo /std:c++20 /EHsc /W4 /permissive- /I core\oskernel\include /I core\oscore\include /Fe:t.exe tests\unit\kernel\scheduler_test.cpp core\oskernel\src\scheduler.cpp && t.exe'
+```
+
+This is a pre-flight check, not a gate, and it does not replace anything. MSVC
+applies no `-Wconversion`/`-Wsign-conversion` and there are no sanitizers here,
+so a green run means "no syntax error and the logic holds", not "ready to merge".
+Its value is that it costs seconds where a CI round trip costs minutes, and it
+catches the mistakes that are most expensive to learn about remotely - aggregate
+initialisers that do not match their struct, and state machines whose transitions
+were reasoned about rather than executed.
+
+Modules coupled to Linux (`osipc`, `ossandbox`, `osservice`, `osstorage`) will
+not build this way. That is expected and is not a failure to investigate.
+
 ## Device authority
 
 Port I/O authority is not representable in `DeviceAccessPolicyV1` and must not

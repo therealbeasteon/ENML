@@ -1,5 +1,8 @@
 add_library(osboot STATIC
     src/state.cpp
+    src/attestation.cpp
+    src/sealing.cpp
+    src/transparency.cpp
 )
 
 add_library(emnl::osboot ALIAS osboot)
