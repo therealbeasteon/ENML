@@ -1,6 +1,7 @@
 add_library(oskernel STATIC
     src/abi.cpp
     src/rendezvous.cpp
+    src/capability.cpp
     src/machine_host.cpp
 )
 

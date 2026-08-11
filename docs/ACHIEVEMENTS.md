@@ -335,7 +335,15 @@ much code has to be trusted.
       urgent thread waiting on it, recomputed rather than adjusted, so a
       low-priority thread cannot park a shared server and stall threads it
       outranks. A dead caller stops donating.
-- [ ] **M7.1c** Capability transfer as a state machine.
+- [x] **M7.1c** Capability transfer as a state machine, in
+      `docs/M7_1_CAPABILITY.md`. The references record two defects as properties
+      of capability systems in general - revocation that is all-or-nothing, and
+      proliferation nothing controls - and ENML cannot inherit either, because
+      M2.3 already claims deterministic revocation one layer up. So a grant
+      derives a child, revoking removes the derivation subtree and nothing else,
+      passing a capability on is itself a right, and attenuation only
+      attenuates. A dead thread holds nothing. Removal is bounded by the
+      delegation ceiling and uses no scratch memory.
 - [x] **M7.3a** Machine-layer contract defined before implementation, in
       `docs/M7_3_MACHINE.md`. Assembly may live only behind it; nothing in it
       makes a policy decision. Device memory is a kind rather than a hint,
