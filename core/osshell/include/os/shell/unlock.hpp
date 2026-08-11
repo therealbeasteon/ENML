@@ -216,6 +216,33 @@ struct UnlockOutcome final {
     operator==(const UnlockOutcome&, const UnlockOutcome&) = default;
 };
 
+
+// Everything about an unlock authority that has to outlive a reboot.
+//
+// M4.10a recorded the hole this closes: erasure is only as durable as the
+// counter behind it, and an attacker who pulls the battery between attempts gets
+// them for free. A count held in memory is a count a power cut resets.
+//
+// Two fields are deliberately absent, and their absence is a limitation rather
+// than a simplification. The lockout deadline and the iteration window are both
+// expressed in monotonic time, which the machine layer measures *since boot*.
+// Persisting either would be persisting a number that means something different
+// after a restart. Fixing that needs a time source that survives power loss -
+// the same `MonotonicSecurityState` M2 records as an interface boundary only -
+// so until it exists, a reboot ends a lockout and ends a coercion episode. Both
+// are defeats available to an attacker who can reboot, and both are stated here
+// rather than discovered.
+struct PersistedUnlockState final {
+    std::uint32_t invalid_attempts {0U};
+    bool protected_domain_destroyed {false};
+    bool erasure_enabled {false};
+    bool erasure_choice_made {false};
+    std::uint32_t erasure_threshold {default_erasure_threshold};
+
+    [[nodiscard]] friend constexpr bool
+    operator==(const PersistedUnlockState&, const PersistedUnlockState&) = default;
+};
+
 class UnlockAuthority final {
 public:
     UnlockAuthority() noexcept = default;
@@ -283,6 +310,26 @@ public:
     // already gone and its absence is discoverable by other means. What matters
     // is that nothing reveals it *during* a coerced unlock, and the outcome of
     // `submit` does not.
+
+    // What must be written to durable storage.
+    //
+    // **Committed before the credential is evaluated, never after.** An
+    // implementation that checks first and writes second hands an attacker every
+    // attempt for free: cut power between the two and the guess never happened.
+    // The write-ahead ordering is the whole point of persisting this, and it is
+    // the caller's to get right because only the caller owns the storage.
+    [[nodiscard]] PersistedUnlockState persisted_state() const noexcept;
+
+    // Rehydrates after a restart.
+    //
+    // Refuses a state it cannot honour rather than repairing one. A threshold
+    // outside its bounds, or an enabled setting that was never chosen, is
+    // evidence the record was tampered with or written by another version, and
+    // quietly clamping it would mean the device enforcing something other than
+    // what is stored - which is exactly the position an attacker who can edit
+    // the record wants it in.
+    [[nodiscard]] os::core::Result<void> restore(const PersistedUnlockState& state) noexcept;
+
     [[nodiscard]] bool protected_domain_destroyed() const noexcept;
 
     [[nodiscard]] std::uint32_t consecutive_invalid_attempts() const noexcept;

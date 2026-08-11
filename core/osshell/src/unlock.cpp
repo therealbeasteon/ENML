@@ -35,6 +35,32 @@ UnlockAuthority::UnlockAuthority(PlatformErasure erasure) noexcept
     // could not recover the data because an enum was out of range.
 }
 
+PersistedUnlockState UnlockAuthority::persisted_state() const noexcept {
+    return PersistedUnlockState{
+        invalid_attempts_, destroyed_, erasure_enabled_, erasure_chosen_, erasure_threshold_};
+}
+
+os::core::Result<void> UnlockAuthority::restore(const PersistedUnlockState& state) noexcept {
+    if (state.erasure_enabled &&
+        (state.erasure_threshold < minimum_erasure_threshold ||
+         state.erasure_threshold > maximum_erasure_threshold)) {
+        return shell_error(errors::invalid_erasure_threshold);
+    }
+    // Enabled without ever having been chosen is not a state this code can
+    // produce, so encountering it means the record did not come from this code.
+    if (state.erasure_enabled && !state.erasure_choice_made) {
+        return shell_error(errors::invalid_erasure_threshold);
+    }
+
+    invalid_attempts_ = state.invalid_attempts;
+    destroyed_ = state.protected_domain_destroyed;
+    erasure_enabled_ = state.erasure_enabled;
+    erasure_chosen_ = state.erasure_choice_made;
+    erasure_threshold_ = state.erasure_threshold;
+    // Time-derived state is deliberately not restored. See PersistedUnlockState.
+    return {};
+}
+
 bool UnlockAuthority::protected_domain_destroyed() const noexcept {
     return destroyed_;
 }

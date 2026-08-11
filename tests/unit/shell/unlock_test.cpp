@@ -438,5 +438,76 @@ int main() {
                    "an invalid platform capability claimed forensic erasure")) return 1;
     }
 
+    // The counter survives a reboot, which is what stops an attacker getting
+    // every attempt for free by pulling the battery between them.
+    {
+        UnlockAuthority before;
+        (void)before.configure_erasure(true, 5U);
+        std::uint64_t now = 0U;
+        for (std::uint32_t i = 0U; i < 3U; ++i) {
+            (void)must_submit(before, now, CredentialClass::invalid,
+                              os::shell::invalid_credential_tag_value);
+            now += second;
+        }
+        const auto saved = before.persisted_state();
+        if (!check(saved.invalid_attempts == 3U, "the count was not captured")) return 1;
+
+        // A fresh authority, as after a restart.
+        UnlockAuthority after;
+        if (!check(static_cast<bool>(after.restore(saved)), "restore refused")) return 1;
+        if (!check(after.consecutive_invalid_attempts() == 3U,
+                   "rebooting reset the guess count")) return 1;
+        if (!check(after.erasure_enabled() && after.erasure_threshold() == 5U,
+                   "the owner's setting did not survive")) return 1;
+        if (!check(after.erasure_choice_made(), "the owner's decision did not survive")) return 1;
+
+        // Two more guesses reach the threshold that the reboot was meant to dodge.
+        (void)must_submit(after, 0U, CredentialClass::invalid,
+                          os::shell::invalid_credential_tag_value);
+        const auto fifth = must_submit(after, second, CredentialClass::invalid,
+                                       os::shell::invalid_credential_tag_value);
+        if (!check(fifth.destroy_protected_domain,
+                   "the threshold was dodged by restarting the device")) return 1;
+    }
+
+    // Destruction survives too. If it did not, a reboot would present a device
+    // that looks intact and would be asked to destroy the same domain twice.
+    {
+        UnlockAuthority before;
+        (void)must_submit(before, 0U, CredentialClass::duress, duress_tag);
+        UnlockAuthority after;
+        if (!check(static_cast<bool>(after.restore(before.persisted_state())), "restore refused")) {
+            return 1;
+        }
+        if (!check(after.protected_domain_destroyed(), "destruction did not survive a restart")) {
+            return 1;
+        }
+        const auto outcome = must_submit(after, 0U, CredentialClass::duress, duress_tag);
+        if (!check(!outcome.destroy_protected_domain, "destruction was issued a second time")) {
+            return 1;
+        }
+    }
+
+    // A record this code could not have written is refused, not repaired.
+    // Clamping it would mean enforcing something other than what is stored,
+    // which is the position an attacker who can edit the record wants.
+    {
+        UnlockAuthority authority;
+        os::shell::PersistedUnlockState tampered{};
+        tampered.erasure_enabled = true;
+        tampered.erasure_choice_made = true;
+        tampered.erasure_threshold = os::shell::maximum_erasure_threshold + 1U;
+        if (!check(refused_with(authority.restore(tampered),
+                                os::shell::errors::invalid_erasure_threshold),
+                   "an out-of-range threshold was restored")) return 1;
+
+        os::shell::PersistedUnlockState unchosen{};
+        unchosen.erasure_enabled = true;
+        unchosen.erasure_choice_made = false;
+        if (!check(refused_with(authority.restore(unchosen),
+                                os::shell::errors::invalid_erasure_threshold),
+                   "erasure enabled without ever being chosen was restored")) return 1;
+    }
+
     return 0;
 }
