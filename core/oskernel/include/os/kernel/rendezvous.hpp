@@ -36,6 +36,13 @@
 //     the same reclamation obligation the partition ledger has for a killed
 //     process, in the one place where getting it wrong is unrecoverable.
 //
+//   - **A server runs at the priority of whoever is waiting for it.** Without
+//     this a low-priority thread can park a shared server and stall every
+//     higher-priority thread that needs it - priority inversion, reachable
+//     deliberately from unprivileged code and indistinguishable from load. The
+//     references call this out as a property of message-driven priority rather
+//     than an optimisation, and it is a denial-of-service defence.
+//
 //   - **A thread is in exactly one state.** Every transition is checked against
 //     the current state rather than assumed, because a state machine that can
 //     be driven into two states at once is one where the checks above stop
@@ -50,6 +57,12 @@ inline constexpr std::size_t max_threads = 64U;
 // Zero is never a valid thread. A zeroed register must not name one.
 using ThreadId = std::uint32_t;
 inline constexpr ThreadId invalid_thread = 0U;
+
+// Higher is more urgent. Zero is a real priority - the least urgent - rather
+// than an invalid one, so a thread created without an opinion is simply the
+// lowest and never accidentally the highest.
+using Priority = std::uint8_t;
+inline constexpr Priority default_priority = 0U;
 
 namespace rendezvous_errors {
 inline constexpr std::uint32_t invalid_thread_id = 1U;
@@ -96,7 +109,9 @@ class Rendezvous final {
 public:
     Rendezvous() noexcept = default;
 
-    [[nodiscard]] os::core::Result<void> create_thread(ThreadId thread) noexcept;
+    [[nodiscard]] os::core::Result<void> create_thread(
+        ThreadId thread,
+        Priority priority = default_priority) noexcept;
 
     // Removes a thread and releases everyone blocked on it.
     //
@@ -120,6 +135,12 @@ public:
     [[nodiscard]] os::core::Result<WakeReason> wake_reason_of(ThreadId thread) const noexcept;
     // Who this thread is blocked on, or invalid_thread when it is not blocked.
     [[nodiscard]] os::core::Result<ThreadId> partner_of(ThreadId thread) const noexcept;
+
+    // The priority a thread would run at now: its own, or that of the most
+    // urgent thread waiting on it, whichever is greater. This is the value a
+    // scheduler must use; the base priority alone is what produces inversion.
+    [[nodiscard]] os::core::Result<Priority> effective_priority_of(ThreadId thread) const noexcept;
+    [[nodiscard]] os::core::Result<Priority> base_priority_of(ThreadId thread) const noexcept;
     [[nodiscard]] std::size_t live_thread_count() const noexcept;
 
 private:
@@ -128,8 +149,15 @@ private:
         ThreadState state {ThreadState::exited};
         ThreadId partner {invalid_thread};
         WakeReason wake {WakeReason::none};
+        Priority base {default_priority};
         bool occupied {false};
     };
+
+    // Recomputed rather than adjusted incrementally. An inherited priority that
+    // is raised on block and lowered on wake drifts the first time a path is
+    // missed, and a server left permanently at a high priority is as much a
+    // scheduling defect as one left too low.
+    [[nodiscard]] Priority inherited_priority(ThreadId thread) const noexcept;
 
     [[nodiscard]] Slot* find(ThreadId thread) noexcept;
     [[nodiscard]] const Slot* find(ThreadId thread) const noexcept;

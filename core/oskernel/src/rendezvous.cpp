@@ -31,7 +31,42 @@ std::size_t Rendezvous::live_thread_count() const noexcept {
     return occupied_;
 }
 
-os::core::Result<void> Rendezvous::create_thread(ThreadId thread) noexcept {
+Priority Rendezvous::inherited_priority(ThreadId thread) const noexcept {
+    const Slot* slot = find(thread);
+    if (slot == nullptr) return default_priority;
+
+    Priority highest = slot->base;
+    for (const auto& other : slots_) {
+        if (!other.occupied || other.thread == thread) continue;
+        // Only threads actually waiting on this one donate. A thread that has
+        // merely spoken to it in the past donates nothing, or a single past
+        // caller would pin a server high forever.
+        const bool waiting_on_it =
+            (other.state == ThreadState::send_blocked ||
+             other.state == ThreadState::reply_blocked) &&
+            other.partner == thread;
+        if (!waiting_on_it) continue;
+        if (other.base > highest) highest = other.base;
+    }
+    return highest;
+}
+
+os::core::Result<Priority> Rendezvous::effective_priority_of(ThreadId thread) const noexcept {
+    if (find(thread) == nullptr) {
+        return os::core::Result<Priority>{rendezvous_error(rendezvous_errors::unknown_thread)};
+    }
+    return os::core::Result<Priority>{inherited_priority(thread)};
+}
+
+os::core::Result<Priority> Rendezvous::base_priority_of(ThreadId thread) const noexcept {
+    const Slot* slot = find(thread);
+    if (slot == nullptr) {
+        return os::core::Result<Priority>{rendezvous_error(rendezvous_errors::unknown_thread)};
+    }
+    return os::core::Result<Priority>{slot->base};
+}
+
+os::core::Result<void> Rendezvous::create_thread(ThreadId thread, Priority priority) noexcept {
     if (thread == invalid_thread) {
         return rendezvous_error(rendezvous_errors::invalid_thread_id);
     }
@@ -40,7 +75,7 @@ os::core::Result<void> Rendezvous::create_thread(ThreadId thread) noexcept {
     }
     for (auto& slot : slots_) {
         if (slot.occupied) continue;
-        slot = Slot{thread, ThreadState::ready, invalid_thread, WakeReason::none, true};
+        slot = Slot{thread, ThreadState::ready, invalid_thread, WakeReason::none, priority, true};
         ++occupied_;
         return {};
     }
