@@ -96,19 +96,16 @@ written later inherits it for free.
 The half a type cannot see is **aliasing**. Map one physical page `read_write` at
 one virtual address and `read_execute` at another, and that memory is writable and
 executable at the same instant through two mappings that are individually
-blameless. Nothing about either permission value is wrong. This is a documented
-way real kernels have lost W^X while every permission looked correct, and it is
-caught on the *physical* range, because the virtual ranges do not overlap and
-never will.
+blameless. Nothing about either permission value is wrong. It is caught on the
+*physical* range, because the virtual ranges do not overlap and never will.
 
 Refusing all aliases would have been simpler and wrong - two writable views of one
 buffer is how shared memory works, and two read-only views is how anything is
 shared safely. The rule is the combination, not the aliasing.
 
-Cross-address-space aliasing is **not** covered: a page mapped writable in one
-address space and executable in another is invisible to a check that sees one
-space at a time. That needs a physical-memory ledger the kernel does not yet have,
-and it is recorded here rather than discovered later.
+M7.4b initially covered only aliases visible inside one address space and recorded
+cross-address-space aliasing as an explicit gap. M7.4c below closes it rather than
+leaving the warning as permanent documentation debt.
 
 ### A guard page is a mapping decision, so it lives at the mapping operation
 
@@ -133,9 +130,90 @@ Every operation in the machine layer scans a fixed table once. Nothing here loop
 on a caller's number. That was already the case, and the reason to state it is
 that the next person to add an operation is the one who can break it.
 
-### What this does not do
+## M7.4c - W^X becomes a machine-wide physical-memory invariant
 
-It does not harden the AArch64 layer, which does not exist. The value of putting
-these rules in the contract and in the host implementation is that M7.3c has to
-satisfy the same tests - the guard page and the alias check are written against
-the contract, not against the host.
+A per-address-space W^X check is not W^X. If process A can map physical page P
+`read_write` while process B maps the same P `read_execute`, P is writable and
+executable simultaneously even though neither page table contains a forbidden
+permission value.
+
+The machine seam now makes the missing authority explicit with
+`MachinePhysicalLedger`. Every address space must bind to the one ledger for its
+machine before any mapping can be admitted. The ledger is opaque above the
+machine layer; portable kernel code does not inspect it or make policy from its
+representation.
+
+For the host implementation the ledger is fixed at 256 mapping records and each
+address space remains fixed at 64. No admission allocates. `machine_map()` and
+`machine_map_kernel_stack()` validate local virtual overlap, then compare the
+new physical range with **all currently admitted physical mappings**. Any
+writable/executable overlap is refused regardless of which address space owns
+the other alias. Partial physical overlap is treated exactly like an exact alias.
+
+The order of mutation matters. A free local slot and a free physical-ledger slot
+are found before either table is modified. Failure therefore cannot leave a
+mapping that exists in only one authority view. Unmap removes both records.
+`machine_release_address_space()` first proves that the two tables agree, then
+removes every mapping owned by that exact address-space object and detaches it.
+Dropping a process is therefore also revocation of its physical mapping authority,
+not merely loss of its virtual addresses.
+
+The address-space and physical-ledger host objects are non-copyable and
+non-movable. Their object identity participates in ledger ownership; allowing an
+ordinary C++ copy would manufacture a second object containing mappings whose
+ledger records still point at the first.
+
+The rule deliberately allows aliases that do not create W+X: writable+writable,
+execute+execute and read-only combinations remain legal. Shared memory is not a
+security violation by itself. The forbidden state is a physical overlap with one
+writable view and one executable view.
+
+Kernel stacks participate in the same ledger because their backing pages are
+writable. A second address space cannot map a live kernel stack backing range
+executable. This closes an otherwise easy route around the guard/W^X split.
+
+### Negative tests added for the actual failure modes
+
+The machine contract now proves, on GCC, Clang, ASan/UBSan and native AArch64
+host execution:
+
+- an unbound address space cannot map;
+- a live address space cannot silently rebind to a different ledger;
+- exact and partial cross-address-space RW/RX physical aliases fail closed;
+- same-permission shared mappings remain possible;
+- failed admissions leave both tables unchanged;
+- unmap and full address-space release remove physical authority;
+- a released address space cannot map until explicitly rebound;
+- kernel-stack backing cannot become executable through another address space;
+- physical-ledger capacity exhaustion is bounded and leaves no partial mapping.
+
+### Reference discipline for this hardening step
+
+The newly supplied sandboxing material emphasizes a small, tamper-resistant
+reference monitor through which every protected request passes. ENML applies the
+principle here without importing its example mechanisms: the physical ledger is
+the one admission authority for mappings, so there is no second per-process path
+that can create an alias outside the check.
+
+The supplied mobile key-storage/encryption and boot/update references reinforce a
+broader rule already used elsewhere in ENML: a security property must follow the
+resource itself rather than the name a caller uses for it. Keys remain protected
+across process boundaries; boot trust follows the artifact rather than the update
+channel; W^X follows the physical page rather than one virtual address space.
+
+See `docs/REFERENCE_ADDITIONS_2026_08_11.md` for the classification of those
+sources. Their mechanisms are not the Cookie Kernel design specification.
+
+### What this still does not claim
+
+This host ledger is a contract implementation and validation surface, not yet a
+hardware page-table implementation. The future AArch64 machine layer must bind
+all hardware address spaces to an equivalent machine-wide authority and satisfy
+the same tests. DMA/IOMMU mappings are also a separate physical-access domain;
+when DMA arrives, its executable/write interaction must be threat-modeled rather
+than assumed to be covered by CPU page-table bookkeeping.
+
+No claim of "unhackable" follows from W^X. It removes one exploit-enabling state
+and makes the invariant testable. Memory-safety defects, code-reuse attacks,
+malicious DMA, physical attacks, compromised firmware and logic errors remain
+separate security problems with their own boundaries.
