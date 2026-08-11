@@ -434,6 +434,25 @@ much code has to be trusted.
       M7.3c must satisfy the same tests. Cross-address-space aliasing is
       recorded as not covered.
 - [ ] **M7.3** Boot on the emulated reference platform.
-- [ ] **M7.4** Anonymous attestation. Signing the boot state without minting a
-      device identifier, which is the ring-signature and zero-knowledge
-      question and is scoped separately.
+- [x] **M7.4c** Anonymous attestation *policy*, in
+      `docs/M7_4_ANONYMOUS_ATTESTATION.md`. The references answer this more
+      kindly than expected: one-time traceable ring signatures give anonymity
+      with **no group manager** - which matters because a group manager is a
+      de-anonymization backdoor and on a phone that party is the vendor - and
+      the construction "only requires a few hash evaluations", is post-quantum
+      resistant for the same reason, and signs in under a second for a ring of
+      2^10. A cryptographic surface whose mandatory primitive count is *one* is
+      the smallest honest answer to "lightweight". The scheme punishes a signer
+      who signs twice under one tag by de-anonymizing them, so ENML's own
+      contribution is the inversion: the OS refuses the second attestation
+      rather than letting the mathematics punish it. Linkage is the user's
+      choice per verifier, never the verifier's, and a grant that reveals
+      continuity says so. Bender-Katz-Morselli's strong definitions - anonymity
+      under full key exposure, unforgeability under insider corruption - are
+      recorded as a requirement, because a fleet of phones will eventually leak
+      a key and the weak definitions would lose anonymity for everyone at the
+      first one.
+- [ ] **M7.4** The attestation signature itself. It is a provider, on the M2.4
+      split. Ring membership - and therefore the actual anonymity set - is
+      undecided, and until it is, no privacy claim should be made from the
+      policy above.
