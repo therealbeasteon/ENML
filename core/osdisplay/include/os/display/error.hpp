@@ -36,6 +36,11 @@ inline constexpr std::uint32_t input_authority_denied = 26U;
 inline constexpr std::uint32_t invalid_trusted_mark_target = 27U;
 inline constexpr std::uint32_t invalid_trusted_mark_theme = 28U;
 inline constexpr std::uint32_t invalid_trusted_overlay = 29U;
+// The touched surface was covered, at the touched point or across its bounds,
+// by a surface belonging to another principal. Delivering the event would mean
+// the pixels the user aimed at and the surface receiving the tap belong to
+// different owners.
+inline constexpr std::uint32_t obscured_input = 30U;
 }
 
 [[nodiscard]] constexpr os::core::Error display_error(std::uint32_t code) noexcept {

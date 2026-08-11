@@ -22,6 +22,18 @@ struct SurfaceInputHit final {
     std::int32_t local_y {0};
     TrustedPresentation trusted_presentation {TrustedPresentation::none};
 
+    // Whether another principal's surface covered this surface when the event
+    // was taken. Both are carried on the hit rather than only being checked,
+    // so a downstream policy can reason about them and so a test can assert
+    // what the compositor observed rather than only that it refused.
+    //
+    // partially_obscured means an overlapping surface covered some part of the
+    // target - enough to have altered what the user believed they were
+    // pressing, for instance by covering a label next to the control. Both are
+    // false on any hit this compositor returns; see hit_test_input.
+    bool obscured_at_point {false};
+    bool partially_obscured {false};
+
     [[nodiscard]] constexpr bool valid() const noexcept {
         return valid_display_object_value(surface.value()) &&
             os::core::valid_peer_identity(owner) && surface_size.valid() &&
