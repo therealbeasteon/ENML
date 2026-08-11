@@ -31,7 +31,7 @@ status=0
 ctest "$@" --output-on-failure -L "$label" >"$log" 2>&1 || status=$?
 
 # Which tests failed, plus the pass/fail tally.
-report="$(grep -E '\*\*\*|tests passed|tests failed|The following tests FAILED|^[[:space:]]+[0-9]+ - ' "$log" || true)"
+report="$(grep -E '\*\*\*|tests passed|tests failed|The following tests FAILED|^[[:space:]]+[0-9]+ - |^[0-9]+: ' "$log" || true)"
 
 if [ -n "$report" ]; then
     encoded=''

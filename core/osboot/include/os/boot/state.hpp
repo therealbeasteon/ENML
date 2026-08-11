@@ -23,6 +23,14 @@
 // reserved fields rejected when nonzero, and unknown enumerated values rejected
 // rather than defaulted. The last rule matters most here - an attacker who can
 // choose an unhandled discriminant chooses the code path.
+//
+// The record is NOT self-authenticating and must not be mistaken for evidence
+// on its own. Structural corruption is rejected, but altering the security
+// version yields a well-formed record with a different counter and the parser
+// cannot tell. Integrity comes from the record being produced by trusted early
+// boot and never crossing an untrusted boundary. If it ever needs to cross one
+// - to an attestation verifier, say - it must be signed, and that signature is
+// a separate design with its own threat model.
 namespace os::boot {
 
 inline constexpr std::array<std::byte, 4> boot_state_magic {

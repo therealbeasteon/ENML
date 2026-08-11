@@ -94,24 +94,44 @@ int main() {
     if (!check(!os::boot::parse_boot_state_v1({buffer.data(), size - 1U}),
                "truncated record accepted")) return 1;
 
-    // Every single-byte corruption of the header must be caught or must not
-    // change the meaning. This is the cheap approximation of the fuzzer, kept
-    // here so the property is asserted even when fuzzing is not built.
+    // Every structural byte of the header rejects when corrupted.
+    //
+    // security_version is deliberately excluded, and the exclusion is the point:
+    // the record is *not* self-authenticating. Flipping a byte of the version
+    // counter produces a well-formed record with a different value, and the
+    // parser cannot tell. Integrity comes from the record being produced by
+    // trusted early boot and never crossing an untrusted boundary - not from
+    // the encoding. Asserting otherwise would encode a guarantee the format
+    // does not provide, which is worse than not testing it.
+    constexpr std::size_t security_version_offset = 12U;
+    constexpr std::size_t security_version_end = security_version_offset + 8U;
+
     for (std::size_t index = 0U; index < os::boot::boot_state_header_bytes_v1; ++index) {
+        if (index >= security_version_offset && index < security_version_end) {
+            continue;
+        }
         const auto original = buffer[index];
         buffer[index] = static_cast<std::byte>(
             static_cast<std::uint8_t>(std::to_integer<std::uint8_t>(original) ^ 0xFFU));
-        auto corrupted = os::boot::parse_boot_state_v1({buffer.data(), size});
-        if (corrupted) {
-            // Accepting is only legitimate when nothing security-relevant moved.
-            const bool same =
-                corrupted.value().verified() == parsed.value().verified() &&
-                corrupted.value().lifecycle() == parsed.value().lifecycle() &&
-                corrupted.value().security_version() == parsed.value().security_version() &&
-                corrupted.value().stage_count() == parsed.value().stage_count();
-            if (!check(same, "header corruption silently changed state")) return 1;
-        }
+        const bool rejected = !os::boot::parse_boot_state_v1({buffer.data(), size});
         buffer[index] = original;
+        if (!check(rejected, "structural header corruption was accepted")) return 1;
+    }
+
+    // The counter field does parse when altered, and says so explicitly so the
+    // next reader does not mistake this for an oversight.
+    {
+        const auto original = buffer[security_version_offset];
+        buffer[security_version_offset] = static_cast<std::byte>(
+            static_cast<std::uint8_t>(std::to_integer<std::uint8_t>(original) ^ 0xFFU));
+        auto altered = os::boot::parse_boot_state_v1({buffer.data(), size});
+        buffer[security_version_offset] = original;
+        if (!check(static_cast<bool>(altered),
+                   "counter corruption should parse; the record is not self-authenticating")) {
+            return 1;
+        }
+        if (!check(altered.value().security_version() != parsed.value().security_version(),
+                   "counter corruption did not change the counter")) return 1;
     }
 
     // A closed, verified device with an incomplete chain must fail closed.
