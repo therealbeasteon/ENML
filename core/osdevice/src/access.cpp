@@ -293,8 +293,14 @@ os::core::Result<DeviceAccessPolicyV1> parse_device_access_v1(os::core::ByteSpan
 os::core::Result<std::size_t> encode_device_access_v1(
     const DeviceAccessPolicyV1& policy,
     os::core::MutableByteSpan output) {
-    return encode_common(
-        output, policy.domain(), policy.dma(), policy.grants_, policy.grant_count());
+    // Copied out through the public accessor rather than reaching into the
+    // type. The encoder has no need to be a friend, and a narrower friend list
+    // is a narrower way for an invariant to be bypassed later.
+    std::array<MmioGrant, max_mmio_grants> grants{};
+    for (std::size_t index = 0U; index < policy.grant_count(); ++index) {
+        grants[index] = policy.grant(index);
+    }
+    return encode_common(output, policy.domain(), policy.dma(), grants, policy.grant_count());
 }
 
 os::core::Result<void> DeviceAccessPolicyBuilder::add_grant(

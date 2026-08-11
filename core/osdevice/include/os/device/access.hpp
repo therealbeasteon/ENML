@@ -159,7 +159,8 @@ public:
     [[nodiscard]] bool permits(std::uint64_t base, std::uint64_t length, AccessMode mode) const noexcept;
 
 private:
-    friend class DeviceAccessPolicyBuilder;
+    // Only the parser is a friend, and only because it is the one path that
+    // may populate a policy. The encoder reads through the public accessors.
     friend os::core::Result<DeviceAccessPolicyV1> parse_device_access_v1(os::core::ByteSpan);
 
     ExecutionDomain domain_ {ExecutionDomain::isolated_user};
