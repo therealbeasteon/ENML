@@ -71,9 +71,11 @@ void show_and_frame(
 
 int main() {
     os::display::Compositor compositor{
-        {
+        os::display::DisplayConfiguration{
             .size = {1080U, 2400U},
-            .scale_percent = 100U,
+            .safe_insets = {.top = 80U, .bottom = 100U},
+            .refresh_millihz = 60'000U,
+            .compositor_margin_ns = 1'000'000U,
         },
         {.shell = shell_principal, .secure_ui = secure_principal},
     };
