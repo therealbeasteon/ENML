@@ -60,12 +60,9 @@ void write_u16_le(os::core::MutableByteSpan bytes, std::size_t offset, std::uint
     bytes[offset + 1U] = static_cast<std::byte>((value >> 8U) & 0xFFU);
 }
 
-void write_u32_le(os::core::MutableByteSpan bytes, std::size_t offset, std::uint32_t value) noexcept {
-    for (std::size_t index = 0U; index < 4U; ++index) {
-        bytes[offset + index] =
-            static_cast<std::byte>((value >> static_cast<unsigned>(index * 8U)) & 0xFFU);
-    }
-}
+// No write_u32_le: every u32 in the format is a reserved field, and both
+// encoders zero the whole record before writing. An unused writer would be dead
+// code that reads like a supported operation.
 
 void write_u64_le(os::core::MutableByteSpan bytes, std::size_t offset, std::uint64_t value) noexcept {
     for (std::size_t index = 0U; index < 8U; ++index) {
