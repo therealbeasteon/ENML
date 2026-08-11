@@ -1,5 +1,6 @@
 add_library(oscore STATIC
     src/native_handle_linux.cpp
+    src/secret.cpp
 )
 
 add_library(emnl::oscore ALIAS oscore)

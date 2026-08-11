@@ -207,6 +207,10 @@ more, which is the provider, hierarchy and durable registry.
       representable, MMIO is a canonical allow-list of bounded windows, and an
       out-of-kernel component whose device has unconfined DMA is refused the
       isolation claim. The default policy grants nothing.
+- [x] **M6.0a** Security review against the references, recorded in
+      `docs/SECURITY_REVIEW.md` with its gaps stated as gaps. Two were fixed by
+      it: the tree had no constant-time comparison primitive and no runtime
+      binary hardening at all.
 - [ ] **M6.1** First driver split against the policy, on the emulated reference
       platform.
 - [ ] **M6.2** IOMMU programming, so `iommu_confined` is enforced rather than
