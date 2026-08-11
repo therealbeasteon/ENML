@@ -170,8 +170,8 @@ font policy, final font assets and licensing, multitouch and gesture contracts.
       found no leaks, so the deferral was unnecessary. Two targets added after
       the smoke job was written had been built but never executed.
 - [x] **M5.4** Surface capture is an allow-list that fails closed. It was
-      computed as `role != secure_system` — a deny-list that would silently
-      grant capture to any role added later — and `SceneEntry::capture_allowed`
+      computed as `role != secure_system` ï¿½ a deny-list that would silently
+      grant capture to any role added later ï¿½ and `SceneEntry::capture_allowed`
       defaulted to true across a default-constructed array. Not exploitable
       (the preview policy independently requires `role == application`), but
       both are the shape of the Chrome clipboard escape.
@@ -226,7 +226,7 @@ stands, independent of milestone numbering.
 - [x] **M5.0** AEAD nonces are provider-owned by invariant, not by accident.
       A caller cannot influence the IV, no nonce repeats under a key, and a
       test asserts all three properties whose absence produced CVE-2021-25444.
-- [x] **M5.0** `BootStateV1` — the verified boot state record. Bounded,
+- [x] **M5.0** `BootStateV1` ï¿½ the verified boot state record. Bounded,
       explicitly little-endian, fail-closed. The default state is unverified,
       unknown discriminants are rejected rather than defaulted, and coherence
       (a verified state must measure something; a closed device must measure
@@ -237,8 +237,14 @@ stands, independent of milestone numbering.
       versus dynamic root of trust made an explicit platform assessment, and
       update safety (paired slots, rollback as its own step, chosen verity
       failure policy) added.
-- [ ] **M5.0** Verified boot itself. Completion is blocked on choosing a target
-      SoC, since a chain of trust is rooted in specific silicon.
+- [x] **M5.5** Platform capabilities in the boot state. ENML records what the
+      platform's root of trust actually provides and refuses two claims it
+      cannot back: a closed verified device with no immutable first stage, and
+      a rollback claim with no monotonic counter. This is what keeps hardware
+      neutrality from meaning "secure only on the hardware we tested".
+- [ ] **M5.0** Verified boot itself. No longer blocked on choosing an SoC - the
+      design is a platform contract with a narrow adaptation boundary and an
+      emulated reference platform. Blocked instead on building that port.
 - [ ] **M5.0** Signed boot state. The record is not self-authenticating; it is
       trusted because trusted early boot produces it and it crosses no
       untrusted boundary. Attestation would require a signature and its own
