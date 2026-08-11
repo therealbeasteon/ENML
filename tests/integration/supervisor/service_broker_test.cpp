@@ -88,7 +88,15 @@ void expect_unknown_sender(
 }
 
 void wait_stopped(os::supervisor::Supervisor& supervisor) {
-    for (std::size_t attempt = 0U; attempt < 200U; ++attempt) {
+    // Waiting for a child to exit and be reaped is subject to scheduler
+    // variance, and this suite runs four jobs concurrently on shared CI
+    // runners. The previous bound was 200 attempts - one second - which is
+    // ample on an idle machine and occasionally is not on a loaded one.
+    // Matches the 30-second bound already used by the M2.10 runtime session
+    // fixture for the same reason. No production service timeout or
+    // authorization rule is relaxed here; only how long the harness waits for
+    // the OS to schedule work it has already been asked to do.
+    for (std::size_t attempt = 0U; attempt < 6000U; ++attempt) {
         auto maintained = supervisor.maintain();
         assert(maintained);
         if (supervisor.status().state == os::supervisor::ServiceState::stopped) return;
