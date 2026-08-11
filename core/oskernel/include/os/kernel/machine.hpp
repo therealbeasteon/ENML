@@ -46,6 +46,13 @@ struct MachineContext;
 // means on this machine.
 struct MachineAddressSpace;
 
+// The machine-wide physical mapping authority. W^X is a physical-memory
+// property, not an address-space-local property: a page that is writable in one
+// process and executable in another is still writable and executable at the
+// same instant. Every address space must therefore be bound to the same ledger
+// for the machine before it can map memory.
+struct MachinePhysicalLedger;
+
 namespace machine_errors {
 inline constexpr std::uint32_t unsupported = 1U;
 inline constexpr std::uint32_t invalid_range = 2U;
@@ -54,12 +61,21 @@ inline constexpr std::uint32_t exhausted = 4U;
 inline constexpr std::uint32_t already_mapped = 5U;
 inline constexpr std::uint32_t not_mapped = 6U;
 // The same physical memory would become writable through one mapping and
-// executable through another.
+// executable through another, including through a different address space.
 inline constexpr std::uint32_t writable_executable_alias = 7U;
 // A kernel stack was requested with the page below it already mapped.
 inline constexpr std::uint32_t missing_guard_page = 8U;
 // A context was prepared on a stack that was not established as one.
 inline constexpr std::uint32_t not_a_kernel_stack = 9U;
+// Mapping was attempted before this address space was attached to the one
+// machine-wide physical mapping authority.
+inline constexpr std::uint32_t address_space_unbound = 10U;
+// Rebinding a live address space could silently move existing mappings out from
+// under the authority that admitted them, so it is refused.
+inline constexpr std::uint32_t address_space_already_bound = 11U;
+// The address-space table and machine-wide physical ledger disagreed. This is
+// internal corruption, not a state callers may repair by retrying.
+inline constexpr std::uint32_t mapping_ledger_inconsistent = 12U;
 } // namespace machine_errors
 
 // What a mapping permits. Separate from the device access policy in M6.0, which
@@ -84,6 +100,21 @@ enum class MachineMemoryKind : std::uint8_t {
 // The machine's page size. The portable kernel needs this only to reject
 // misaligned requests before they reach hardware.
 [[nodiscard]] std::size_t machine_page_size() noexcept;
+
+// Binds a fresh address space to the machine-wide physical mapping authority.
+// Every address space participating in one machine must share that authority;
+// otherwise cross-address-space W^X is impossible to enforce. Binding is a
+// one-time operation until machine_release_address_space() has removed all
+// mappings and detached the space.
+[[nodiscard]] os::core::Result<void> machine_bind_address_space(
+    MachineAddressSpace& space,
+    MachinePhysicalLedger& ledger) noexcept;
+
+// Tears down all mappings belonging to one address space and detaches it from
+// the physical ledger. Process/address-space death must use this rather than
+// dropping an object whose ledger entries would otherwise outlive it.
+[[nodiscard]] os::core::Result<void> machine_release_address_space(
+    MachineAddressSpace& space) noexcept;
 
 // Switches to a saved context. Does not return to the caller in the usual
 // sense: it returns when something later switches back.
