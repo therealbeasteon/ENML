@@ -62,6 +62,8 @@ inline constexpr std::uint32_t too_many_stages = 8U;
 inline constexpr std::uint32_t duplicate_stage = 9U;
 inline constexpr std::uint32_t trailing_bytes = 10U;
 inline constexpr std::uint32_t incoherent_state = 11U;
+inline constexpr std::uint32_t unknown_capability = 12U;
+inline constexpr std::uint32_t unsupported_claim = 13U;
 } // namespace errors
 
 // Zero is never a valid discriminant. An all-zero buffer must not decode to a
@@ -87,6 +89,46 @@ enum class BootStageKind : std::uint16_t {
 enum class DigestAlgorithm : std::uint8_t {
     sha_256 = 1U,
 };
+
+// What the platform's root of trust actually provides.
+//
+// ENML is hardware-neutral by intent, which creates an obligation rather than a
+// convenience: an OS that runs on unknown hardware cannot assume a uniform
+// security level, so it must know and report the one it actually got. A device
+// with no immutable first stage and a device with a hardware-rooted chain both
+// "boot", and a system that cannot tell them apart will make the same promises
+// about both.
+//
+// The categories follow the standard decomposition of roots of trust into
+// measurement, storage and reporting, plus the two properties ENML's existing
+// substrates already depend on: an immutable first stage for the chain to start
+// from, and a monotonic counter for rollback resistance to mean anything.
+//
+// Absent capabilities are not failures. They are facts, and policy above may
+// legitimately choose to run degraded - but it must choose, rather than inherit
+// an assumption.
+enum class PlatformCapability : std::uint32_t {
+    // A first stage that software cannot rewrite. Without it the chain has no
+    // root and every measurement below is self-asserted.
+    immutable_first_stage = 1U << 0U,
+    // Hardware measured the stages, rather than software measuring itself.
+    root_of_trust_measurement = 1U << 1U,
+    // Sealed storage bound to the device, so key material cannot be lifted to
+    // another one.
+    root_of_trust_storage = 1U << 2U,
+    // Attestation: the device can prove its state to a remote party.
+    root_of_trust_reporting = 1U << 3U,
+    // A counter that cannot be moved backwards. Rollback resistance is a claim
+    // about this and nothing else.
+    monotonic_counter = 1U << 4U,
+};
+
+inline constexpr std::uint32_t known_platform_capabilities =
+    static_cast<std::uint32_t>(PlatformCapability::immutable_first_stage) |
+    static_cast<std::uint32_t>(PlatformCapability::root_of_trust_measurement) |
+    static_cast<std::uint32_t>(PlatformCapability::root_of_trust_storage) |
+    static_cast<std::uint32_t>(PlatformCapability::root_of_trust_reporting) |
+    static_cast<std::uint32_t>(PlatformCapability::monotonic_counter);
 
 struct BootStageMeasurement final {
     BootStageKind kind {BootStageKind::first_stage};
@@ -121,6 +163,12 @@ public:
 
     [[nodiscard]] std::size_t stage_count() const noexcept { return stage_count_; }
 
+    [[nodiscard]] std::uint32_t capabilities() const noexcept { return capabilities_; }
+
+    [[nodiscard]] bool provides(PlatformCapability capability) const noexcept {
+        return (capabilities_ & static_cast<std::uint32_t>(capability)) != 0U;
+    }
+
     [[nodiscard]] os::core::Result<BootStageMeasurement>
     stage(std::size_t index) const noexcept;
 
@@ -136,6 +184,7 @@ private:
     LifecycleState lifecycle_ {LifecycleState::open};
     VerificationResult verification_ {VerificationResult::failed};
     std::uint64_t security_version_ {0};
+    std::uint32_t capabilities_ {0};
     std::size_t stage_count_ {0};
     std::array<BootStageMeasurement, max_boot_stages> stages_ {};
 };
@@ -153,7 +202,13 @@ private:
 //     chain defines, because a closed device with a partially measured chain is
 //     the exact state an attacker wants to manufacture;
 //   - a failed state may carry measurements, since knowing which link broke is
-//     useful, but it can never satisfy verified().
+//     useful, but it can never satisfy verified();
+//   - unknown capability bits are rejected, like every other discriminant;
+//   - a closed, verified device must declare an immutable first stage, because
+//     a production device claiming a verified boot without a root the software
+//     cannot rewrite is claiming something the platform cannot support;
+//   - a nonzero security version requires a monotonic counter, because a
+//     rollback-resistance claim without one is a number, not a guarantee.
 [[nodiscard]] os::core::Result<BootStateV1>
 parse_boot_state_v1(os::core::ByteSpan encoded) noexcept;
 
@@ -172,6 +227,7 @@ public:
     void set_lifecycle(LifecycleState lifecycle) noexcept { lifecycle_ = lifecycle; }
     void set_verification(VerificationResult result) noexcept { verification_ = result; }
     void set_security_version(std::uint64_t version) noexcept { security_version_ = version; }
+    void set_capabilities(std::uint32_t capabilities) noexcept { capabilities_ = capabilities; }
 
     // Serializes directly. There is deliberately no build() returning a
     // BootStateV1: a state must come from parsing a record, so that every
@@ -183,6 +239,7 @@ private:
     LifecycleState lifecycle_ {LifecycleState::open};
     VerificationResult verification_ {VerificationResult::failed};
     std::uint64_t security_version_ {0};
+    std::uint32_t capabilities_ {0};
     std::size_t stage_count_ {0};
     std::array<BootStageMeasurement, max_boot_stages> stages_ {};
 };

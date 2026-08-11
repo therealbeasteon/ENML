@@ -43,3 +43,18 @@ stage_count_over_max="\x09\x00"
 security_version_zero="\x00\x00\x00\x00\x00\x00\x00\x00"
 security_version_one="\x01\x00\x00\x00\x00\x00\x00\x00"
 security_version_max="\xff\xff\xff\xff\xff\xff\xff\xff"
+
+# Platform capability bitmap, little-endian u32 at header offset 24. Bits above
+# the known mask are exactly what the unknown-capability rejection exists for,
+# and the interesting boundaries are a closed device without an immutable first
+# stage and a rollback claim without a monotonic counter.
+capabilities_none="\x00\x00\x00\x00"
+capabilities_immutable_first_stage="\x01\x00\x00\x00"
+capabilities_rot_measurement="\x02\x00\x00\x00"
+capabilities_rot_storage="\x04\x00\x00\x00"
+capabilities_rot_reporting="\x08\x00\x00\x00"
+capabilities_monotonic_counter="\x10\x00\x00\x00"
+capabilities_backed="\x11\x00\x00\x00"
+capabilities_all_known="\x1f\x00\x00\x00"
+capabilities_unknown_bit="\x20\x00\x00\x00"
+capabilities_high_bit="\x00\x00\x00\x80"

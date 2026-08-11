@@ -45,17 +45,57 @@ with an explicit note that anti-rollback may not be claimed "until KRG
 publication is integrated with a real hardware/verified-boot monotonic source
 using a reviewed crash-consistent protocol." M5.0 is where that source arrives.
 
-## Blocking decision: target platform
+## Hardware neutrality is the requirement, not a constraint on it
 
-This milestone cannot be completed in the abstract. A chain of trust is rooted
-in specific silicon: a specific immutable first stage, a specific fuse bank
-holding the root key hash, a specific irreversible lifecycle transition from
-open to closed, and a specific monotonic counter.
+An earlier draft of this document said choosing a target SoC was a prerequisite
+for M5.0. That was wrong, and wrong in a way worth recording: it treated
+hardware neutrality as something to be traded away for security, when the
+product goal is that the two hold together.
 
-**Choosing a target SoC is a prerequisite, not an implementation detail.** Until
-it is chosen, M5.0 can define the contract the platform must satisfy and the
-shape of the state ENML derives from it, but cannot be finished. That contract
-is deliberately written so a second platform is an adaptation, not a redesign.
+The portable-TEE work in the supplied references shows the shape that actually
+works. One implementation spans a dozen SoCs plus an emulator by putting a
+vendor-neutral API on top, keeping a small explicitly-scoped platform port at
+the bottom, and letting everything between them be portable. Neutrality there is
+not achieved by avoiding hardware; it is achieved by naming exactly what the
+hardware must provide and isolating the part that knows which hardware it is.
+
+ENML takes the same shape:
+
+- **A platform contract, not a platform choice.** ENML states what it needs — an
+  immutable first stage, measurement, sealed storage, a monotonic counter, an
+  entropy source — and adapts to what a platform actually offers.
+- **A narrow adaptation boundary.** Platform-specific code is confined to the
+  port. Nothing above it names a vendor, a fuse map, or a container format.
+- **Standard interfaces where they exist.** Where an industry-neutral interface
+  already exists for a capability, adopting it is cheaper and smaller than
+  reimplementing per SoC — and a smaller trusted surface is the second product
+  priority, not a side benefit.
+- **An emulated reference platform.** The whole stack must build and be gated
+  against an emulator, so verified boot is developed and regression-tested
+  without a board. Physical SoCs then become ports rather than prerequisites.
+
+### Honest degradation is what neutrality costs
+
+Running on unknown hardware means the security level is not uniform, and an OS
+that cannot tell a hardware-rooted device from a bare one will make identical
+promises about both. Neutrality therefore obliges ENML to **measure and report
+what it actually got**, not to assume the maximum.
+
+`BootStateV1` carries a platform capability set for exactly this: immutable
+first stage, root of trust for measurement, for storage, for reporting, and a
+monotonic counter. Absent capabilities are facts, not failures — a platform may
+legitimately provide none, and policy above may legitimately choose to run
+degraded. What it may not do is inherit an assumption.
+
+Two claims are refused outright at the parser, because they are claims the
+platform cannot back:
+
+- a **closed, verified** device that does not declare an immutable first stage;
+- a **nonzero security version** without a monotonic counter, since rollback
+  resistance is a claim about that counter and nothing else.
+
+This is what keeps "hardware neutral" from quietly meaning "secure only on the
+hardware we happened to test".
 
 ## Chain of trust
 

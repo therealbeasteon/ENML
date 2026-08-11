@@ -21,7 +21,7 @@ inline constexpr std::size_t offset_reserved0 = 10U;
 inline constexpr std::size_t offset_security_version = 12U;
 inline constexpr std::size_t offset_stage_count = 20U;
 inline constexpr std::size_t offset_reserved1 = 22U;
-inline constexpr std::size_t offset_reserved2 = 24U;
+inline constexpr std::size_t offset_capabilities = 24U;
 inline constexpr std::size_t offset_reserved3 = 28U;
 
 inline constexpr std::size_t stage_offset_kind = 0U;
@@ -60,9 +60,12 @@ void write_u16_le(os::core::MutableByteSpan bytes, std::size_t offset, std::uint
     bytes[offset + 1U] = static_cast<std::byte>((value >> 8U) & 0xFFU);
 }
 
-// No write_u32_le: every u32 in the format is a reserved field, and both
-// encoders zero the whole record before writing. An unused writer would be dead
-// code that reads like a supported operation.
+void write_u32_le(os::core::MutableByteSpan bytes, std::size_t offset, std::uint32_t value) noexcept {
+    for (std::size_t index = 0U; index < 4U; ++index) {
+        bytes[offset + index] =
+            static_cast<std::byte>((value >> static_cast<unsigned>(index * 8U)) & 0xFFU);
+    }
+}
 
 void write_u64_le(os::core::MutableByteSpan bytes, std::size_t offset, std::uint64_t value) noexcept {
     for (std::size_t index = 0U; index < 8U; ++index) {
@@ -143,7 +146,6 @@ parse_boot_state_v1(os::core::ByteSpan encoded) noexcept {
     }
     if (read_u16_le(encoded, offset_reserved0) != 0U ||
         read_u16_le(encoded, offset_reserved1) != 0U ||
-        read_u32_le(encoded, offset_reserved2) != 0U ||
         read_u32_le(encoded, offset_reserved3) != 0U) {
         return boot_error(errors::reserved_not_zero);
     }
@@ -173,6 +175,12 @@ parse_boot_state_v1(os::core::ByteSpan encoded) noexcept {
     state.lifecycle_ = static_cast<LifecycleState>(raw_lifecycle);
     state.verification_ = static_cast<VerificationResult>(raw_verification);
     state.security_version_ = read_u64_le(encoded, offset_security_version);
+
+    const auto capabilities = read_u32_le(encoded, offset_capabilities);
+    if ((capabilities & ~known_platform_capabilities) != 0U) {
+        return boot_error(errors::unknown_capability);
+    }
+    state.capabilities_ = capabilities;
     state.stage_count_ = stage_count;
 
     for (std::size_t index = 0U; index < stage_count; ++index) {
@@ -219,7 +227,22 @@ parse_boot_state_v1(os::core::ByteSpan encoded) noexcept {
                     return boot_error(errors::incoherent_state);
                 }
             }
+            // A production device asserting a verified boot without a first
+            // stage software cannot rewrite is asserting something the platform
+            // cannot support. Hardware neutrality means adapting to what a
+            // platform provides, not accepting a claim it cannot back.
+            if (!state.provides(PlatformCapability::immutable_first_stage)) {
+                return boot_error(errors::unsupported_claim);
+            }
         }
+    }
+
+    // Rollback resistance is a claim about a counter that cannot move
+    // backwards. Without one, a security version is a number, and treating it
+    // as a guarantee is how rollback protection becomes decorative.
+    if (state.security_version_ != 0U &&
+        !state.provides(PlatformCapability::monotonic_counter)) {
+        return boot_error(errors::unsupported_claim);
     }
 
     return state;
@@ -244,6 +267,7 @@ encode_boot_state_v1(const BootStateV1& state, os::core::MutableByteSpan output)
     output[offset_lifecycle] = static_cast<std::byte>(state.lifecycle());
     output[offset_verification] = static_cast<std::byte>(state.verification());
     write_u64_le(output, offset_security_version, state.security_version());
+    write_u32_le(output, offset_capabilities, state.capabilities());
     write_u16_le(output, offset_stage_count, static_cast<std::uint16_t>(state.stage_count()));
 
     for (std::size_t index = 0U; index < state.stage_count(); ++index) {
@@ -318,6 +342,7 @@ BootStateBuilder::encode(os::core::MutableByteSpan output) const noexcept {
     output[offset_lifecycle] = static_cast<std::byte>(lifecycle_);
     output[offset_verification] = static_cast<std::byte>(verification_);
     write_u64_le(output, offset_security_version, security_version_);
+    write_u32_le(output, offset_capabilities, capabilities_);
     write_u16_le(output, offset_stage_count, static_cast<std::uint16_t>(stage_count_));
 
     for (std::size_t index = 0U; index < stage_count_; ++index) {

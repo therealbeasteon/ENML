@@ -36,6 +36,11 @@ encode_full_chain(
     builder.set_lifecycle(lifecycle);
     builder.set_verification(verification);
     builder.set_security_version(7U);
+    // A closed, verified device must declare an immutable first stage, and a
+    // nonzero security version must be backed by a monotonic counter.
+    builder.set_capabilities(
+        static_cast<std::uint32_t>(os::boot::PlatformCapability::immutable_first_stage) |
+        static_cast<std::uint32_t>(os::boot::PlatformCapability::monotonic_counter));
 
     const os::boot::BootStageKind kinds[] {
         os::boot::BootStageKind::first_stage,
@@ -68,6 +73,9 @@ int main() {
     const os::boot::BootStateV1 defaulted{};
     if (!check(!defaulted.verified(), "default state reported verified")) return 1;
     if (!check(defaulted.stage_count() == 0U, "default state had stages")) return 1;
+    // And it claims no platform capability. Hardware neutrality means the
+    // absence of evidence about the platform reads as "nothing provided".
+    if (!check(defaulted.capabilities() == 0U, "default state claimed capabilities")) return 1;
 
     // An all-zero buffer must not decode. Zero is not a valid discriminant.
     for (auto& byte : buffer) { byte = std::byte{0}; }
@@ -84,6 +92,10 @@ int main() {
     if (!check(static_cast<bool>(parsed), "full chain failed to parse")) return 1;
     if (!check(parsed.value().verified(), "round trip lost verification")) return 1;
     if (!check(parsed.value().security_version() == 7U, "round trip lost security version")) return 1;
+    if (!check(parsed.value().provides(os::boot::PlatformCapability::immutable_first_stage),
+               "round trip lost capabilities")) return 1;
+    if (!check(!parsed.value().provides(os::boot::PlatformCapability::root_of_trust_reporting),
+               "round trip invented a capability")) return 1;
     if (!check(parsed.value().stage_count() == 5U, "round trip lost stages")) return 1;
     if (!check(static_cast<bool>(parsed.value().stage_of_kind(os::boot::BootStageKind::kernel)),
                "kernel stage missing after round trip")) return 1;
@@ -184,6 +196,79 @@ int main() {
         if (!check(static_cast<bool>(state), "failed chain did not parse")) return 1;
         if (!check(!state.value().verified(), "failed state reported verified")) return 1;
         if (!check(state.value().stage_count() == 5U, "failed state lost measurements")) return 1;
+    }
+
+    // Unknown capability bits are rejected like every other discriminant.
+    {
+        os::boot::BootStateBuilder builder;
+        builder.set_lifecycle(os::boot::LifecycleState::open);
+        builder.set_verification(os::boot::VerificationResult::failed);
+        builder.set_capabilities(0x8000'0000U);
+        auto encoded_unknown = builder.encode(buffer);
+        if (!check(static_cast<bool>(encoded_unknown), "unknown capability failed to encode")) return 1;
+        if (!check(!os::boot::parse_boot_state_v1({buffer.data(), encoded_unknown.value()}),
+                   "unknown capability bit accepted")) return 1;
+    }
+
+    // A closed, verified device without an immutable first stage is claiming
+    // something the platform cannot back.
+    {
+        os::boot::BootStateBuilder builder;
+        builder.set_lifecycle(os::boot::LifecycleState::closed);
+        builder.set_verification(os::boot::VerificationResult::verified);
+        builder.set_capabilities(
+            static_cast<std::uint32_t>(os::boot::PlatformCapability::root_of_trust_storage));
+        const os::boot::BootStageKind kinds[] {
+            os::boot::BootStageKind::first_stage,
+            os::boot::BootStageKind::bootloader,
+            os::boot::BootStageKind::kernel,
+            os::boot::BootStageKind::configuration,
+            os::boot::BootStageKind::root_filesystem,
+        };
+        for (const auto kind : kinds) {
+            const auto digest = digest_of(5U);
+            if (!check(static_cast<bool>(builder.add_stage(
+                    kind, os::boot::DigestAlgorithm::sha_256,
+                    os::core::ByteSpan{digest.data(), digest.size()})), "stage rejected")) return 1;
+        }
+        auto rootless = builder.encode(buffer);
+        if (!check(static_cast<bool>(rootless), "rootless chain failed to encode")) return 1;
+        if (!check(!os::boot::parse_boot_state_v1({buffer.data(), rootless.value()}),
+                   "closed verified device accepted without an immutable first stage")) return 1;
+    }
+
+    // A rollback claim without a monotonic counter is a number, not a
+    // guarantee, and must be rejected as such.
+    {
+        os::boot::BootStateBuilder builder;
+        builder.set_lifecycle(os::boot::LifecycleState::open);
+        builder.set_verification(os::boot::VerificationResult::failed);
+        builder.set_security_version(3U);
+        builder.set_capabilities(
+            static_cast<std::uint32_t>(os::boot::PlatformCapability::immutable_first_stage));
+        auto unbacked = builder.encode(buffer);
+        if (!check(static_cast<bool>(unbacked), "unbacked claim failed to encode")) return 1;
+        if (!check(!os::boot::parse_boot_state_v1({buffer.data(), unbacked.value()}),
+                   "security version accepted without a monotonic counter")) return 1;
+    }
+
+    // A platform providing nothing is legitimate, so long as it claims nothing.
+    // This is the degraded case hardware neutrality has to represent honestly
+    // rather than refuse outright.
+    {
+        os::boot::BootStateBuilder builder;
+        builder.set_lifecycle(os::boot::LifecycleState::open);
+        builder.set_verification(os::boot::VerificationResult::verified);
+        const auto digest = digest_of(11U);
+        if (!check(static_cast<bool>(builder.add_stage(
+                os::boot::BootStageKind::kernel, os::boot::DigestAlgorithm::sha_256,
+                os::core::ByteSpan{digest.data(), digest.size()})), "stage rejected")) return 1;
+        auto bare = builder.encode(buffer);
+        if (!check(static_cast<bool>(bare), "bare platform failed to encode")) return 1;
+        auto state = os::boot::parse_boot_state_v1({buffer.data(), bare.value()});
+        if (!check(static_cast<bool>(state), "bare platform rejected")) return 1;
+        if (!check(state.value().capabilities() == 0U, "bare platform claimed capabilities")) return 1;
+        if (!check(state.value().verified(), "bare platform lost verification")) return 1;
     }
 
     return 0;
