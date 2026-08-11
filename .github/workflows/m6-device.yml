@@ -1,0 +1,65 @@
+name: M6 Device Access
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  device-gcc:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build device access gates
+        run: .github/scripts/run-build.sh 'device-gcc' --preset host-debug --target device_access_test --parallel 2
+      - name: Test device access gates
+        run: .github/scripts/run-ctest.sh '^m6-device$' 'device-gcc' --preset host-debug
+
+  device-sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure
+        run: cmake --preset host-asan
+      - name: Build device access gates with sanitizers
+        run: .github/scripts/run-build.sh 'device-sanitizers' --preset host-asan --target device_access_test --parallel 2
+      - name: Test device access gates with sanitizers
+        run: .github/scripts/run-ctest.sh '^m6-device$' 'device-sanitizers' --preset host-asan
+
+  device-clang:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure with Clang
+        run: >-
+          cmake -S . -B build/m5-device-clang -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DCMAKE_CXX_COMPILER=clang++
+      - name: Build device access gates
+        run: .github/scripts/run-build.sh 'device-clang' build/m5-device-clang --target device_access_test --parallel 2
+      - name: Test device access gates
+        run: .github/scripts/run-ctest.sh '^m6-device$' 'device-clang' --test-dir build/m5-device-clang
+
+  # A device access policy describes physical address windows, so its parser
+  # handles 64-bit addresses and lengths at the edge of the address space. That
+  # arithmetic, and the explicitly little-endian encoding, must hold on the
+  # primary target architecture and not merely on the build host.
+  device-arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record machine
+        run: |
+          uname -m
+          test "$(uname -m)" = "aarch64"
+      - name: Configure
+        run: cmake --preset host-debug
+      - name: Build device access gates natively
+        run: .github/scripts/run-build.sh 'device-arm64-native' --preset host-debug --target device_access_test --parallel 2
+      - name: Test device access gates natively
+        run: .github/scripts/run-ctest.sh '^m6-device$' 'device-arm64-native' --preset host-debug

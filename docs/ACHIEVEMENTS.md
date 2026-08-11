@@ -201,6 +201,20 @@ more, which is the provider, hierarchy and durable registry.
       two teardown helpers allowed one second for a child to exit and be reaped
       before asserting, on runners executing four jobs concurrently.
 
+### M6 - Device access
+
+- [x] **M6.0** Device access policy substrate. Port I/O authority is not
+      representable, MMIO is a canonical allow-list of bounded windows, and an
+      out-of-kernel component whose device has unconfined DMA is refused the
+      isolation claim. The default policy grants nothing.
+- [ ] **M6.1** First driver split against the policy, on the emulated reference
+      platform.
+- [ ] **M6.2** IOMMU programming, so `iommu_confined` is enforced rather than
+      recorded.
+- [ ] **M6.3** Interrupt authority, with its own threat model.
+- [ ] **M6.4** Check-then-commit device reconfiguration: validate a whole batch,
+      then apply all of it or none.
+
 ---
 
 ## Mission scorecard

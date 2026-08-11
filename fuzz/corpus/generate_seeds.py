@@ -302,6 +302,90 @@ def key_registry_seeds() -> dict[str, bytes]:
     }
 
 
+# core/osdevice/include/os/device/access.hpp
+DEVICE_ACCESS_MAGIC = b"EDA1"
+DEVICE_ACCESS_VERSION = 1
+DEVICE_ACCESS_HEADER_BYTES = 32
+MMIO_GRANT_BYTES = 24
+
+
+def mmio_grant(base: int, length: int, access: int) -> bytes:
+    record = b"".join((
+        struct.pack("<Q", base),
+        struct.pack("<Q", length),
+        struct.pack("<B", access),
+        bytes(7),
+    ))
+    assert len(record) == MMIO_GRANT_BYTES, len(record)
+    return record
+
+
+def device_access(domain: int, dma: int, grants: bytes, grant_count: int,
+                  total_size: int | None = None) -> bytes:
+    size = DEVICE_ACCESS_HEADER_BYTES + len(grants) if total_size is None else total_size
+    header = b"".join((
+        DEVICE_ACCESS_MAGIC,
+        struct.pack("<H", DEVICE_ACCESS_VERSION),
+        struct.pack("<H", DEVICE_ACCESS_HEADER_BYTES),
+        struct.pack("<I", size),
+        struct.pack("<B", domain),
+        struct.pack("<B", dma),
+        struct.pack("<H", grant_count),
+        struct.pack("<I", 0),
+        struct.pack("<I", 0),
+        struct.pack("<Q", 0),
+    ))
+    assert len(header) == DEVICE_ACCESS_HEADER_BYTES, len(header)
+    return header + grants
+
+
+def device_access_seeds() -> dict[str, bytes]:
+    """Straddle the rules that decide how much address space a driver reaches.
+
+    total_size must match the record length exactly, so an unseeded run never
+    gets past the header. The rules worth surrounding are the isolation claim
+    an IOMMU-less platform cannot back, and canonical grant ordering.
+    """
+    kernel_resident, isolated_user = 1, 2
+    dma_none, dma_iommu, dma_unconfined = 1, 2, 3
+    read_only, read_write = 1, 2
+
+    window = mmio_grant(0x1000, 0x1000, read_write)
+    second = mmio_grant(0x8000, 0x100, read_only)
+    adjacent = mmio_grant(0x2000, 0x1000, read_only)
+    overlapping = mmio_grant(0x1800, 0x1000, read_only)
+    descending = mmio_grant(0x0100, 0x100, read_only)
+
+    return {
+        "no_authority": device_access(isolated_user, dma_none, b"", 0),
+        "isolated_iommu_one_window": device_access(isolated_user, dma_iommu, window, 1),
+        "isolated_iommu_two_windows": device_access(isolated_user, dma_iommu, window + second, 2),
+        # Legal and honest: the driver is in the kernel and the device can
+        # master the bus. Degraded platforms must stay expressible.
+        "kernel_resident_unconfined": device_access(kernel_resident, dma_unconfined, window, 1),
+        # The claim the platform cannot back.
+        "isolated_unconfined": device_access(isolated_user, dma_unconfined, window, 1),
+        # Canonical ordering, from both directions.
+        "adjacent_windows": device_access(kernel_resident, dma_none, window + adjacent, 2),
+        "overlapping_windows": device_access(kernel_resident, dma_none, window + overlapping, 2),
+        "descending_windows": device_access(kernel_resident, dma_none, window + descending, 2),
+        # Windows that describe nothing.
+        "empty_window": device_access(kernel_resident, dma_none, mmio_grant(0x1000, 0, read_only), 1),
+        "wrapping_window": device_access(
+            kernel_resident, dma_none, mmio_grant(0xFFFFFFFFFFFFFFFF, 2, read_only), 1),
+        "window_at_top": device_access(
+            kernel_resident, dma_none, mmio_grant(0xFFFFFFFFFFFFF000, 0x1000, read_only), 1),
+        # Counts and lengths that disagree with the body.
+        "grant_count_over_max": device_access(kernel_resident, dma_none, window, 5),
+        "grant_count_understates": device_access(kernel_resident, dma_none, window + second, 1),
+        "total_size_mismatch": device_access(kernel_resident, dma_none, window, 1, total_size=4096),
+        "short_header": device_access(kernel_resident, dma_none, b"", 0)[:16],
+        "domain_zero": device_access(0, dma_none, b"", 0),
+        "dma_zero": device_access(kernel_resident, 0, b"", 0),
+        "access_zero": device_access(kernel_resident, dma_none, mmio_grant(0x1000, 0x1000, 0), 1),
+    }
+
+
 def write_seeds(root: pathlib.Path, target: str, seeds: dict[str, bytes]) -> int:
     directory = root / target
     directory.mkdir(parents=True, exist_ok=True)
@@ -324,6 +408,7 @@ def main(argv: list[str]) -> int:
         root, "storage_relative_path_fuzz", storage_relative_path_seeds())
     written += write_seeds(root, "boot_state_fuzz", boot_state_seeds())
     written += write_seeds(root, "keys_registry_snapshot_fuzz", key_registry_seeds())
+    written += write_seeds(root, "device_access_fuzz", device_access_seeds())
 
     # osidlc seeds are the checked-in interface definitions themselves. They are
     # the only guaranteed-valid OSIDL in existence, so nothing synthetic here

@@ -64,6 +64,8 @@ jobs:
             dictionary: fuzz/dict/boot_state.dict
           - target: keys_registry_snapshot_fuzz
             dictionary: fuzz/dict/krg1.dict
+          - target: device_access_fuzz
+            dictionary: fuzz/dict/device_access.dict
     steps:
       - uses: actions/checkout@v4
 
