@@ -53,7 +53,10 @@ inline constexpr std::size_t max_call_arguments = 4U;
 
 namespace errors {
 inline constexpr std::uint32_t unknown_call = 1U;
-inline constexpr std::uint32_t surface_exceeded = 2U;
+// There is deliberately no runtime code for exceeding the surface ceiling: it
+// is a static_assert in abi.cpp, so the condition cannot reach a running
+// system. An error code nobody can return is a claim that something is checked
+// at runtime when it is not.
 } // namespace errors
 
 // Zero is never a valid call. A zeroed register set must not name an operation.

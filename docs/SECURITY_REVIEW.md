@@ -69,10 +69,17 @@ module already links so no module can be missed.
 
 ## Gaps
 
-**`AeadTag` and `AeadNonce` expose public `std::array` members**, so
-`a.bytes == b.bytes` still compiles and is still variable-time. The written rule
-is the only control. Closing it means wrapping the storage so the naive
-comparison cannot be expressed.
+**`AeadTag` and `AeadNonce` partly closed.** Their `operator==` is now deleted,
+so the comparison someone actually writes - `tag_a == tag_b` - fails to compile
+and points at `constant_time_equal`. What remains open is that the storage is
+still a public member, so `a.bytes == b.bytes` compiles and is still
+variable-time.
+
+That residue is stated rather than fixed because closing it means making the
+storage private and reworking twenty-eight call sites, and a partial
+encapsulation done blind - with CI as the only compiler - would be worse than
+the honest half-measure. It is scheduled, not forgotten: the natural mistake is
+now impossible, and the deliberate one is what is left.
 
 **Secrets are not wiped on the paths ENML owns.** `OPENSSL_cleanse` is used
 inside the OpenSSL provider, which is explicitly a test fixture. `secure_zero`
