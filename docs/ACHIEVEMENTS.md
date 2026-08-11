@@ -344,6 +344,13 @@ much code has to be trusted.
 - [ ] **M7.3b** Host implementation, so the portable kernel stays testable
       while the real machine layer is written.
 - [ ] **M7.3c** AArch64 implementation, against the ISA reference.
+- [x] **M7.4a** Kernel hardening requirements stated up front, and the
+      migration reframed as replacement rather than subtraction. A subsystem
+      removed without being replaced restartable, capability-scoped and no
+      slower is a regression however clean the header list looks.
+- [ ] **M7.4b** W^X kernel mappings, a guard page below every kernel stack and
+      the bounded-work-per-call rule, enforced as the machine layer is written
+      rather than added afterwards.
 - [ ] **M7.3** Boot on the emulated reference platform.
 - [ ] **M7.4** Anonymous attestation. Signing the boot state without minting a
       device identifier, which is the ring-signature and zero-knowledge
