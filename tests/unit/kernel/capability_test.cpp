@@ -24,7 +24,6 @@ bool refused(const os::core::Result<T>& result, std::uint32_t code) {
 // consult the rendezvous: two state machines that each know about the other are
 // two state machines neither of which can be tested alone. Composing them - a
 // thread that exits surrenders what it held - is the job of the layer above.
-constexpr os::kernel::ThreadId broker = 1U;
 constexpr os::kernel::ThreadId alice = 10U;
 constexpr os::kernel::ThreadId bob = 20U;
 constexpr os::kernel::ThreadId carol = 30U;
