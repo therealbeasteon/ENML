@@ -1,8 +1,12 @@
 name: M4 Trusted Phone Shell
 
 on:
+  # Every branch, not only main. A gate that first runs after a change has
+  # landed is not a gate on that change - the same reasoning fuzz-nightly.yml
+  # already records for its own trigger. The other eight workflows run on
+  # every push; these three did not, and a test could therefore be added,
+  # labelled and merged without ever having been executed.
   push:
-    branches: [main]
   pull_request:
 
 concurrency:
