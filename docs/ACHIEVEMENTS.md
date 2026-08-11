@@ -165,8 +165,16 @@ font policy, final font assets and licensing, multitouch and gesture contracts.
       Both previously polled control with a zero timeout and then dispatched
       with a 10 ms timeout; neither wait could block, so an idle service woke
       roughly 100 times a second forever. Measured 97/s before, 0/s after.
-- [ ] **M4.x** Leak detection enabled on the fuzz targets (blocked on triaging
-      `osidlc` allocation behavior).
+- [x] **M5.3** Fuzz leak detection enabled, and every target smoke-run. It had
+      been deferred pending triage of `osidlc` allocation behaviour; enabling it
+      found no leaks, so the deferral was unnecessary. Two targets added after
+      the smoke job was written had been built but never executed.
+- [x] **M5.4** Surface capture is an allow-list that fails closed. It was
+      computed as `role != secure_system` — a deny-list that would silently
+      grant capture to any role added later — and `SceneEntry::capture_allowed`
+      defaulted to true across a default-constructed array. Not exploitable
+      (the preview policy independently requires `role == application`), but
+      both are the shape of the Chrome clipboard escape.
 - [x] **M4.8** `system.keys` covered by a measured budget. The harness stages a
       temporary state directory and passes its descriptor through the private
       launch channel, so the measurement exercises the real startup path. This
