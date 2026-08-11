@@ -69,6 +69,18 @@ if(EMNL_BUILD_OPENSSL_TEST_PROVIDER)
     )
 endif()
 
+add_executable(time_protection_fuzz time/protection_fuzz.cpp)
+target_link_libraries(time_protection_fuzz PRIVATE emnl::ostime emnl_warnings)
+target_compile_options(time_protection_fuzz PRIVATE
+    -fno-exceptions
+    -fno-rtti
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+)
+target_link_options(time_protection_fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+)
+
 add_executable(device_access_fuzz device/access_fuzz.cpp)
 target_link_libraries(device_access_fuzz PRIVATE emnl::osdevice emnl_warnings)
 target_compile_options(device_access_fuzz PRIVATE

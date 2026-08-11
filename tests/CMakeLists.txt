@@ -12,6 +12,7 @@ add_subdirectory(unit/collection_transport)
 add_subdirectory(unit/shell)
 add_subdirectory(unit/boot)
 add_subdirectory(unit/device)
+add_subdirectory(unit/time)
 
 add_subdirectory(integration/ipc)
 add_subdirectory(integration/rpc)

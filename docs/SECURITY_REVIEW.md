@@ -102,9 +102,14 @@ already owns exactly that shape of problem for identities and descriptors, and
 owns none of it for micro-architectural resources.
 
 `constant_time_equal` is a point fix for one class of comparison. It is not
-time protection and must not be described as such. Representing what
-partitioning a platform provides belongs in the capability vocabulary alongside
-the boot roots of trust and device DMA confinement, and does not exist yet.
+time protection and must not be described as such.
+
+Partly addressed since: `os::time::PartitionLedger` (M6.2) is the OS half -
+capabilities, granting, refusal and reclamation on death, with the rule that a
+reservation may never consume the shared remainder. The half that actually
+partitions hardware is a platform port and does not exist, so **ENML still has
+no time protection**. The accounting being correct is a precondition for it,
+not a substitute.
 
 **No side-channel testing of any kind.** Constant-timeness rests on the shape of
 the implementation and its optimisation barrier. The unit tests establish

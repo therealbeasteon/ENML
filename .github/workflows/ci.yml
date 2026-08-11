@@ -88,6 +88,7 @@ jobs:
           storage_relative_path_fuzz=5000
           boot_state_fuzz=5000
           device_access_fuzz=5000
+          time_protection_fuzz=5000
 
   arm64-native:
     runs-on: ubuntu-24.04-arm
