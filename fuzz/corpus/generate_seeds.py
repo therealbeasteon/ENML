@@ -181,6 +181,68 @@ def storage_relative_path_seeds() -> dict[str, bytes]:
     return seeds
 
 
+# core/osboot/include/os/boot/state.hpp
+BOOT_STATE_MAGIC = b"EBS1"
+BOOT_STATE_HEADER_BYTES = 32
+BOOT_STATE_VERSION = 1
+BOOT_STAGE_RECORD_BYTES = 40
+SHA256_DIGEST_BYTES = 32
+
+
+def boot_stage(kind: int, seed: int) -> bytes:
+    """One 40-byte stage measurement record."""
+    digest = bytes((seed + index) % 256 for index in range(SHA256_DIGEST_BYTES))
+    record = struct.pack("<HBBI", kind, 1, 0, 0) + digest
+    assert len(record) == BOOT_STAGE_RECORD_BYTES, len(record)
+    return record
+
+
+def boot_state(lifecycle: int, verification: int, security_version: int, stages: bytes,
+               stage_count: int) -> bytes:
+    header = b"".join((
+        BOOT_STATE_MAGIC,
+        struct.pack("<H", BOOT_STATE_HEADER_BYTES),
+        struct.pack("<H", BOOT_STATE_VERSION),
+        struct.pack("<BB", lifecycle, verification),
+        struct.pack("<H", 0),
+        struct.pack("<Q", security_version),
+        struct.pack("<H", stage_count),
+        struct.pack("<H", 0),
+        struct.pack("<I", 0),
+        struct.pack("<I", 0),
+    ))
+    assert len(header) == BOOT_STATE_HEADER_BYTES, len(header)
+    return header + stages
+
+
+def boot_state_seeds() -> dict[str, bytes]:
+    """Records that clear magic/version so the coherence rules are reachable.
+
+    The interesting behaviour is the accept/reject boundary between a complete
+    closed chain and every near-miss, so the seeds sit on both sides of it.
+    """
+    full_kinds = [1, 2, 3, 4, 5]
+    full = b"".join(boot_stage(kind, kind * 40) for kind in full_kinds)
+    kernel_only = boot_stage(3, 90)
+
+    return {
+        # Accepted.
+        "closed_verified_full": boot_state(2, 2, 7, full, len(full_kinds)),
+        "open_verified_kernel_only": boot_state(1, 2, 1, kernel_only, 1),
+        "closed_failed_full": boot_state(2, 1, 7, full, len(full_kinds)),
+        "open_failed_empty": boot_state(1, 1, 0, b"", 0),
+        # Rejected, and each for a different reason.
+        "closed_verified_partial": boot_state(2, 2, 7, kernel_only, 1),
+        "verified_no_stages": boot_state(1, 2, 0, b"", 0),
+        "lifecycle_zero": boot_state(0, 2, 0, kernel_only, 1),
+        "verification_zero": boot_state(1, 0, 0, kernel_only, 1),
+        "stage_count_over_max": boot_state(1, 1, 0, full, 9),
+        "duplicate_stage": boot_state(1, 1, 0, boot_stage(3, 1) + boot_stage(3, 2), 2),
+        "unknown_stage_kind": boot_state(1, 1, 0, boot_stage(6, 1), 1),
+        "trailing_byte": boot_state(1, 1, 0, kernel_only, 1) + bytes([0]),
+    }
+
+
 def write_seeds(root: pathlib.Path, target: str, seeds: dict[str, bytes]) -> int:
     directory = root / target
     directory.mkdir(parents=True, exist_ok=True)
@@ -201,6 +263,7 @@ def main(argv: list[str]) -> int:
     written += write_seeds(root, "package_manifest_fuzz", package_manifest_seeds())
     written += write_seeds(
         root, "storage_relative_path_fuzz", storage_relative_path_seeds())
+    written += write_seeds(root, "boot_state_fuzz", boot_state_seeds())
 
     # osidlc seeds are the checked-in interface definitions themselves. They are
     # the only guaranteed-valid OSIDL in existence, so nothing synthetic here

@@ -10,6 +10,7 @@ add_subdirectory(unit/ui)
 add_subdirectory(unit/accessibility)
 add_subdirectory(unit/collection_transport)
 add_subdirectory(unit/shell)
+add_subdirectory(unit/boot)
 
 add_subdirectory(integration/ipc)
 add_subdirectory(integration/rpc)

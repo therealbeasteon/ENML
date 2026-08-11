@@ -14,10 +14,18 @@ mix-and-match attacks, and Merkle-tree block integrity checked lazily on access
 for a read-only root filesystem.
 
 None of those define ENML's boot record format, key hierarchy, service topology
-or lifecycle vocabulary. In particular ENML does not adopt UEFI, shim, MOK
-lists, a vendor's container layout, or any specific SoC's fuse map as its
-design. Where this document names such a mechanism it is naming the *class* of
-mechanism a target platform must provide.
+or lifecycle vocabulary. Where this document names such a mechanism it is naming
+the *class* of mechanism a target platform must provide.
+
+ENML adopts no vendor's container layout, MOK list, or SoC fuse map as its
+design. **UEFI is deliberately left open rather than refused.** On ARM64 it is
+the de-facto firmware interface — advocated by ARM's SystemReady programme,
+implemented by EDK2, LK and U-Boot, and the boundary at which block IO, RNG and
+hash services are already standardised. Refusing it means reimplementing those
+against every SoC, which enlarges the trusted surface this project exists to
+keep small. Whether ENML boots via a UEFI application or a bespoke loader is a
+platform decision to be made with the target, and the reasoning recorded — not
+a principle to settle in advance.
 
 ## Why this is the next milestone
 
@@ -80,6 +88,66 @@ connects the three links beneath it rather than inventing a parallel scheme.
   together, because the attack is composition, not substitution.
 - Boot arguments are inside the signed configuration. A boot argument set that
   can be edited is a kernel command line an attacker controls.
+
+### The patched-configuration problem
+
+The invariant above is necessary but, stated naively, unimplementable. Real
+platforms *patch* the device tree, bootconfig and kernel command line during
+boot — memory regions, watchdog nodes, RNG seeds, board revisions. A
+configuration that is signed at build time and then patched at boot cannot be
+verified against its signature afterwards, so "measure the final configuration"
+and "sign the configuration" are in direct tension.
+
+Three resolutions exist, and ENML must choose one explicitly rather than
+discover the conflict during bring-up:
+
+1. **Do not measure the final configuration.** Cheapest, and it silently drops
+   exactly the surface the invariant exists to protect. Rejected.
+2. **Diff the final configuration against the signed one and enforce an
+   allow-list of patchable nodes.** Anything outside the allow-list fails the
+   boot. Preferred: it keeps the signature meaningful while admitting the
+   patching real hardware requires, and the allow-list is itself reviewable.
+3. **Acquire every patched value during the measurement phase and emit a fixed
+   configuration.** Strongest, and it demands the platform surface all its
+   dynamic values up front, which not every SoC does.
+
+ENML takes option 2 as the default and option 3 where the platform allows it.
+The allow-list is part of the signed configuration, not a runtime setting —
+otherwise it is just an attacker-editable exemption list.
+
+### Static versus dynamic root of trust
+
+The chain above is a *static* root of trust for measurement: trust begins at the
+immutable first stage and extends forward. Its weakness is that boot firmware is
+large, vendor-supplied and historically vulnerable, and every line of it is
+inside the TCB.
+
+A *dynamic* root of trust re-establishes measurement after boot firmware
+completes, in a deliberately reduced state — other cores parked, DMA disabled —
+so a compromise in early firmware does not automatically inherit the chain. It
+narrows the TCB at the cost of platform-specific launch machinery.
+
+ENML does not choose between these in the abstract. The requirement is that the
+target platform's capability be assessed and recorded: if it supports a dynamic
+measurement launch, M5.0 must state whether ENML uses it and why; if not, M5.0
+must state that the boot firmware is inside the TCB and is therefore a
+supply-chain dependency, not merely a bootstrap step.
+
+### Update safety
+
+Verified boot and safe update are the same problem viewed from two directions.
+A design that verifies strictly and updates carelessly bricks devices; one that
+updates freely re-admits rollback.
+
+- Boot slots are paired, with the active slot selected before verification and
+  a failed boot falling back to the previously good slot. An update that cannot
+  fail back is an update that turns a bad signature into a dead device.
+- Rollback protection is a distinct verification step with its own state, not a
+  side effect of signature checking. A correctly signed *old* image is exactly
+  the attack rollback protection exists to stop.
+- Root filesystem verification failure has an explicit, chosen policy —
+  restart, read error, or halt. Leaving it to a default means the behaviour
+  under attack is whatever the block layer happened to do.
 - Root filesystem integrity is verified per block on access against a Merkle
   tree whose root hash is itself signed. Whole-image verification at boot is
   rejected: it costs boot time proportional to image size and leaves the image
@@ -132,6 +200,16 @@ state, so that:
 This is what makes `MonotonicSecurityState` real: the monotonic source becomes
 the platform's counter, and KRG publication binds to it under a crash-consistent
 protocol.
+
+This construction is not novel and should not pretend to be. Layered derivation
+in which each boot stage contributes its measurement to the secret handed
+forward is the established pattern — the industry calls it a DICE chain, and
+Android carries it through to protected-VM firmware. ENML's contribution is not
+the construction but where it *terminates*: in the existing M2.7 protection
+hierarchy and its `PrincipalId`-scoped roots, rather than in a separate
+attestation silo bolted alongside. Naming the prior art matters here, because a
+hand-rolled variant of a well-analysed key-derivation chain is precisely the
+kind of thing that looks fine and is not.
 
 The consequence is deliberate and must be designed for, not discovered: **a
 legitimate update changes the boot state, so system-scope material must be
