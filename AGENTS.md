@@ -169,3 +169,25 @@ ctest --test-dir build/host-clang --output-on-failure
 ```
 
 Process-sensitive tests must run on GCC, Clang and native AArch64. Do not add them to the M0 qemu-user-safe set unless they are explicitly proven safe there.
+
+## Device authority
+
+Port I/O authority is not representable in `DeviceAccessPolicyV1` and must not
+be added. A bounded MMIO window can be checked; "the I/O port space" cannot, and
+a component holding it is not confined by anything. The microdriver design the
+split is drawn from grants exactly this to its user-mode half, because its goal
+is fault isolation rather than confinement. ENML's boundary is a security
+boundary, so it takes the split and refuses the grant.
+
+A device that masters the bus without an IOMMU reaches all of physical memory
+regardless of where its driver runs. Moving a driver out of the kernel isolates
+it from the kernel's control flow, not from its memory. `parse_device_access_v1`
+therefore rejects any record claiming an `isolated_user` component whose DMA is
+`unconfined`, and callers must ask `confined()` rather than testing the
+execution domain.
+
+Anything crossing the device boundary goes through OSIDL. The reference
+implementation depends on hand-written pointer annotations whose omission
+produces an incorrectly marshaled structure - a memory-safety bug manufactured
+by the boundary meant to contain one. ENML has generated, typed, bounded wire
+formats already; there will be no annotation dialect.
