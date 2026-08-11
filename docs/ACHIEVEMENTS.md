@@ -193,8 +193,13 @@ All three supervised services, both architectures, at the merge candidate:
 
 Storage costs essentially what a bare service costs. Keys costs about 1.7 MiB
 more, which is the provider, hierarchy and durable registry.
-- [ ] **M4.x** `KRG1` registry decoder fuzzed (blocked on a design decision:
-      decode/IO separation versus a filesystem-backed harness).
+- [x] **M5.6** `KRG1` durable key registry fuzzed. Driven through the
+      filesystem rather than a byte span, because separating decode from I/O
+      would mean modifying a substrate `AGENTS.md` guards purely for
+      testability. It was the last untested parser of attacker-influenced input.
+- [x] **M5.6** The intermittent M2 Service Broker failure diagnosed and fixed:
+      two teardown helpers allowed one second for a child to exit and be reaped
+      before asserting, on runners executing four jobs concurrently.
 
 ---
 
