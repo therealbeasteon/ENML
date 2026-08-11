@@ -29,6 +29,9 @@ struct ProviderKeyReference final {
 
 enum class KeyPurpose : std::uint32_t {
     application_data_aead = 1U,
+    // system.storage-owned bulk-data keys. These may only be generated under a
+    // user-profile root and are never exposed as application key authority.
+    profile_storage_aead = 2U,
 };
 
 using RightsMask = std::uint32_t;
@@ -50,7 +53,7 @@ struct KeyDescriptor final {
 
     [[nodiscard]] constexpr bool valid() const noexcept {
         return id.valid() && version != 0U && rights != 0U &&
-            (rights & ~key_rights::all) == 0U;
+            (rights & ~key_rights::all) == 0U && valid_purpose(purpose);
     }
 
     [[nodiscard]] friend constexpr auto operator<=>(
@@ -66,7 +69,12 @@ struct KeyOwner final {
 };
 
 [[nodiscard]] constexpr bool valid_purpose(KeyPurpose purpose) noexcept {
-    return purpose == KeyPurpose::application_data_aead;
+    switch (purpose) {
+    case KeyPurpose::application_data_aead:
+    case KeyPurpose::profile_storage_aead:
+        return true;
+    }
+    return false;
 }
 
 [[nodiscard]] constexpr bool valid_rights(RightsMask value) noexcept {
