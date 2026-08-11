@@ -193,9 +193,21 @@ int main() {
     hit = compositor.hit_test(200, 500);
     assert(hit && hit.value() == popup.id);
 
+    // Capture is an allow-list over roles, not a single exclusion. Only
+    // application surfaces are capturable; popup, system chrome and
+    // secure-system are all denied, matching M4.0's rule that none of them is
+    // an ordinary task-preview input.
     assert(scene.entries[0].capture_allowed && scene.entries[1].capture_allowed);
-    assert(scene.entries[2].capture_allowed && scene.entries[3].capture_allowed);
+    assert(!scene.entries[2].capture_allowed);
+    assert(!scene.entries[3].capture_allowed);
     assert(!scene.entries[4].capture_allowed);
+
+    // A default-constructed entry denies capture. SceneSnapshot builds its
+    // whole array by default construction, so this is what keeps unused slots
+    // and any future producer that forgets the field from reporting a
+    // capturable surface.
+    const os::display::SceneEntry defaulted{};
+    assert(!defaulted.capture_allowed);
     assert(
         scene.entries[4].trusted_presentation ==
         os::display::TrustedPresentation::secure_system);
