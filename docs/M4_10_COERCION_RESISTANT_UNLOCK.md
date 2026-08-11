@@ -1,0 +1,187 @@
+# M4.10 - Coercion-resistant unlock
+
+`docs/ACHIEVEMENTS.md` has carried this as an unclaimed gap with a warning
+attached to it: a lock screen needs "a coercion-resistance design that is not a
+naive second 'panic PIN' - the supplied duress reference shows why simple
+two-password schemes fail under repeated coercion." This is that design, and the
+warning turns out to be the most useful thing in the reference.
+
+## What the reference settles
+
+The supplied panic-password work is unusually direct about what does not work.
+
+**Two passwords are defeated by asking twice.** Give the user a regular password
+and one panic password, and an attacker who knows the scheme - which he does,
+by Kerckhoffs' principle - simply demands a second authentication with a
+different password. The user has only two. She must surrender the real one. The
+paper calls this the **iteration principle** and states plainly that the
+best-known panic password scheme "is very easily defeated" by it.
+
+**Disclosure is defeated by choosing for her.** Under the
+**forced-randomization principle**, the attacker makes the user write down every
+password she knows and picks which to use himself. Against two passwords this
+gets him what he wants half the time.
+
+**And the obvious repair is a trap.** Locking the device when the panic password
+arrives lets the attacker *screen*: he demands a credential that does not lock
+the device, threatens retaliation if it does, and thereby learns which is which.
+The paper's conclusion is the single most important sentence for this design -
+**"the event that locks the account must be invariant to the type of the
+passwords being entered."**
+
+Its answer, 2P-lock, locks when two *different* credentials are used inside a
+window, whichever came first, and holds the lock for longer than the window. And
+against a persistent attacker it goes further: no fixed pair is enough, because
+he can outlast any finite list, so the panic family has to be arbitrarily large -
+while staying far enough from the *invalid* space that a mistyped real password
+is an error rather than a catastrophe.
+
+## Where a phone breaks that model
+
+The reference's threat model contains a line that does not survive contact with
+a phone: Bob - the verifier - is trusted, elsewhere, and not in collusion with
+the attacker. Every scheme in it can therefore take an **unobserved reaction**: a
+silent alarm, a spoiled ballot, a flag in a database the attacker cannot see.
+
+A phone has no such party. The verifier is the device, and the device is in the
+attacker's hand. Three things follow, and they are what ENML has to answer for
+itself.
+
+**There is no unobserved channel, so the reaction must be local and
+irreversible.** A silent alarm needs a network the attacker removes by holding
+the power button, pulling the SIM, or standing in a basement. Any design that
+depends on a message reaching somebody fails precisely when it is needed. What a
+phone *can* do unobserved is destroy a key - and ENML already has the structure
+for it, because M2.7 built system → profile → application protection scopes with
+strictly downward-only derivation. Destroying the wrapping key of a scope makes
+everything beneath it unrecoverable in the time it takes to overwrite one key.
+That is the panic reaction, and it is genuinely unobserved: the attacker watching
+the screen sees nothing at all.
+
+**The observable response must be an ordinary unlock.** Not a refusal, not a wipe
+animation, not a device that suddenly feels different. The duress credential
+opens the phone onto what survives. The attacker got what he demanded and has no
+way to tell it is not what he wanted.
+
+**Duration is a channel, because the attacker is holding the stopwatch.**
+Destroying a key takes longer than not destroying one. Balancing the branches by
+inspection is the kind of promise that is true when written and false after the
+next change, so the authority instead states a single deadline before which no
+result may be shown, identical for every outcome. One rule to verify beats two
+paths to keep equal.
+
+## The design
+
+**Duress is a credential class, not a second PIN.** The authority is handed a
+classification - nominal, duress or invalid - and an opaque tag. It never sees a
+credential, which is what lets it be tested and fuzzed with no secret material
+anywhere near it, and what keeps the comparison in one place where it can be made
+constant-time.
+
+**The iteration rule reads a tag and a time, and nothing else.** Two different
+credentials of the user's own inside the window lock the device, whichever came
+first. The class is not merely ignored - it is *not stored*, so the screening bug
+the reference warns about cannot be reintroduced by a later edit. That is the
+difference between a rule that is currently correct and one that is structurally
+correct.
+
+**The lock outlasts the window, and it is a `static_assert`.** If it did not, the
+owner would return after a lockout, enter the credential she normally uses, still
+be inside the window against the attacker's credential, and lock herself out
+again - forever. The reference states `t2 > t1` as a requirement; here it is a
+build error.
+
+**Destruction happens first, and is not conditional on being granted.** The
+attacker can cut power at any instant, so a destruction that has not happened yet
+is one that did not happen. And if the attacker demands the real credential first
+and the duress one second, the iteration rule will refuse that second attempt -
+so if destruction waited on a grant, the user would have spent her one signal on
+nothing. It fires on classification, not on outcome.
+
+**There is no `granted_under_duress`.** A duress unlock and a nominal unlock
+return the same disposition, the same release time, and the same
+accepting-again time. The one-shot destruction directive is the only difference
+and it is consumed before access is released. Past that point nothing in the
+system knows which kind of unlock happened, so no code downstream can be made to
+leak it - by a bug, by a log line, or by an analytics counter somebody adds in
+two years.
+
+**Guessing and iteration are counted separately.** An unrecognised credential
+feeds an escalating backoff and is never written into the iteration history -
+otherwise an attacker could arm the lock by typing nonsense and then screen
+against it. A recognised credential clears the guess count.
+
+**Nothing is evaluated during a lockout.** Not classified against, not counted,
+not recorded. A lockout an attacker can grind against is not a lockout.
+
+## Threat model
+
+**The attacker who asks twice.** Defeated. The second, different credential locks
+the device, and the lock is indistinguishable in every observable - disposition,
+timing, and when the device will accept again - from what would have happened had
+the credentials been given in the other order.
+
+**The attacker who asks for the list and chooses himself.** Mitigated, not
+solved, and the mitigation is not in this file: the duress family must be large
+and rule-derived, so that there is no finite list to disclose. The reference is
+explicit that this is the only answer to a persistent attacker, and equally
+explicit that the rule has to be one a frightened person can apply correctly.
+
+**The attacker who screens.** No mechanism here distinguishes credential classes
+in anything he can observe. The lock is triggered by difference, not by type; the
+timing envelope is uniform; the success value is shared.
+
+**The attacker who takes the phone away to examine later.** He finds a device
+whose protected domain is cryptographically gone. That is the point.
+
+**The owner who fat-fingers her PIN.** Lands in *invalid* - an error message and a
+small delay - provided the classifier keeps the duress and invalid spaces well
+mixed. That obligation is stated in the header because this file cannot enforce
+it, and getting it wrong means a slip of the finger irreversibly destroys
+everything the user owns. It is the single most dangerous requirement in the
+design.
+
+## What is not claimed
+
+**Forensic indistinguishability afterwards.** ENML claims the attacker cannot
+tell *at the moment of the coerced unlock*. It does not claim that a laboratory
+with the device for a week cannot later determine that a domain was destroyed
+rather than never created. That is a much harder property, it would constrain
+storage layout and wear levelling, and claiming it without doing that work would
+be exactly the kind of marketing this project's documents refuse to produce.
+
+**Anything about coercion during a lockout.** Credentials are not evaluated while
+the device is locked, so a duress credential entered then does nothing. The
+attacker gains nothing either, since the device will not open - but the user
+cannot signal, and that is a real gap rather than a solved case.
+
+**A silent alarm.** Deliberately absent. It cannot be made reliable on a device
+the attacker controls, and shipping one would invite users to rely on it in
+exactly the situation where it fails.
+
+**Auto-wipe after N failures.** Deliberately absent. It is a denial of service
+that anyone who holds the phone for two minutes can mount against its owner, and
+with key stretching and escalating backoff it buys little that is not already
+bought.
+
+## What is not decided yet
+
+**The credential rule itself.** What makes something a member of the duress
+family - the reference's 5-dictionary and 5-click are instantiations, not the
+only ones - is a usability decision that needs work with real people, because a
+rule nobody can apply under duress is a rule that does not exist. The authority
+takes a classification precisely so this can be settled separately and changed
+without touching any of the logic above.
+
+**Wiring destruction to the Key Service.** The directive is emitted; M2.8's
+`system.keys` acting on it, within the timing envelope, is the next step and is
+where the envelope stops being an assertion and becomes a measurement.
+
+**The lock screen itself.** Trusted presentation exists (M3.2) and consent
+binding exists (M4.9); an unlock surface that an application cannot imitate is
+the remaining UI work.
+
+**Hardware-rooted resistance to rollback of the destruction.** Right now
+destruction is as durable as the storage beneath it. `MonotonicSecurityState` is
+still an interface boundary only, as M2 records, and until it is real an attacker
+with an image of the device taken beforehand is outside what this defends.

@@ -181,6 +181,23 @@ font policy, final font assets and licensing, multitouch and gesture contracts.
       converts the keys idle fix from argued-by-symmetry to measured: 0 idle
       wakeups per second.
 
+- [x] **M4.10** Coercion-resistant unlock authority, in
+      `docs/M4_10_COERCION_RESISTANT_UNLOCK.md`. The reference shows a single
+      panic PIN is "very easily defeated" by an attacker who just asks twice, and
+      warns that locking on receipt of the panic credential lets him screen — the
+      locking event must be invariant to which credential was entered. Its
+      schemes all assume a trusted verifier *elsewhere*, which a phone does not
+      have, so ENML derives its own: the panic reaction is irreversible
+      destruction of the protected key domain rather than a silent alarm nobody
+      will receive; it happens before access is granted and is not conditional on
+      the attempt succeeding; the iteration rule reads a tag and a time and never
+      stores the credential class, so the screening bug is unrepresentable rather
+      than merely absent; there is no separate success value for a duress unlock,
+      so nothing downstream can leak which occurred; and every disposition is
+      released on one uniform deadline, because the attacker is holding the
+      stopwatch. `t2 > t1` is a `static_assert`, since without it one coercion
+      episode would lock the owner out permanently.
+
 ### Measured baseline
 
 All three supervised services, both architectures, at the merge candidate:
@@ -299,9 +316,10 @@ implicit is how a project starts believing its own marketing.
       surface on a phone and nothing in the tree addresses it.
 - [ ] Telephony and RCS.
 - [ ] Board bring-up, driver model and power management integration.
-- [ ] Lock-screen authentication, and a coercion-resistance design that is not a
-      naive second "panic PIN" — the supplied duress reference shows why simple
-      two-password schemes fail under repeated coercion.
+- [ ] Lock-screen authentication. The **coercion-resistant unlock authority**
+      now exists and is gated — see M4.10 below — but the credential rule that
+      decides what counts as a duress credential, the trusted unlock surface,
+      and the wiring from the destruction directive to `system.keys` do not.
 - [ ] Recovery, update and encrypted-backup policy.
 - [ ] Application distribution.
 - [ ] Whole-system boot-to-shell budget.
