@@ -68,13 +68,19 @@ these are complementary signals, not a replacement.
   `analyzer.hpp` and must be updated with them. A seed that no longer matches
   the wire format silently degrades back to unseeded fuzzing.
 
-## Known limitation
+## Leak detection
 
-Leak detection stays off (`ASAN_OPTIONS=detect_leaks=0`), matching the existing
-smoke job. Turning it on requires triaging the OSIDL compiler's known allocation
-behavior first; enabling it blind would make the nightly signal unreliable from
-day one. This is worth doing as a separate change — a leak in a parser reachable
-from untrusted input is a denial-of-service surface, not merely untidy.
+Leak detection is on (`ASAN_OPTIONS=detect_leaks=1`) in both the nightly runs
+and the per-PR smoke job. A leak in a parser reachable from untrusted input is a
+denial-of-service surface, not untidiness, and a fuzzing setup that cannot see
+one is missing the finding it is best placed to make.
+
+It was previously off across the board, which also meant the two most recently
+added targets were built but never executed — a harness could rot without
+anything noticing. `run-fuzz-smoke.sh` now lists every target in one place, so
+adding a fuzz target and forgetting to smoke it is a single omission rather than
+two, and it reports leaks and sanitizer findings as workflow annotations rather
+than leaving them in a log that needs repository permissions to read.
 
 ## Next
 
