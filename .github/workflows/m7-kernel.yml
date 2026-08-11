@@ -13,6 +13,9 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # The migration off Linux only finishes if the surface can only shrink.
+      - name: Linux coupling ceiling
+        run: .github/scripts/check-linux-coupling.sh 'kernel-gcc'
       - name: Configure
         run: cmake --preset host-debug
       - name: Build kernel ABI gates
