@@ -19,6 +19,7 @@ add_library(osui STATIC
     src/accessibility.cpp
     src/motion.cpp
     src/decision.cpp
+    src/contrast.cpp
 )
 add_library(emnl::osui ALIAS osui)
 
