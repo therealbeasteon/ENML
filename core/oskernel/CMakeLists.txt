@@ -3,6 +3,7 @@ add_library(oskernel STATIC
     src/rendezvous.cpp
     src/capability.cpp
     src/interrupt.cpp
+    src/scheduler.cpp
     src/machine_host.cpp
 )
 

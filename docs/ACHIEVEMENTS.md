@@ -360,6 +360,17 @@ much code has to be trusted.
       until its driver reports the device quiet - so interrupt load is bounded by
       driver progress rather than by the device. The wakeup-per-burst cost is
       recorded rather than discovered.
+- [x] **M7.1e** Scheduling, in `docs/M7_1_SCHEDULER.md` - which completes all
+      four kernel responsibilities as host-testable pure logic. Strict priority,
+      round-robin within it, and **no tick**: the scheduler returns the one
+      deadline it next needs, asks for no timer when nothing is competing, and
+      refills slices lazily from monotonic time. A periodic priority boost is a
+      periodic timer, and M4.7's measured idle-wakeup gate is why Cookie cannot
+      have one. Time is charged and never refunded, so the gaming attack the
+      references describe - relinquish just before the slice expires, keep your
+      position, monopolise the processor - has no path here, and `yield`
+      forfeits rather than banks. Starvation is deliberate and argued rather
+      than overlooked.
 - [x] **M7.3a** Machine-layer contract defined before implementation, in
       `docs/M7_3_MACHINE.md`. Assembly may live only behind it; nothing in it
       makes a policy decision. Device memory is a kind rather than a hint,

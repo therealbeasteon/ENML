@@ -30,6 +30,14 @@ target_compile_options(kernel_interrupt_test PRIVATE
 add_test(NAME kernel_interrupt_test COMMAND kernel_interrupt_test)
 set_tests_properties(kernel_interrupt_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_scheduler_test scheduler_test.cpp)
+target_link_libraries(kernel_scheduler_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_scheduler_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_scheduler_test COMMAND kernel_scheduler_test)
+set_tests_properties(kernel_scheduler_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_machine_host_test machine_host_test.cpp)
 target_link_libraries(kernel_machine_host_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_machine_host_test PRIVATE

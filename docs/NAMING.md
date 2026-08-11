@@ -37,9 +37,11 @@ someone holding the phone experiences, it is about Cookie.
 Source identifiers have not been renamed and are not scheduled to be renamed
 casually. `os::` namespaces, `emnl_*` CMake targets and existing file paths stay
 as they are for now, because a mechanical rename across a tree with twelve
-gates, no local toolchain and CI as the only compiler is a change whose risk is
-entirely typos - and it buys nothing a reader of this table does not already
-have.
+gates is a change whose risk is entirely typos - and it buys nothing a reader of
+this table does not already have. The local pre-flight check in `AGENTS.md`
+covers `oscore` and `oskernel` only, which is a small fraction of what a rename
+would touch, so for this particular change CI remains effectively the only
+compiler.
 
 When identifiers are renamed it will be as its own change, verified on its own,
 touching nothing else. In the meantime `emnl_` in a target name should be read
