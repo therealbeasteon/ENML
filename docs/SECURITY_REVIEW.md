@@ -184,6 +184,21 @@ establish, so that loop is skipped rather than spinning to its bound - and
 writes the marker through the reacquired root instead. The marker still means
 what it meant, and the parent still receives it.
 
+A third and fourth shape then appeared in `uninstall_application` itself, both
+from revoking Storage and Key policy while this fixture restarts those services:
+`service::not_running` when the supervisor reports the service down, and
+`ipc::peer_died` when the channel dies mid-call. Which one is seen depends only
+on where the restart lands relative to the request.
+
+Both are now tolerated, and that is a fix to production code rather than to the
+test. Uninstall commits the durable no-active-generation record *before* it
+touches anything live, precisely so a partial revocation cannot resurrect the
+package. A service that is down holds no live policy to revoke and reloads
+durable state recording the uninstall when it returns. Treating either error as
+failure made uninstall depend on service uptime: a user removing an application
+while a service happened to be restarting would be told the removal failed,
+having already had it committed.
+
 This is the third diagnosis of this failure. The first two were wrong because
 they were made without evidence: a bare `assert` on a bool, and a summary line
 naming only an exit code. What made the difference was carrying the failing
