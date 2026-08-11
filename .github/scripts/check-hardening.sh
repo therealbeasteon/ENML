@@ -10,6 +10,18 @@
 # Usage: check-hardening.sh <label> <binary> [binary...]
 set -uo pipefail
 
+# Every match below uses grep -c rather than grep -q, and a here-string rather
+# than a pipe. grep -q exits on the first match; when the input is larger than
+# the pipe buffer the writer is then killed by SIGPIPE, and under pipefail that
+# non-zero status becomes the pipeline's, so a successful match reports as a
+# failure. It only bites on large inputs - a symbol table, not a program header
+# list - which makes it look like a real finding about the binary rather than a
+# bug in the check. grep -c consumes all of its input, so nothing is signalled.
+matches() {
+    # matches <text> <extended-regex>
+    [ "$(grep -c -E -- "$2" <<< "$1")" -gt 0 ]
+}
+
 label="${1:?label required}"
 shift
 if [ "$#" -eq 0 ]; then
@@ -47,7 +59,7 @@ for binary in "$@"; do
 
     # Position independence: a fixed-address image defeats layout randomisation
     # no matter what the loader supports.
-    if printf '%s' "$headers" | grep -qE '^ *Type: *DYN'; then
+    if matches "$headers" '^ *Type: *DYN'; then
         pass "$name: position independent (DYN)"
     else
         fail "$name: not position independent"
@@ -55,13 +67,13 @@ for binary in "$@"; do
 
     # Full RELRO needs both the segment and BIND_NOW; the segment alone leaves
     # the GOT writable, which is the thing being protected.
-    if printf '%s' "$headers" | grep -q 'GNU_RELRO'; then
+    if matches "$headers" 'GNU_RELRO'; then
         pass "$name: GNU_RELRO segment present"
     else
         fail "$name: no GNU_RELRO segment"
     fi
 
-    if printf '%s' "$dynamic" | grep -qE 'BIND_NOW|FLAGS_1.*NOW'; then
+    if matches "$dynamic" 'BIND_NOW|FLAGS_1.*NOW'; then
         pass "$name: BIND_NOW (full RELRO)"
     else
         fail "$name: BIND_NOW absent, RELRO is partial"
@@ -71,7 +83,7 @@ for binary in "$@"; do
     stack_line="$(printf '%s' "$headers" | grep 'GNU_STACK' || true)"
     if [ -z "$stack_line" ]; then
         fail "$name: no GNU_STACK entry, stack permissions unknown"
-    elif printf '%s' "$stack_line" | grep -qE 'RWE'; then
+    elif matches "$stack_line" 'RWE'; then
         fail "$name: stack is executable"
     else
         pass "$name: non-executable stack"
@@ -80,7 +92,7 @@ for binary in "$@"; do
     # Stack canaries. The reference is only emitted for functions the
     # protector actually instrumented, so its absence in a trivial binary
     # would be a false alarm - which is why this runs against real services.
-    if printf '%s' "$symbols" | grep -q '__stack_chk_fail'; then
+    if matches "$symbols" '__stack_chk_fail'; then
         pass "$name: stack protector instrumented"
     else
         fail "$name: no __stack_chk_fail reference, stack protector not applied"
