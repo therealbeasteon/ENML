@@ -85,25 +85,11 @@ than leaving them in a log that needs repository permissions to read.
 ## Next
 
 - Triage allocation behavior and enable leak detection.
-- Fuzz the `KRG1` key registry decoder. This is blocked on structure, not
-  effort: `PersistentKeyRegistry::load_snapshot` interleaves decoding with
-  `read_exact` calls on the state directory descriptor, so there is no
-  byte-span seam to drive. Reaching it needs either a decode/IO separation in
-  a substrate `AGENTS.md` guards explicitly, or a filesystem-backed harness
-  that stages each input through a temporary directory and pays syscalls per
-  execution. Both are legitimate; the choice should be a reviewed decision
-  rather than a refactor bolted on for fuzzability.
-
-## Covered targets
-
-`ipc_decoder_fuzz`, `rpc_error_fuzz`, `osidlc_compiler_fuzz`,
-`package_manifest_fuzz`, `storage_relative_path_fuzz`.
-
-`storage_relative_path_fuzz` targets the private-storage confinement boundary.
-Beyond crashes it asserts that parsing is idempotent: if `parse()` accepts input
-whose `view()` no longer re-parses, or re-parses to different bytes, confinement
-has been broken without any memory-safety error occurring. That divergence would
-otherwise pass silently.
-- Consider a structure-aware mutator for the wire header once the transport ABI
-  is frozen, so mutation preserves header validity and spends its budget on
-  payload semantics.
+- [done] `KRG1` durable key registry is fuzzed. It is driven through the
+  filesystem rather than a byte span: `load_snapshot` interleaves decoding
+  with `read_exact` on the state directory descriptor, so there is no seam to
+  hand a buffer. Separating decode from I/O would have meant modifying a
+  durable key-state substrate `AGENTS.md` guards, purely for testability -
+  the wrong trade when a slower harness reaches the same code. The staging
+  directory is created once rather than per execution, so the cost is one
+  write and one open per input.

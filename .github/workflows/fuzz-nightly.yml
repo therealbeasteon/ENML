@@ -53,14 +53,24 @@ jobs:
             dictionary: fuzz/dict/storage_path.dict
           - target: boot_state_fuzz
             dictionary: fuzz/dict/boot_state.dict
+          - target: keys_registry_snapshot_fuzz
+            dictionary: fuzz/dict/krg1.dict
     steps:
       - uses: actions/checkout@v4
+
+      # The durable key-registry harness links the host/CI provider, which is a
+      # test fixture and never production key storage.
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
 
       - name: Configure fuzz build
         run: >-
           cmake -S . -B build/fuzz -G Ninja
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF
           -DEMNL_BUILD_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++
+          -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
 
       - name: Build ${{ matrix.target }}
         run: cmake --build build/fuzz --target ${{ matrix.target }} --parallel 2
