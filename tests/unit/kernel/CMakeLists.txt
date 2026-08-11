@@ -13,3 +13,11 @@ target_compile_options(kernel_rendezvous_test PRIVATE
 )
 add_test(NAME kernel_rendezvous_test COMMAND kernel_rendezvous_test)
 set_tests_properties(kernel_rendezvous_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_machine_host_test machine_host_test.cpp)
+target_link_libraries(kernel_machine_host_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_machine_host_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_machine_host_test COMMAND kernel_machine_host_test)
+set_tests_properties(kernel_machine_host_test PROPERTIES LABELS "m7-kernel")
