@@ -27,6 +27,29 @@ namespace {
     return role == SurfaceRole::popup ? 2U : 1U;
 }
 
+// Capture is granted by an allow-list, never withheld by a deny-list.
+//
+// The previous form was `role != secure_system`: everything was capturable
+// except one role. A deny-list fails open for anything added later - a future
+// authentication or notification-content role would be capturable until
+// somebody remembered to exclude it, and nothing would report the omission.
+// M4.0 requires a compositor entry that *explicitly allows* capture, and an
+// enumerated switch makes adding a role a compile-time decision rather than a
+// silent inheritance of permission.
+[[nodiscard]] constexpr bool capture_allowed_for(SurfaceRole role) noexcept {
+    switch (role) {
+    case SurfaceRole::application:
+        return true;
+    case SurfaceRole::popup:
+    case SurfaceRole::system_chrome:
+    case SurfaceRole::secure_system:
+        // M4.0: popups, system chrome and secure-system presentation are never
+        // accepted as ordinary task-preview inputs.
+        return false;
+    }
+    return false;
+}
+
 [[nodiscard]] constexpr TrustedPresentation trusted_presentation_for(
     SurfaceRole role) noexcept {
     switch (role) {
@@ -382,7 +405,7 @@ SceneSnapshot Compositor::scene_snapshot() const noexcept {
             .frame_sequence = slot.frame_sequence,
             .buffer_slot = slot.buffer_slot,
             .has_frame = slot.has_frame,
-            .capture_allowed = slot.descriptor.role != SurfaceRole::secure_system,
+            .capture_allowed = capture_allowed_for(slot.descriptor.role),
             .trusted_presentation = trusted_presentation_for(slot.descriptor.role),
         };
     }
