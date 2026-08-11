@@ -77,3 +77,65 @@ pages and bounded work are obligations on the machine layer and on every call
 added after it. They belong in review for M7.3b and M7.3c rather than in a later
 hardening milestone, because a kernel hardened afterwards is one that was
 written wrong first.
+
+## M7.4b - the three obligations, enforced in the machine layer
+
+The section above ends by saying W^X, guard pages and bounded work "belong in
+review for M7.3b and M7.3c rather than in a later hardening milestone, because a
+kernel hardened afterwards is one that was written wrong first." M7.3b built the
+host machine layer. This is that follow-through, and two of the three turned out
+to need real mechanism rather than a restated intention.
+
+### W^X had a hole a type cannot see
+
+`MachinePermissions` has no writable-and-executable value, so no single mapping
+can break the rule. That is the good half, and it stays: a rule a type makes
+unrepresentable cannot be forgotten by an implementation, and every machine layer
+written later inherits it for free.
+
+The half a type cannot see is **aliasing**. Map one physical page `read_write` at
+one virtual address and `read_execute` at another, and that memory is writable and
+executable at the same instant through two mappings that are individually
+blameless. Nothing about either permission value is wrong. This is a documented
+way real kernels have lost W^X while every permission looked correct, and it is
+caught on the *physical* range, because the virtual ranges do not overlap and
+never will.
+
+Refusing all aliases would have been simpler and wrong - two writable views of one
+buffer is how shared memory works, and two read-only views is how anything is
+shared safely. The rule is the combination, not the aliasing.
+
+Cross-address-space aliasing is **not** covered: a page mapped writable in one
+address space and executable in another is invisible to a check that sees one
+space at a time. That needs a physical-memory ledger the kernel does not yet have,
+and it is recorded here rather than discovered later.
+
+### A guard page is a mapping decision, so it lives at the mapping operation
+
+`machine_map_kernel_stack` is now the only way to get a kernel stack, and it
+refuses unless the page immediately below is unmapped. A stack with no room
+beneath it for a guard is refused rather than mapped and described as guarded.
+
+That alone would still be a convention, because nothing stopped a caller starting
+a thread on memory it allocated itself. So `machine_prepare_context` now requires
+the stack pointer to be the top of a range established that way. The guard rule
+reaches the operation that would otherwise bypass it, which is the difference
+between a rule that holds and a rule that holds until somebody is in a hurry.
+
+Stacks grow downward, so the guard sits below the range and the initial stack
+pointer is its top. Handing in the bottom is refused - accepting it would put the
+guard page above the thread rather than below it, which is the one place it does
+no good at all.
+
+### Bounded work was already true, and is now the reason to look
+
+Every operation in the machine layer scans a fixed table once. Nothing here loops
+on a caller's number. That was already the case, and the reason to state it is
+that the next person to add an operation is the one who can break it.
+
+### What this does not do
+
+It does not harden the AArch64 layer, which does not exist. The value of putting
+these rules in the contract and in the host implementation is that M7.3c has to
+satisfy the same tests - the guard page and the alias check are written against
+the contract, not against the host.

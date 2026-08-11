@@ -405,9 +405,21 @@ much code has to be trusted.
       migration reframed as replacement rather than subtraction. A subsystem
       removed without being replaced restartable, capability-scoped and no
       slower is a regression however clean the header list looks.
-- [ ] **M7.4b** W^X kernel mappings, a guard page below every kernel stack and
+- [x] **M7.4b** W^X kernel mappings, a guard page below every kernel stack and
       the bounded-work-per-call rule, enforced as the machine layer is written
-      rather than added afterwards.
+      rather than added afterwards. Two of the three needed real mechanism.
+      `MachinePermissions` makes single-mapping W^X unrepresentable, but not
+      **aliasing** - one physical page mapped `read_write` at one address and
+      `read_execute` at another is writable and executable at once through two
+      blameless mappings, and it is now refused on the physical range. Two
+      writable views of one buffer still work, because the rule is the
+      combination and not the aliasing. The guard page moved from an intention
+      to `machine_map_kernel_stack`, the only way to get a stack, which refuses
+      unless the page below is unmapped - and `machine_prepare_context` now
+      refuses a stack that was not established that way, so the rule reaches the
+      operation that would otherwise bypass it. Written against the contract, so
+      M7.3c must satisfy the same tests. Cross-address-space aliasing is
+      recorded as not covered.
 - [ ] **M7.3** Boot on the emulated reference platform.
 - [ ] **M7.4** Anonymous attestation. Signing the boot state without minting a
       device identifier, which is the ring-signature and zero-knowledge

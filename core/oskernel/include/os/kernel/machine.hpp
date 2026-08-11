@@ -53,6 +53,13 @@ inline constexpr std::uint32_t alignment = 3U;
 inline constexpr std::uint32_t exhausted = 4U;
 inline constexpr std::uint32_t already_mapped = 5U;
 inline constexpr std::uint32_t not_mapped = 6U;
+// The same physical memory would become writable through one mapping and
+// executable through another.
+inline constexpr std::uint32_t writable_executable_alias = 7U;
+// A kernel stack was requested with the page below it already mapped.
+inline constexpr std::uint32_t missing_guard_page = 8U;
+// A context was prepared on a stack that was not established as one.
+inline constexpr std::uint32_t not_a_kernel_stack = 9U;
 } // namespace machine_errors
 
 // What a mapping permits. Separate from the device access policy in M6.0, which
@@ -82,8 +89,31 @@ enum class MachineMemoryKind : std::uint8_t {
 // sense: it returns when something later switches back.
 void machine_switch_context(MachineContext& from, MachineContext& to) noexcept;
 
+// Establishes a kernel stack, and is the only way to get one.
+//
+// M7.4a requires a guard page below every kernel stack. In userspace, stack
+// clash protection is something the compiler emits; in a kernel it is a mapping
+// decision, and an unmapped page is what turns an overflow into a fault instead
+// of into the next thread's saved state. So the rule lives here, at the only
+// operation that can enforce it: the page immediately below the stack must be
+// unmapped, and a request without room for one is refused rather than mapped
+// and hoped about.
+//
+// Stacks grow downward, so the guard sits below `virtual_base` and the initial
+// stack pointer is `virtual_base + length`.
+[[nodiscard]] os::core::Result<void> machine_map_kernel_stack(
+    MachineAddressSpace& space,
+    std::uintptr_t virtual_base,
+    std::uintptr_t physical_base,
+    std::size_t length) noexcept;
+
 // Prepares a context so that switching to it begins execution at `entry` with
 // `stack` as its stack, in the given address space.
+//
+// `stack` must be the top of a range established by machine_map_kernel_stack.
+// Accepting any aligned number would make the guard page a convention that
+// holds until somebody starts a thread on memory they allocated themselves, and
+// a convention is not what M7.4a asked for.
 [[nodiscard]] os::core::Result<void> machine_prepare_context(
     MachineContext& context,
     MachineAddressSpace& space,
