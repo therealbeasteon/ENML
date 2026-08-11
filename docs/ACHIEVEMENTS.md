@@ -312,7 +312,7 @@ Check an item in the same change that earns it, and record the gate that proves
 it. If a milestone's exit criteria are relaxed, unchecking here is part of that
 change — a ledger that only ever moves forward stops being evidence.
 
-### M7 - ENML's own kernel
+### M7 - Cookie Kernel
 
 The decision to write a kernel is recorded in `docs/M7_0_KERNEL.md`, reversing
 the position in `PROJECT_VISION.md`. The rationale is that security, stability,
@@ -320,6 +320,9 @@ hardware neutrality, trust and lightweightness cannot be guaranteed on a kernel
 this project does not control. The measure of success is a single number: how
 much code has to be trusted.
 
+- [x] **M7.0a** Names separated in `docs/NAMING.md`: Cookie is the operating
+      system, Cookie Kernel is what it runs on, EMNL is the security
+      architecture both carry. Identifiers deliberately not renamed yet.
 - [x] **M7.0** System call surface fixed as a table, before any implementation,
       with a hard ceiling enforced by test. Fifteen calls against a permitted
       sixteen, for reference against the fourteen that carried an entire

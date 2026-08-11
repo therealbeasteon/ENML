@@ -30,6 +30,23 @@ namespace {
          error.code == os::supervisor::broker_errors::process_not_attached);
 }
 
+// A service that is not running holds no live policy to revoke.
+//
+// Uninstall commits the durable no-active-generation record before it touches
+// anything live, precisely so that a partial revocation cannot resurrect the
+// package. A service that is down therefore has nothing this function needs to
+// take away, and when it comes back it reloads durable state that already
+// records the uninstall.
+//
+// Treating this as a failure made uninstall depend on service uptime, which it
+// does not and must not: a user removing an application while a service happens
+// to be restarting would be told the removal failed, having already had it
+// committed.
+[[nodiscard]] bool is_nothing_to_revoke(const os::core::Error& error) noexcept {
+    return error.domain == os::core::ErrorDomain::service &&
+        error.code == os::core::errors::service::not_running;
+}
+
 } // namespace
 
 ApplicationManager::LaunchTarget*
@@ -140,7 +157,7 @@ ApplicationManager::uninstall_application(
     for (auto& profile : profiles_) {
         if (!profile.occupied || profile.application != application) continue;
         auto revoked = revoke_profile(profile);
-        if (!revoked && !has_error) {
+        if (!revoked && !is_nothing_to_revoke(revoked.error()) && !has_error) {
             first_error = revoked.error();
             has_error = true;
         }

@@ -5,7 +5,12 @@
 
 #include <os/core/result.hpp>
 
-// The complete system call surface of the ENML kernel.
+// The complete system call surface of the Cookie Kernel.
+//
+// Cookie is the operating system, the Cookie Kernel is what it runs on, and
+// EMNL is the security architecture both carry. docs/NAMING.md keeps those
+// three apart, because the size argument below is a claim about the kernel
+// alone and must not be read as a claim about the whole system.
 //
 // This file is written before the kernel exists, on purpose. The security case
 // for writing a kernel at all rests entirely on it being small enough to review

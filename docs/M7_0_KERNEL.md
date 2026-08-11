@@ -1,9 +1,13 @@
-# M7.0 - ENML writes its own kernel
+# M7.0 - Cookie Kernel
+
+The operating system is **Cookie**; its microkernel is the **Cookie Kernel**;
+the security architecture both carry is **EMNL**. See `docs/NAMING.md` for why
+those are three names and not one.
 
 ## The decision
 
-ENML will have its own microkernel. Linux stops being the substrate and becomes,
-at most, a development host.
+Cookie will have its own microkernel. Linux stops being the substrate and
+becomes, at most, a development host.
 
 This reverses the position frozen in `PROJECT_VISION.md` and analysed in
 `docs/SUBSTRATE.md`, which set out the conditions under which the decision
@@ -39,7 +43,7 @@ stays small. Every argument in this document is downstream of that.
 The references make the target concrete rather than aspirational. QNX shipped an
 entire operating system - filesystem, device manager, networking, drivers - in
 15,930 lines and 204 KB, on a kernel of 605 lines and 7 KB implementing four
-services behind fourteen calls. That is the class of artefact ENML is aiming at.
+services behind fourteen calls. That is the class of artefact the Cookie Kernel is aiming at.
 Against tens of millions of lines of Linux, a 605-line kernel is not a smaller
 version of the same thing; it is a different kind of object, one a person can
 read completely.
