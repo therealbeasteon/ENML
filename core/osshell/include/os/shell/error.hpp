@@ -21,6 +21,11 @@ inline constexpr std::uint32_t invalid_activation_intent = 11U;
 inline constexpr std::uint32_t stale_activation_intent = 12U;
 inline constexpr std::uint32_t preview_capture_denied = 13U;
 inline constexpr std::uint32_t stale_preview_grant = 14U;
+inline constexpr std::uint32_t invalid_consent_request = 15U;
+inline constexpr std::uint32_t untrusted_consent_presentation = 16U;
+inline constexpr std::uint32_t stale_consent_answer = 17U;
+inline constexpr std::uint32_t consent_already_answered = 18U;
+inline constexpr std::uint32_t invalid_consent_answer = 19U;
 } // namespace errors
 
 [[nodiscard]] constexpr os::core::Error shell_error(std::uint32_t code) noexcept {
