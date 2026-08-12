@@ -30,18 +30,10 @@ os::core::Result<void> IpcContinuationTable::arm(
     AddressSpaceEpoch epoch,
     std::uint64_t exchange_address,
     const AddressSpaceEpochAuthority& epochs) noexcept {
-    if (caller == invalid_thread) {
-        return continuation_error(ipc_continuation_errors::invalid_thread);
-    }
-    if (!epoch.valid() || !epochs.active(epoch)) {
-        return continuation_error(ipc_continuation_errors::invalid_epoch);
-    }
-    if (exchange_address == 0ULL) {
-        return continuation_error(ipc_continuation_errors::invalid_exchange);
-    }
-    if (send_slot_for(caller) != nullptr) {
-        return continuation_error(ipc_continuation_errors::already_armed);
-    }
+    if (caller == invalid_thread) return continuation_error(ipc_continuation_errors::invalid_thread);
+    if (!epoch.valid() || !epochs.active(epoch)) return continuation_error(ipc_continuation_errors::invalid_epoch);
+    if (exchange_address == 0ULL) return continuation_error(ipc_continuation_errors::invalid_exchange);
+    if (send_slot_for(caller) != nullptr) return continuation_error(ipc_continuation_errors::already_armed);
 
     for (auto& slot : send_slots_) {
         if (slot.occupied) continue;
@@ -62,9 +54,7 @@ os::core::Result<IpcSendContinuation> IpcContinuationTable::take(
     AddressSpaceEpoch expected,
     const AddressSpaceEpochAuthority& epochs) noexcept {
     auto* slot = send_slot_for(caller);
-    if (slot == nullptr) {
-        return continuation_error(ipc_continuation_errors::not_armed);
-    }
+    if (slot == nullptr) return continuation_error(ipc_continuation_errors::not_armed);
 
     const IpcSendContinuation continuation = slot->continuation;
     *slot = SendSlot{};
@@ -78,9 +68,7 @@ os::core::Result<IpcSendContinuation> IpcContinuationTable::take(
 
 os::core::Result<void> IpcContinuationTable::cancel(ThreadId caller) noexcept {
     auto* slot = send_slot_for(caller);
-    if (slot == nullptr) {
-        return continuation_error(ipc_continuation_errors::not_armed);
-    }
+    if (slot == nullptr) return continuation_error(ipc_continuation_errors::not_armed);
     *slot = SendSlot{};
     --occupied_;
     return {};
@@ -92,21 +80,11 @@ os::core::Result<void> IpcContinuationTable::arm_receive(
     CapabilityId endpoint_capability,
     std::uint64_t exchange_address,
     const AddressSpaceEpochAuthority& epochs) noexcept {
-    if (server == invalid_thread) {
-        return continuation_error(ipc_continuation_errors::invalid_thread);
-    }
-    if (!epoch.valid() || !epochs.active(epoch)) {
-        return continuation_error(ipc_continuation_errors::invalid_epoch);
-    }
-    if (endpoint_capability == invalid_capability) {
-        return continuation_error(ipc_continuation_errors::invalid_capability);
-    }
-    if (exchange_address == 0ULL) {
-        return continuation_error(ipc_continuation_errors::invalid_exchange);
-    }
-    if (receive_slot_for(server) != nullptr) {
-        return continuation_error(ipc_continuation_errors::already_armed);
-    }
+    if (server == invalid_thread) return continuation_error(ipc_continuation_errors::invalid_thread);
+    if (!epoch.valid() || !epochs.active(epoch)) return continuation_error(ipc_continuation_errors::invalid_epoch);
+    if (endpoint_capability == invalid_capability) return continuation_error(ipc_continuation_errors::invalid_capability);
+    if (exchange_address == 0ULL) return continuation_error(ipc_continuation_errors::invalid_exchange);
+    if (receive_slot_for(server) != nullptr) return continuation_error(ipc_continuation_errors::already_armed);
 
     for (auto& slot : receive_slots_) {
         if (slot.occupied) continue;
@@ -128,9 +106,7 @@ os::core::Result<IpcReceiveContinuation> IpcContinuationTable::take_receive(
     AddressSpaceEpoch expected,
     const AddressSpaceEpochAuthority& epochs) noexcept {
     auto* slot = receive_slot_for(server);
-    if (slot == nullptr) {
-        return continuation_error(ipc_continuation_errors::not_armed);
-    }
+    if (slot == nullptr) return continuation_error(ipc_continuation_errors::not_armed);
 
     const IpcReceiveContinuation continuation = slot->continuation;
     *slot = ReceiveSlot{};
@@ -144,9 +120,7 @@ os::core::Result<IpcReceiveContinuation> IpcContinuationTable::take_receive(
 
 os::core::Result<void> IpcContinuationTable::cancel_receive(ThreadId server) noexcept {
     auto* slot = receive_slot_for(server);
-    if (slot == nullptr) {
-        return continuation_error(ipc_continuation_errors::not_armed);
-    }
+    if (slot == nullptr) return continuation_error(ipc_continuation_errors::not_armed);
     *slot = ReceiveSlot{};
     --occupied_;
     return {};
@@ -161,6 +135,22 @@ void IpcContinuationTable::release_thread(ThreadId thread) noexcept {
         *receive = ReceiveSlot{};
         --occupied_;
     }
+}
+
+bool IpcContinuationTable::send_armed(ThreadId caller) const noexcept {
+    if (caller == invalid_thread) return false;
+    for (const auto& slot : send_slots_) {
+        if (slot.occupied && slot.continuation.caller == caller) return true;
+    }
+    return false;
+}
+
+bool IpcContinuationTable::receive_armed(ThreadId server) const noexcept {
+    if (server == invalid_thread) return false;
+    for (const auto& slot : receive_slots_) {
+        if (slot.occupied && slot.continuation.server == server) return true;
+    }
+    return false;
 }
 
 } // namespace os::kernel
