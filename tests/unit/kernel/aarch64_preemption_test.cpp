@@ -5,6 +5,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <cstdlib>
+#include <limits>
 
 namespace {
 void require(bool value) { if (!value) std::abort(); }
@@ -13,6 +14,20 @@ void require(bool value) { if (!value) std::abort(); }
 int main() {
     using namespace os::kernel;
     using namespace os::kernel::aarch64;
+
+    // Rejected deadline preparation is side-effect free. A failed scheduling
+    // transaction must not revoke the timer authority belonging to the current
+    // execution universe.
+    SchedulerDeadlineAuthority deadline_authority{};
+    Decision overflowing{};
+    overflowing.thread = 1U;
+    overflowing.timer_nanoseconds = 2U;
+    const auto generation_before_overflow = deadline_authority.generation();
+    auto overflow = deadline_authority.prepare(
+        overflowing, std::numeric_limits<std::uint64_t>::max() - 1U);
+    require(!overflow);
+    require(deadline_authority.generation() == generation_before_overflow);
+    require(deadline_authority.current().generation == 0U);
 
     alignas(4096) std::array<std::byte, 12U * 4096U> memory{};
     const auto begin = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory.data()));
@@ -106,6 +121,7 @@ int main() {
     untouched.sp_el0 = 0xBEEFU;
     untouched.x[0] = 0xCAFEU;
     const auto before = untouched;
+    const auto deadline_generation_before = stale_preemption.current_deadline().generation;
     auto rejected = stale_preemption.start(
         stale_scheduler, stale_translations, stale_epochs, 2'000'000U, untouched);
     require(!rejected);
@@ -113,6 +129,7 @@ int main() {
     require(untouched.elr_el1 == before.elr_el1);
     require(untouched.sp_el0 == before.sp_el0);
     require(untouched.x[0] == before.x[0]);
+    require(stale_preemption.current_deadline().generation == deadline_generation_before);
 
     return 0;
 }
