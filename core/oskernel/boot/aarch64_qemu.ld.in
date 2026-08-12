@@ -36,6 +36,17 @@ SECTIONS
         . = __bss_end;
     }
 
+    /* Cookie's native image deliberately has no C/C++ startup runtime. Keep
+       these sections visible to the linker and fail if any object introduces a
+       constructor/destructor instead of silently discarding code that somebody
+       expected to execute. */
+    .preinit_array ALIGN(8) : { KEEP(*(.preinit_array .preinit_array.*)) }
+    .init_array ALIGN(8) : { KEEP(*(.init_array .init_array.*)) }
+    .fini_array ALIGN(8) : { KEEP(*(.fini_array .fini_array.*)) }
+    ASSERT(SIZEOF(.preinit_array) == 0, "Cookie kernel cannot require preinit runtime")
+    ASSERT(SIZEOF(.init_array) == 0, "Cookie kernel cannot require global constructors")
+    ASSERT(SIZEOF(.fini_array) == 0, "Cookie kernel cannot require global destructors")
+
     __cookie_image_end = .;
 
     /DISCARD/ : {
