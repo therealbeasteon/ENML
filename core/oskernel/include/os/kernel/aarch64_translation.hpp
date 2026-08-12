@@ -26,7 +26,11 @@ namespace descriptor {
 inline constexpr std::uint64_t valid = 1ULL << 0U;
 inline constexpr std::uint64_t table_or_page = 1ULL << 1U;
 inline constexpr std::uint64_t attr_index_shift = 2U;
-inline constexpr std::uint64_t ap_read_only_el1 = 2ULL << 6U;
+// AP[2:1] encodings used by Cookie's stage-1 leafs.
+inline constexpr std::uint64_t ap_el1_rw_el0_none = 0ULL << 6U;
+inline constexpr std::uint64_t ap_el1_rw_el0_rw = 1ULL << 6U;
+inline constexpr std::uint64_t ap_el1_ro_el0_none = 2ULL << 6U;
+inline constexpr std::uint64_t ap_el1_ro_el0_ro = 3ULL << 6U;
 inline constexpr std::uint64_t share_outer = 2ULL << 8U;
 inline constexpr std::uint64_t share_inner = 3ULL << 8U;
 inline constexpr std::uint64_t access_flag = 1ULL << 10U;
@@ -62,9 +66,8 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
            descriptor::valid | descriptor::table_or_page;
 }
 
-// Initial Cookie mappings are EL1-only. User mappings will get a separate
-// reviewed encoding when the first EL0 address space is introduced; doing that
-// here would silently broaden access before the syscall/process boundary exists.
+// EL1-only mapping encoding. This remains deliberately separate from user_page_descriptor():
+// adding EL0 access must never silently broaden a kernel mapping.
 [[nodiscard]] constexpr std::uint64_t page_descriptor(
     std::uint64_t physical_address,
     MachinePermissions permissions,
@@ -88,20 +91,54 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
 
     switch (permissions) {
     case MachinePermissions::read:
-        value |= descriptor::ap_read_only_el1 |
+        value |= descriptor::ap_el1_ro_el0_none |
                  descriptor::privileged_execute_never;
         break;
     case MachinePermissions::read_write:
-        value |= descriptor::privileged_execute_never;
+        value |= descriptor::ap_el1_rw_el0_none |
+                 descriptor::privileged_execute_never;
         break;
     case MachinePermissions::read_execute:
         if (kind != MachineMemoryKind::normal) return 0ULL;
-        value |= descriptor::ap_read_only_el1;
+        value |= descriptor::ap_el1_ro_el0_none;
         break;
     default:
         return 0ULL;
     }
     return value;
+}
+
+// Explicit EL0 mapping encoding for ordinary memory only. Device memory is never
+// user-mappable through this primitive. Executable pages are read-only at both
+// EL0 and EL1 and PXN prevents the kernel from executing user code while it is
+// privileged; writable pages are UXN and PXN. MachinePermissions has no RWX
+// state, so writable+executable user memory is unrepresentable.
+[[nodiscard]] constexpr std::uint64_t user_page_descriptor(
+    std::uint64_t physical_address,
+    MachinePermissions permissions) noexcept {
+    if (!stage1_physical_address(physical_address)) return 0ULL;
+
+    std::uint64_t value = (physical_address & page_address_mask) |
+                          descriptor::valid | descriptor::table_or_page |
+                          descriptor::access_flag |
+                          (static_cast<std::uint64_t>(mair_normal_index) << descriptor::attr_index_shift) |
+                          descriptor::share_inner |
+                          descriptor::privileged_execute_never;
+
+    switch (permissions) {
+    case MachinePermissions::read:
+        return value | descriptor::ap_el1_ro_el0_ro |
+               descriptor::unprivileged_execute_never;
+    case MachinePermissions::read_write:
+        return value | descriptor::ap_el1_rw_el0_rw |
+               descriptor::unprivileged_execute_never;
+    case MachinePermissions::read_execute:
+        // PXN remains set while UXN is deliberately clear: EL0 may execute,
+        // EL1 may not execute the same user-controlled bytes.
+        return value | descriptor::ap_el1_ro_el0_ro;
+    default:
+        return 0ULL;
+    }
 }
 
 // 39-bit TTBR0_EL1 regime, 4 KiB granule, inner-shareable WBWA table walks.
@@ -124,10 +161,6 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
            (static_cast<std::uint64_t>(ips) << 32U);
 }
 
-// Installs a fully constructed, page-aligned L1 translation-table root and
-// enables the initial EL1 stage-1 translation regime. The caller must identity-
-// map the executing code, current stack, vector table and the table pages before
-// calling this function; the activation code cannot make a bad table safe.
 [[nodiscard]] os::core::Result<void>
 activate_stage1_translation(std::uint64_t level1_root_physical) noexcept;
 
