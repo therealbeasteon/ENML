@@ -5,7 +5,8 @@
 #include <os/kernel/aarch64_translation_root_sealer.hpp>
 
 namespace {
-void require(bool value) { if (!value) std::abort(); }
+template <typename T>
+void require(const T& value) { if (!static_cast<bool>(value)) std::abort(); }
 }
 
 int main() {
