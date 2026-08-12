@@ -29,3 +29,11 @@ target_compile_options(network_resolution_test PRIVATE
 )
 add_test(NAME network_resolution_test COMMAND network_resolution_test)
 set_tests_properties(network_resolution_test PROPERTIES LABELS "m4-shell")
+
+add_executable(network_packet_switch_test packet_switch_test.cpp)
+target_link_libraries(network_packet_switch_test PRIVATE emnl::osnetwork emnl_warnings)
+target_compile_options(network_packet_switch_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME network_packet_switch_test COMMAND network_packet_switch_test)
+set_tests_properties(network_packet_switch_test PROPERTIES LABELS "m4-shell")
