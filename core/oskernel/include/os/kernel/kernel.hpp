@@ -83,6 +83,11 @@ public:
     [[nodiscard]] const IpcEndpointTable& ipc() const noexcept { return ipc_; }
     [[nodiscard]] const IpcContinuationTable& ipc_continuations() const noexcept { return ipc_continuations_; }
     [[nodiscard]] const Rendezvous& threads() const noexcept { return threads_; }
+
+    // Preemption consumes the exact scheduler maintained by composed kernel
+    // operations. Exposing the mutable runqueue avoids a second boot-only
+    // scheduler whose runnable state could diverge from IPC/rendezvous state.
+    [[nodiscard]] Scheduler& runqueue() noexcept { return scheduler_; }
     [[nodiscard]] const Scheduler& runqueue() const noexcept { return scheduler_; }
 
     [[nodiscard]] std::size_t live_thread_count() const noexcept;
