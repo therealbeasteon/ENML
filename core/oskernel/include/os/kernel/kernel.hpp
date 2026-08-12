@@ -73,6 +73,18 @@ public:
         const AddressSpaceEpochAuthority& epochs) noexcept;
     [[nodiscard]] os::core::Result<void> ipc_cancel_send_continuation(ThreadId caller) noexcept;
 
+    [[nodiscard]] os::core::Result<void> ipc_arm_receive_continuation(
+        ThreadId server,
+        AddressSpaceEpoch epoch,
+        CapabilityId endpoint_capability,
+        std::uint64_t exchange_address,
+        const AddressSpaceEpochAuthority& epochs) noexcept;
+    [[nodiscard]] os::core::Result<IpcReceiveContinuation> ipc_take_receive_continuation(
+        ThreadId server,
+        AddressSpaceEpoch expected,
+        const AddressSpaceEpochAuthority& epochs) noexcept;
+    [[nodiscard]] os::core::Result<void> ipc_cancel_receive_continuation(ThreadId server) noexcept;
+
     os::core::Result<Dispatch> dispatch_interrupt(InterruptSource source) noexcept;
     Decision schedule(std::uint64_t now_nanoseconds) noexcept;
 
@@ -83,10 +95,6 @@ public:
     [[nodiscard]] const IpcEndpointTable& ipc() const noexcept { return ipc_; }
     [[nodiscard]] const IpcContinuationTable& ipc_continuations() const noexcept { return ipc_continuations_; }
     [[nodiscard]] const Rendezvous& threads() const noexcept { return threads_; }
-
-    // Preemption consumes the exact scheduler maintained by composed kernel
-    // operations. Exposing the mutable runqueue avoids a second boot-only
-    // scheduler whose runnable state could diverge from IPC/rendezvous state.
     [[nodiscard]] Scheduler& runqueue() noexcept { return scheduler_; }
     [[nodiscard]] const Scheduler& runqueue() const noexcept { return scheduler_; }
 
