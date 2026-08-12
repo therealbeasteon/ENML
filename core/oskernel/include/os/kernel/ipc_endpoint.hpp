@@ -97,6 +97,7 @@ inline constexpr std::uint32_t pending_call_limit = 170U;
 inline constexpr std::uint32_t pending_call_missing = 171U;
 inline constexpr std::uint32_t payload_too_large = 172U;
 inline constexpr std::uint32_t reply_unavailable = 173U;
+inline constexpr std::uint32_t receive_already_waiting = 174U;
 } // namespace ipc_errors
 
 class IpcEndpointTable final {
@@ -153,6 +154,7 @@ private:
         ThreadId server {invalid_thread};
         IpcEndpointGeneration generation {0U};
         bool active {false};
+        bool receive_waiting {false};
     };
     struct ReplySlot final {
         IpcReplySeal seal {};
@@ -181,6 +183,7 @@ private:
     [[nodiscard]] ReplySlot* reply_slot(const IpcReplySeal& seal) noexcept;
     [[nodiscard]] ReplySlot* reply_slot(ThreadId server, IpcTransactionId transaction) noexcept;
     [[nodiscard]] PendingSlot* pending_slot(ThreadId caller, IpcEndpoint endpoint) noexcept;
+    [[nodiscard]] PendingSlot* pending_slot(IpcEndpoint endpoint) noexcept;
     [[nodiscard]] PendingSlot* free_pending_slot() noexcept;
     [[nodiscard]] CompletedSlot* completed_slot(ThreadId caller) noexcept;
     [[nodiscard]] const CompletedSlot* completed_slot(ThreadId caller) const noexcept;
