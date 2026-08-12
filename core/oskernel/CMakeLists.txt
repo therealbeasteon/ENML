@@ -5,6 +5,7 @@ add_library(oskernel STATIC
     src/interrupt.cpp
     src/scheduler.cpp
     src/kernel.cpp
+    src/fdt.cpp
     src/machine_host.cpp
 )
 
