@@ -88,6 +88,11 @@ IpcEndpointTable::CompletedSlot* IpcEndpointTable::completed_slot(ThreadId calle
     return nullptr;
 }
 
+const IpcEndpointTable::CompletedSlot* IpcEndpointTable::completed_slot(ThreadId caller) const noexcept {
+    for (const auto& slot : completed_) if (slot.active && slot.caller == caller) return &slot;
+    return nullptr;
+}
+
 IpcEndpointTable::CompletedSlot* IpcEndpointTable::free_completed_slot() noexcept {
     for (auto& slot : completed_) if (!slot.active) return &slot;
     return nullptr;
@@ -352,6 +357,10 @@ os::core::Result<IpcEnvelope> IpcEndpointTable::take_reply(ThreadId caller) noex
     const IpcEnvelope response = slot->response;
     *slot = CompletedSlot{};
     return response;
+}
+
+bool IpcEndpointTable::reply_available(ThreadId caller) const noexcept {
+    return caller != invalid_thread && completed_slot(caller) != nullptr;
 }
 
 bool IpcEndpointTable::active(IpcEndpoint endpoint) const noexcept {
