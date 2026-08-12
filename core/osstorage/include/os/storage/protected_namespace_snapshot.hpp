@@ -4,6 +4,7 @@
 
 #include <os/core/result.hpp>
 #include <os/keys/hierarchy.hpp>
+#include <os/storage/protected_namespace.hpp>
 
 namespace os::storage {
 
@@ -40,9 +41,6 @@ inline constexpr std::uint32_t stale_sequence = 4U;
     return os::core::make_error(os::core::ErrorDomain::storage, 0x760U + code);
 }
 
-// Authentication proves integrity; this independent freshness check proves the
-// authenticated record is still current. A cryptographically valid old snapshot
-// must never be accepted merely because its AEAD tag verifies.
 [[nodiscard]] inline os::core::Result<void>
 validate_namespace_snapshot_freshness(
     const ProtectedNamespaceSnapshotHeaderV1& header,
