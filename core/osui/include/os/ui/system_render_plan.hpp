@@ -27,7 +27,7 @@ struct SystemRenderPlan final {
 [[nodiscard]] constexpr SystemRenderPlan make_system_render_plan(
     SystemSceneKind scene,
     const DeviceProfile& profile,
-    const FrameDecision& frame,
+    const FrameScheduleDecision& frame,
     bool capture_protected = false) noexcept {
     const auto grammar = scene_grammar(scene, profile);
     const auto budget = render_options_for(frame);
