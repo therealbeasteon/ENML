@@ -32,6 +32,7 @@ add_emnl_ui_test(ui_motion_timeline_test motion_timeline_test.cpp)
 add_emnl_ui_test(ui_identity_adaptation_test identity_adaptation_test.cpp)
 add_emnl_ui_test(ui_wallpaper_widget_test wallpaper_widget_test.cpp)
 add_emnl_ui_test(ui_system_scene_test system_scene_test.cpp)
+add_emnl_ui_test(ui_system_interactions_test system_interactions_test.cpp)
 
 if(EMNL_BUILD_LINUX_TEXT_BACKEND)
     find_file(EMNL_TEST_FONT_FILE
