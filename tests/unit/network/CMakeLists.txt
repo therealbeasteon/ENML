@@ -53,3 +53,11 @@ target_compile_options(network_tunnel_authority_test PRIVATE
 )
 add_test(NAME network_tunnel_authority_test COMMAND network_tunnel_authority_test)
 set_tests_properties(network_tunnel_authority_test PROPERTIES LABELS "m4-shell")
+
+add_executable(network_link_tunnel_switch_test link_tunnel_switch_test.cpp)
+target_link_libraries(network_link_tunnel_switch_test PRIVATE emnl::osnetwork emnl_warnings)
+target_compile_options(network_link_tunnel_switch_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME network_link_tunnel_switch_test COMMAND network_link_tunnel_switch_test)
+set_tests_properties(network_link_tunnel_switch_test PROPERTIES LABELS "m4-shell")
