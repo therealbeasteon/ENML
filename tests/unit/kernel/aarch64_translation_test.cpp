@@ -11,8 +11,20 @@ int main() {
     using namespace os::kernel::aarch64;
 
     require(stage1_t0sz == 25U);
+    require(stage1_t1sz == 25U);
+    require(user_virtual_limit == (1ULL << 39U));
+    require(kernel_virtual_base == 0xFFFF'FF80'0000'0000ULL);
+    require(stage1_regions_disjoint());
+
     require(stage1_virtual_address((1ULL << 39U) - 1ULL));
+    require(user_stage1_virtual_address((1ULL << 39U) - 1ULL));
     require(!stage1_virtual_address(1ULL << 39U));
+    require(!user_stage1_virtual_address(kernel_virtual_base));
+    require(kernel_stage1_virtual_address(kernel_virtual_base));
+    require(kernel_stage1_virtual_address(UINT64_MAX));
+    require(!kernel_stage1_virtual_address(kernel_virtual_base - 1ULL));
+    require(!kernel_stage1_virtual_address(0ULL));
+
     require(page_aligned(0x4000ULL));
     require(!page_aligned(0x4001ULL));
 
