@@ -94,10 +94,11 @@ OpenSslTestKeyProvider::generate_under_root(
     const bool application_ok =
         binding.scope == KeyProtectionScope::application &&
         purpose == KeyPurpose::application_data_aead;
-    const bool storage_ok =
+    const bool profile_storage_ok =
         binding.scope == KeyProtectionScope::user_profile &&
-        purpose == KeyPurpose::profile_storage_aead;
-    if (!application_ok && !storage_ok) return key_error(errors::access_denied);
+        (purpose == KeyPurpose::profile_storage_aead ||
+         purpose == KeyPurpose::profile_storage_metadata_aead);
+    if (!application_ok && !profile_storage_ok) return key_error(errors::access_denied);
     return generate(purpose);
 }
 
