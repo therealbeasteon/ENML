@@ -11,20 +11,18 @@ namespace os::storage {
 os::core::Result<std::size_t>
 ProtectedChunkCrypto::seal(
     os::keys::ProviderKeyReference key,
-    const ProtectedChunkHeaderV1& header,
+    const ProtectedChunkHeaderV2& header,
     os::core::ByteSpan plaintext,
     os::core::MutableByteSpan output) noexcept {
     if (provider_ == nullptr || !key.valid() || !valid_protected_chunk_header(header) ||
         header.plaintext_size != plaintext.size()) {
         return storage_error(errors::invalid_options);
     }
-    if (plaintext.size() > protected_chunk_plaintext_bytes) {
-        return storage_error(errors::too_large);
-    }
+    if (plaintext.size() > protected_chunk_plaintext_bytes) return storage_error(errors::too_large);
     const std::size_t required = protected_chunk_overhead_bytes + plaintext.size();
     if (output.size() < required) return storage_error(errors::too_large);
 
-    auto header_result = encode_protected_chunk_header_v1(
+    auto header_result = encode_protected_chunk_header_v2(
         header, output.first(protected_chunk_header_bytes));
     if (!header_result) return header_result.error();
 
@@ -43,11 +41,9 @@ ProtectedChunkCrypto::seal(
     if (!sealed) return sealed.error();
     if (sealed.value() != plaintext.size()) return storage_error(errors::io_failure);
 
-    std::copy(
-        nonce.bytes.begin(), nonce.bytes.end(),
+    std::copy(nonce.bytes.begin(), nonce.bytes.end(),
         output.begin() + static_cast<std::ptrdiff_t>(protected_chunk_header_bytes));
-    std::copy(
-        tag.bytes.begin(), tag.bytes.end(),
+    std::copy(tag.bytes.begin(), tag.bytes.end(),
         output.begin() + static_cast<std::ptrdiff_t>(protected_chunk_header_bytes + os::keys::aead_nonce_bytes));
     return required;
 }
@@ -66,15 +62,13 @@ ProtectedChunkCrypto::open(
         return storage_error(errors::invalid_options);
     }
 
-    auto decoded = decode_protected_chunk_header_v1(record.first(protected_chunk_header_bytes));
+    auto decoded = decode_protected_chunk_header_v2(record.first(protected_chunk_header_bytes));
     if (!decoded) return decoded.error();
     const auto header = decoded.value();
 
-    // The expected address is trusted service state, not disk metadata. This
-    // comparison prevents transplanting a whole valid header+ciphertext record
-    // to another profile/object/chunk where its own AEAD tag would still verify.
     if (header.user != expected.user ||
         header.object_id != expected.object_id ||
+        header.object_generation != expected.object_generation ||
         header.chunk_index != expected.chunk_index) {
         return storage_error(errors::access_denied);
     }
