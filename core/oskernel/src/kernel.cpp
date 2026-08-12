@@ -24,7 +24,6 @@ void Kernel::untrack(ThreadId thread) noexcept {
 std::size_t Kernel::live_thread_count() const noexcept { return live_count_; }
 
 void Kernel::synchronise_thread(ThreadId thread) noexcept {
-    if (!tracks(thread)) return;
     auto state = threads_.state_of(thread);
     auto priority = threads_.effective_priority_of(thread);
     if (!state || !priority) return;
@@ -117,8 +116,12 @@ os::core::Result<IpcEndpoint> Kernel::create_ipc_endpoint(ThreadId server) noexc
 os::core::Result<void> Kernel::retire_ipc_endpoint(
     ThreadId server,
     IpcEndpoint endpoint) noexcept {
+    const bool receiver_waiting = ipc_.receive_waiting(endpoint);
     auto retired = ipc_.retire(server, endpoint, threads_);
     if (!retired) return retired;
+    if (receiver_waiting && ipc_continuations_.receive_armed(server)) {
+        (void)ipc_continuations_.cancel_receive(server);
+    }
     synchronise();
     return {};
 }
