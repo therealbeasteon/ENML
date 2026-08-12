@@ -22,9 +22,10 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
         return preemption_error(preemption_errors::no_runnable_thread);
     }
 
-    // Validate the target memory universe before mutating the live frame or the
-    // saved outgoing frame. A stale process identity therefore cannot cause a
-    // half-switch where registers belong to one thread and TTBR0 to another.
+    // Stage every failure-prone authority before mutating live execution state.
+    // A scheduler choice is not enough: the selected thread must still own a
+    // live process translation, both outgoing/incoming EL0 frames must be valid,
+    // and the next tickless deadline must be representable.
     auto translation = translations.resolve(decision.thread, epochs);
     if (!translation) {
         return preemption_error(preemption_errors::translation_unavailable);
@@ -32,15 +33,28 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
 
     const ThreadId previous = running_;
     if (capture_current) {
-        if (previous == invalid_thread || !frames_.contains(previous)) {
+        if (previous == invalid_thread) {
             return preemption_error(preemption_errors::running_thread_missing);
         }
-        auto captured = frames_.capture(previous, live);
-        if (!captured) return captured.error();
+        auto capture_ok = frames_.validate_capture(previous, live);
+        if (!capture_ok) return capture_ok.error();
     }
 
-    if (!frames_.contains(decision.thread)) {
-        return preemption_error(preemption_errors::running_thread_missing);
+    auto restore_ok = frames_.validate_restore(decision.thread);
+    if (!restore_ok) return restore_ok.error();
+
+    auto prepared_deadline = deadlines_.prepare(decision, now_nanoseconds);
+    if (!prepared_deadline) return prepared_deadline.error();
+
+    // Commit authority first, after all preflight checks. From here the frame
+    // operations are guaranteed by the preflight in the current single-CPU
+    // regime; SMP will place this transaction under execution-state ownership.
+    auto committed_deadline = deadlines_.commit(prepared_deadline.value());
+    if (!committed_deadline) return committed_deadline.error();
+
+    if (capture_current) {
+        auto captured = frames_.capture(previous, live);
+        if (!captured) return captured.error();
     }
 
     const bool switched = previous != decision.thread;
@@ -49,14 +63,12 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
         if (!restored) return restored.error();
     }
 
-    auto deadline = deadlines_.apply(decision, now_nanoseconds);
-    if (!deadline) return deadline.error();
     running_ = decision.thread;
 
     return PreemptionResult{
         .previous = previous,
         .next = decision.thread,
-        .deadline = deadline.value(),
+        .deadline = committed_deadline.value(),
         .translation = translation.value(),
         .switched = switched,
         .preempted = decision.preempted,
