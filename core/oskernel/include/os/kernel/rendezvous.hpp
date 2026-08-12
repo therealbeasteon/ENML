@@ -53,9 +53,22 @@ public:
         Priority priority = default_priority) noexcept;
     os::core::Result<std::size_t> exit_thread(ThreadId thread) noexcept;
 
+    // Generic thread-addressed wrappers retained for the base rendezvous API.
     [[nodiscard]] os::core::Result<void> send(ThreadId from, ThreadId to) noexcept;
     [[nodiscard]] os::core::Result<ThreadId> receive(ThreadId self) noexcept;
     [[nodiscard]] os::core::Result<void> reply(ThreadId self, ThreadId caller) noexcept;
+
+    // Precise primitives used by endpoint-addressed IPC. They never choose an
+    // arbitrary peer: the IPC layer decides which endpoint/caller relationship
+    // is eligible, while Rendezvous only performs the requested state change.
+    [[nodiscard]] os::core::Result<void> block_send(ThreadId from, ThreadId to) noexcept;
+    [[nodiscard]] os::core::Result<void> wait_receive(ThreadId self) noexcept;
+    [[nodiscard]] os::core::Result<void> deliver_waiting_receiver(
+        ThreadId from,
+        ThreadId to) noexcept;
+    [[nodiscard]] os::core::Result<void> accept_sender(
+        ThreadId self,
+        ThreadId caller) noexcept;
 
     // Narrow cancellation primitive used by endpoint retirement. It can only
     // release a caller that is currently blocked on the exact expected server;
