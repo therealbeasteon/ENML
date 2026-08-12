@@ -4,6 +4,7 @@
 #include <cstddef>
 #include <cstdint>
 
+#include <os/kernel/aarch64_mapping_state.hpp>
 #include <os/kernel/machine.hpp>
 
 namespace os::kernel {
@@ -28,11 +29,25 @@ static_assert(offsetof(MachineContext, x30) == 88U);
 static_assert(offsetof(MachineContext, sp) == 96U);
 static_assert(alignof(MachineContext) == 16U);
 
-// Address-space/MMU and physical-ledger representations remain deliberately
-// opaque until M7.5c. Defining fake page-table state here would only move the
-// simulation into a differently named type.
-struct MachineAddressSpace final {};
-struct MachinePhysicalLedger final {};
+// The native machine objects now hold real bounded mapping authority instead of
+// empty placeholders. `MachineAddressSpace` still remains opaque above
+// machine.hpp; only the AArch64 backend can inspect these fields.
+struct MachinePhysicalLedger final {
+    aarch64::NativePhysicalLedger mappings {};
+};
+
+struct MachineAddressSpace final {
+    aarch64::NativeAddressSpaceState mappings {};
+    MachinePhysicalLedger* physical_ledger {nullptr};
+    aarch64::EarlyStage1Builder* early_builder {nullptr};
+};
+
+// Early boot attaches the already-initialized translation-table builder after
+// binding the address space to the one machine-wide physical ledger. General VM
+// ownership can replace this hook later without changing the portable contract.
+[[nodiscard]] os::core::Result<void> aarch64_attach_early_stage1(
+    MachineAddressSpace& space,
+    aarch64::EarlyStage1Builder& builder) noexcept;
 
 extern "C" void cookie_aarch64_switch_context(
     MachineContext* from,
