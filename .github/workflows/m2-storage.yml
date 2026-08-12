@@ -22,7 +22,7 @@ jobs:
       - name: Build storage gates
         run: >-
           cmake --build --preset host-debug
-          --target storage_private_storage_test storage_protected_format_test storage_protected_publication_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
+          --target storage_private_storage_test storage_protected_format_test storage_protected_publication_test storage_protected_atomic_replace_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
           storage_service_quota_test storage_app_manager_restart_test storage_root_revocation_test
           storage_app_uninstall_revocation_test system.storage
           --parallel 2
@@ -42,7 +42,7 @@ jobs:
       - name: Build storage gates with sanitizers
         run: >-
           cmake --build --preset host-asan
-          --target storage_private_storage_test storage_protected_format_test storage_protected_publication_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
+          --target storage_private_storage_test storage_protected_format_test storage_protected_publication_test storage_protected_atomic_replace_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
           storage_service_quota_test storage_app_manager_restart_test storage_root_revocation_test
           storage_app_uninstall_revocation_test system.storage
           --parallel 2
@@ -66,7 +66,7 @@ jobs:
       - name: Build storage gates
         run: >-
           cmake --build build/m2-storage-clang
-          --target storage_private_storage_test storage_protected_format_test storage_protected_publication_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
+          --target storage_private_storage_test storage_protected_format_test storage_protected_publication_test storage_protected_atomic_replace_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
           storage_service_quota_test storage_app_manager_restart_test storage_root_revocation_test
           storage_app_uninstall_revocation_test system.storage
           --parallel 2
@@ -88,7 +88,7 @@ jobs:
       - name: Build storage gates natively
         run: >-
           cmake --build --preset host-debug
-          --target storage_private_storage_test storage_protected_format_test storage_protected_publication_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
+          --target storage_private_storage_test storage_protected_format_test storage_protected_publication_test storage_protected_atomic_replace_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
           storage_service_quota_test storage_app_manager_restart_test storage_root_revocation_test
           storage_app_uninstall_revocation_test system.storage
           --parallel 2
