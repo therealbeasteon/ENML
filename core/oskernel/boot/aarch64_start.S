@@ -14,7 +14,7 @@ _start:
     b .Lcookie_entry
     nop
     .quad 0x0000000000080000                  // text_offset
-    .quad __cookie_image_end - __cookie_image_start // image_size
+    .quad __cookie_image_size                 // image_size, resolved by linker script
     .quad 0x0000000000000000                  // flags: LE, page size unspecified
     .quad 0x0000000000000000                  // reserved
     .quad 0x0000000000000000                  // reserved
