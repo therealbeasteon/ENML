@@ -44,10 +44,6 @@ struct IpcReceiveContinuation final {
     }
 };
 
-// Blocked IPC syscalls preserve only the minimum state needed to finish the
-// original call after a scheduler transition. Both directions are tied to the
-// exact address-space epoch that issued the SVC, so restart at the same virtual
-// address cannot inherit an old completion.
 class IpcContinuationTable final {
 public:
     [[nodiscard]] os::core::Result<void> arm(
@@ -79,6 +75,8 @@ public:
 
     void release_thread(ThreadId thread) noexcept;
 
+    [[nodiscard]] bool send_armed(ThreadId caller) const noexcept;
+    [[nodiscard]] bool receive_armed(ThreadId server) const noexcept;
     [[nodiscard]] std::size_t count() const noexcept { return occupied_; }
 
 private:
