@@ -47,6 +47,8 @@ struct NodeState final {
     std::uint8_t parent_address_cells {2U};
     std::uint8_t parent_size_cells {1U};
     bool memory {false};
+    bool reserved_memory_root {false};
+    bool inside_reserved_memory {false};
     bool has_reg {false};
     HardwareRange first_reg {};
     std::array<char, DiscoveredDevice::max_compatible_bytes> compatible {};
@@ -69,7 +71,25 @@ void fail(DiscoveryContext& context, std::uint32_t code) noexcept {
     }
 }
 
-bool begin_node(void* opaque, std::string_view, std::size_t depth) noexcept {
+bool add_reserved(DiscoveryContext& context, HardwareRange range) noexcept {
+    if (!range.valid()) {
+        fail(context, hardware_inventory_errors::malformed_reg);
+        return false;
+    }
+    if (context.inventory.reserved_count >= context.inventory.reserved.size()) {
+        fail(context, hardware_inventory_errors::inventory_exhausted);
+        return false;
+    }
+    context.inventory.reserved[context.inventory.reserved_count++] = range;
+    return true;
+}
+
+bool reservation(void* opaque, std::uint64_t address, std::uint64_t size) noexcept {
+    auto& context = *static_cast<DiscoveryContext*>(opaque);
+    return add_reserved(context, HardwareRange{address, size});
+}
+
+bool begin_node(void* opaque, std::string_view name, std::size_t depth) noexcept {
     auto& context = *static_cast<DiscoveryContext*>(opaque);
     if (depth >= context.nodes.size()) {
         fail(context, hardware_inventory_errors::depth_exhausted);
@@ -83,6 +103,11 @@ bool begin_node(void* opaque, std::string_view, std::size_t depth) noexcept {
         state.parent_size_cells = parent.child_size_cells;
         state.child_address_cells = parent.child_address_cells;
         state.child_size_cells = parent.child_size_cells;
+        state.inside_reserved_memory =
+            parent.reserved_memory_root || parent.inside_reserved_memory;
+    }
+    if (depth == 1U && name == "reserved-memory") {
+        state.reserved_memory_root = true;
     }
     context.nodes[depth] = state;
     return true;
@@ -135,8 +160,6 @@ bool property(
         while (length < value.size() && value[length] != std::byte{0}) ++length;
         if (length == 0U || length == value.size() ||
             length >= DiscoveredDevice::max_compatible_bytes) {
-            // A node can have multiple compatible strings; only the first is
-            // needed for early matching, but it must fit completely.
             fail(context, hardware_inventory_errors::invalid_property);
             return false;
         }
@@ -188,7 +211,11 @@ bool end_node(void* opaque, std::size_t depth) noexcept {
     }
     const auto& node = context.nodes[depth];
 
-    if (node.memory && node.has_reg) {
+    if (node.inside_reserved_memory && node.has_reg) {
+        if (!add_reserved(context, node.first_reg)) return false;
+    }
+
+    if (node.memory && node.has_reg && !node.inside_reserved_memory) {
         if (context.inventory.memory_count >= context.inventory.memory.size()) {
             fail(context, hardware_inventory_errors::inventory_exhausted);
             return false;
@@ -196,7 +223,8 @@ bool end_node(void* opaque, std::size_t depth) noexcept {
         context.inventory.memory[context.inventory.memory_count++] = node.first_reg;
     }
 
-    if (node.compatible_size != 0U && node.has_reg && !node.memory) {
+    if (node.compatible_size != 0U && node.has_reg && !node.memory &&
+        !node.inside_reserved_memory && !node.reserved_memory_root) {
         if (context.inventory.device_count >= context.inventory.devices.size()) {
             fail(context, hardware_inventory_errors::inventory_exhausted);
             return false;
@@ -215,6 +243,11 @@ bool end_node(void* opaque, std::size_t depth) noexcept {
 os::core::Result<HardwareInventory>
 discover_hardware(const FdtView& fdt) noexcept {
     DiscoveryContext context{};
+
+    auto reservations = fdt.walk_reservations({&context, reservation});
+    if (context.failed) return context.error;
+    if (!reservations) return reservations.error();
+
     const FdtCallbacks callbacks{&context, begin_node, property, end_node};
     auto walked = fdt.walk(callbacks);
     if (context.failed) return context.error;
