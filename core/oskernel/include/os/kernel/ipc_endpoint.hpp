@@ -87,6 +87,14 @@ public:
         IpcEndpoint endpoint,
         Rendezvous& rendezvous) noexcept;
 
+    // Thread teardown is one kernel transaction. Every endpoint owned by the
+    // dying thread is retired before the rendezvous thread itself disappears,
+    // so blocked clients receive endpoint_retired rather than being stranded or
+    // ambiguously observing only peer death.
+    [[nodiscard]] std::size_t retire_all_owned_by(
+        ThreadId server,
+        Rendezvous& rendezvous) noexcept;
+
     [[nodiscard]] os::core::Result<void> send(
         ThreadId caller,
         CapabilityId endpoint_capability,
