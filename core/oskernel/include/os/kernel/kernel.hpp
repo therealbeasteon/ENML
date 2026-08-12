@@ -7,6 +7,7 @@
 #include <os/core/result.hpp>
 #include <os/kernel/capability.hpp>
 #include <os/kernel/interrupt.hpp>
+#include <os/kernel/ipc_continuation.hpp>
 #include <os/kernel/ipc_endpoint.hpp>
 #include <os/kernel/rendezvous.hpp>
 #include <os/kernel/scheduler.hpp>
@@ -61,6 +62,17 @@ public:
         IpcEnvelope response = {}) noexcept;
     [[nodiscard]] os::core::Result<IpcEnvelope> ipc_take_reply(ThreadId caller) noexcept;
 
+    [[nodiscard]] os::core::Result<void> ipc_arm_send_continuation(
+        ThreadId caller,
+        AddressSpaceEpoch epoch,
+        std::uint64_t exchange_address,
+        const AddressSpaceEpochAuthority& epochs) noexcept;
+    [[nodiscard]] os::core::Result<IpcSendContinuation> ipc_take_send_continuation(
+        ThreadId caller,
+        AddressSpaceEpoch expected,
+        const AddressSpaceEpochAuthority& epochs) noexcept;
+    [[nodiscard]] os::core::Result<void> ipc_cancel_send_continuation(ThreadId caller) noexcept;
+
     os::core::Result<Dispatch> dispatch_interrupt(InterruptSource source) noexcept;
     Decision schedule(std::uint64_t now_nanoseconds) noexcept;
 
@@ -69,6 +81,7 @@ public:
     [[nodiscard]] InterruptTable& interrupts() noexcept { return interrupts_; }
     [[nodiscard]] const InterruptTable& interrupts() const noexcept { return interrupts_; }
     [[nodiscard]] const IpcEndpointTable& ipc() const noexcept { return ipc_; }
+    [[nodiscard]] const IpcContinuationTable& ipc_continuations() const noexcept { return ipc_continuations_; }
     [[nodiscard]] const Rendezvous& threads() const noexcept { return threads_; }
     [[nodiscard]] const Scheduler& runqueue() const noexcept { return scheduler_; }
 
@@ -83,6 +96,7 @@ private:
     CapabilityTable capabilities_ {};
     InterruptTable interrupts_ {};
     IpcEndpointTable ipc_ {};
+    IpcContinuationTable ipc_continuations_ {};
     Scheduler scheduler_ {};
 
     std::array<ThreadId, max_threads> live_ {};
