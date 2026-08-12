@@ -90,6 +90,41 @@ os::core::Result<void> aarch64_map_user(
         permissions);
 }
 
+os::core::Result<void> aarch64_map_user_stack(
+    MachineAddressSpace& space,
+    std::uintptr_t virtual_base,
+    std::uintptr_t physical_base,
+    std::size_t length) noexcept {
+    if (space.early_builder == nullptr) {
+        return machine_error(machine_errors::address_space_unbound);
+    }
+    return space.mappings.map_user_stack(
+        static_cast<std::uint64_t>(virtual_base),
+        static_cast<std::uint64_t>(physical_base),
+        static_cast<std::uint64_t>(length));
+}
+
+os::core::Result<void> aarch64_validate_user_context(
+    MachineAddressSpace& space,
+    std::uintptr_t entry,
+    std::uintptr_t stack) noexcept {
+    if (space.early_builder == nullptr) {
+        return machine_error(machine_errors::address_space_unbound);
+    }
+    if (entry == 0U || stack == 0U ||
+        !aarch64::stage1_virtual_address(static_cast<std::uint64_t>(entry)) ||
+        !aarch64::page_aligned(static_cast<std::uint64_t>(stack))) {
+        return machine_error(machine_errors::invalid_range);
+    }
+    if (!space.mappings.valid_user_entry(static_cast<std::uint64_t>(entry))) {
+        return machine_error(machine_errors::not_mapped);
+    }
+    if (!space.mappings.valid_user_stack_top(static_cast<std::uint64_t>(stack))) {
+        return machine_error(machine_errors::not_a_kernel_stack);
+    }
+    return {};
+}
+
 os::core::Result<void> machine_release_address_space(MachineAddressSpace& space) noexcept {
     (void)space;
     return machine_error(machine_errors::unsupported);
