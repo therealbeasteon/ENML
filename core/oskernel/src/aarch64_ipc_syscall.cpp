@@ -1,6 +1,5 @@
 #include <os/kernel/aarch64_ipc_syscall.hpp>
 
-#include <array>
 #include <cstddef>
 #include <span>
 
@@ -50,21 +49,23 @@ namespace {
     const ProcessTranslationTable& translations,
     const AddressSpaceEpochAuthority& epochs) noexcept {
     if (length == 0U) return IpcEnvelope{};
+    if (length > max_ipc_inline_bytes) return machine_error(ipc_errors::payload_too_large);
 
-    std::array<std::byte, max_ipc_inline_bytes> bytes{};
     auto ticket = ticket_from_binding(
         binding,
         UserRange{address, length},
         UserAccessIntent::read_from_user);
     if (!ticket) return ticket.error();
 
+    IpcEnvelope envelope{};
     auto copied = copy_from_user_current(
         ticket.value(),
-        std::span<std::byte>{bytes.data(), length},
+        std::span<std::byte>{envelope.bytes.data(), length},
         translations,
         epochs);
     if (!copied) return copied.error();
-    return IpcEnvelope::from(std::span<const std::byte>{bytes.data(), length});
+    envelope.size = static_cast<std::uint8_t>(length);
+    return envelope;
 }
 
 [[nodiscard]] os::core::Result<void> write_envelope(
