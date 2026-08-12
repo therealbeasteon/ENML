@@ -36,7 +36,6 @@ int main() {
         attacker, object, ipc_right_receive, false);
     require(server_cap && client_cap && wrong_rights);
 
-    // Capability possession, not endpoint/thread id knowledge, authorizes send.
     require(ipc.send(client, client_cap.value(), capabilities, rendezvous));
     require(ipc.pending_call_count() == 1U);
     auto received = ipc.receive(
@@ -45,8 +44,6 @@ int main() {
     require(received.value().caller == client);
     require(ipc.active_reply_seal_count() == 1U);
 
-    // Receive mints one-shot reply authority. Another server cannot use it and
-    // the rightful server cannot replay it after successful consumption.
     require(!ipc.reply(attacker, received.value().reply, rendezvous));
     require(ipc.reply(server, received.value().reply, rendezvous));
     require(!ipc.reply(server, received.value().reply, rendezvous));
@@ -55,11 +52,14 @@ int main() {
     auto wake = rendezvous.wake_reason_of(client);
     require(wake && wake.value() == WakeReason::replied);
 
-    // A receive-only capability cannot be used as send authority.
+    // Completed replies are consumed exactly once. A caller cannot begin a new
+    // synchronous call while an earlier response is still parked in-kernel.
+    require(!ipc.send(client, client_cap.value(), capabilities, rendezvous));
+    require(ipc.take_reply(client));
+    require(!ipc.take_reply(client));
+
     require(!ipc.send(attacker, wrong_rights.value(), capabilities, rendezvous));
 
-    // Receiver-first path: the blocked receive later recovers the exact caller
-    // and can mint a reply seal without any kernel message queue.
     auto waiting = ipc.receive(server, server_cap.value(), capabilities, rendezvous);
     require(waiting && !waiting.value().valid());
     require(ipc.send(client, client_cap.value(), capabilities, rendezvous));
@@ -70,8 +70,6 @@ int main() {
     const auto stale_seal = delivered.value().reply;
     require(ipc.pending_call_count() == 1U);
 
-    // Retiring only this endpoint invalidates its reply seals, wakes its blocked
-    // client, and leaves the server thread alive for other endpoints.
     require(ipc.retire(server, endpoint.value(), rendezvous));
     require(!ipc.active(endpoint.value()));
     require(ipc.pending_call_count() == 0U);
@@ -79,11 +77,10 @@ int main() {
     require(!ipc.reply(server, stale_seal, rendezvous));
     wake = rendezvous.wake_reason_of(client);
     require(wake && wake.value() == WakeReason::endpoint_retired);
+    require(!ipc.take_reply(client));
     auto server_state = rendezvous.state_of(server);
     require(server_state && server_state.value() == ThreadState::ready);
 
-    // Reusing the slot changes generation. Existing client/server capabilities
-    // name the retired object and cannot silently attach to the replacement.
     auto replacement = ipc.create(server);
     require(replacement);
     require(replacement.value().slot == endpoint.value().slot);
@@ -102,6 +99,7 @@ int main() {
         server, replacement_server_cap.value(), capabilities, rendezvous);
     require(replacement_request && replacement_request.value().valid());
     require(ipc.reply(server, replacement_request.value().reply, rendezvous));
+    require(ipc.take_reply(client));
 
     return 0;
 }
