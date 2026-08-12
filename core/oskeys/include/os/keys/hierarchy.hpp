@@ -98,9 +98,6 @@ public:
         KeyProtectionBinding parent_binding,
         KeyProtectionBinding child_binding) noexcept = 0;
 
-    // Purpose and scope are jointly authoritative. Production providers must
-    // reject application_data_aead at profile scope and profile_storage_aead at
-    // application scope even if a higher layer accidentally asks for it.
     [[nodiscard]] virtual os::core::Result<ProviderKeyReference>
     generate_under_root(
         RootKeyReference root,
@@ -133,12 +130,11 @@ public:
         KeyProtectionBinding application_binding,
         KeyPurpose purpose) noexcept;
 
-    // system.storage obtains an opaque bulk-data key directly beneath the
-    // selected profile root. Applications never receive this authority. The
-    // profile root therefore remains the single cryptographic cut point for
-    // duress erasure while app-specific keys remain independently scoped.
     [[nodiscard]] os::core::Result<ProviderKeyReference>
     generate_profile_storage_key(os::core::UserId user) noexcept;
+
+    [[nodiscard]] os::core::Result<ProviderKeyReference>
+    generate_profile_storage_metadata_key(os::core::UserId user) noexcept;
 
     [[nodiscard]] os::core::Result<ProfileRootErasureReport>
     destroy_profile(os::core::UserId user) noexcept;
