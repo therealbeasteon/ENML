@@ -1,6 +1,7 @@
 #include <cstdlib>
 
 #include <os/ui/device_profile.hpp>
+#include <os/ui/frame_scheduler.hpp>
 #include <os/ui/home.hpp>
 #include <os/ui/icon.hpp>
 #include <os/ui/identity.hpp>
@@ -170,6 +171,54 @@ int main() {
     RenderPressure reduced_motion {};
     reduced_motion.reduce_motion = true;
     require(!preserve_spatial_motion(reduced_motion));
+
+    const FrameTelemetry smooth_120hz {
+        .refresh_hz = 120U,
+        .input_age_ns = 2'000'000ULL,
+        .cpu_render_ns = 2'000'000ULL,
+        .gpu_render_ns = 2'000'000ULL,
+        .present_wait_ns = 1'000'000ULL,
+        .consecutive_misses = 0U,
+        .direct_manipulation_active = false,
+    };
+    require(frame_telemetry_valid(smooth_120hz));
+    const auto smooth_decision = schedule_frame(smooth_120hz, nominal);
+    require(smooth_decision.maximum_quality == QualityTier::ambient);
+    require(smooth_decision.preserve_spatial_motion);
+    require(!smooth_decision.hitch_recovery);
+
+    FrameTelemetry dragging = smooth_120hz;
+    dragging.direct_manipulation_active = true;
+    const auto drag_decision = schedule_frame(dragging, nominal);
+    require(drag_decision.maximum_quality == QualityTier::continuity);
+    require(drag_decision.prioritize_direct_manipulation);
+
+    FrameTelemetry hitch = smooth_120hz;
+    hitch.consecutive_misses = 3U;
+    const auto hitch_decision = schedule_frame(hitch, nominal);
+    require(hitch_decision.maximum_quality == QualityTier::continuity);
+    require(hitch_decision.hitch_recovery);
+
+    FrameTelemetry stale_input = smooth_120hz;
+    stale_input.input_age_ns = frame_budget_ns(stale_input.refresh_hz) + 1U;
+    const auto stale_decision = schedule_frame(stale_input, nominal);
+    require(!stale_decision.preserve_spatial_motion);
+    require(stale_decision.maximum_quality == QualityTier::continuity);
+
+    const FrameTelemetry invalid_refresh {
+        .refresh_hz = 0U,
+        .input_age_ns = 0U,
+        .cpu_render_ns = 0U,
+        .gpu_render_ns = 0U,
+        .present_wait_ns = 0U,
+        .consecutive_misses = 0U,
+        .direct_manipulation_active = false,
+    };
+    require(!frame_telemetry_valid(invalid_refresh));
+    const auto invalid_decision = schedule_frame(invalid_refresh, nominal);
+    require(invalid_decision.maximum_quality == QualityTier::essential);
+    require(!invalid_decision.preserve_spatial_motion);
+    require(invalid_decision.hitch_recovery);
 
     return 0;
 }
