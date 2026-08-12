@@ -1,6 +1,7 @@
 #include <os/kernel/aarch64_kernel_translation_domain.hpp>
 #include <os/kernel/aarch64_translation.hpp>
 
+#include <array>
 #include <cstdlib>
 
 namespace {
@@ -26,15 +27,40 @@ int main() {
     require(!kernel_stage1_virtual_address(kernel_virtual_base - 1ULL));
     require(!kernel_stage1_virtual_address(0ULL));
 
+    // Kernel translation authority cannot be minted from a raw address or a
+    // process/lower root. It requires a sealed upper-region page-table builder.
+    alignas(4096) std::array<std::byte, 8U * 4096U> domain_storage{};
+    const auto domain_begin = static_cast<std::uint64_t>(
+        reinterpret_cast<std::uintptr_t>(domain_storage.data()));
+    EarlyPageArena domain_arena{domain_begin, domain_begin + domain_storage.size()};
+
+    EarlyStage1Builder lower_builder{domain_arena};
+    require(lower_builder.initialize());
+    require(lower_builder.seal());
+    require(lower_builder.executable_process_root());
+    require(!lower_builder.sealed_kernel_root());
+
     KernelTranslationDomain kernel_domain{};
     require(!kernel_domain.established());
-    require(!kernel_domain.establish(0x4001ULL));
+    require(!kernel_domain.establish(lower_builder));
     require(!kernel_domain.established());
-    require(kernel_domain.establish(0x0000'0000'0040'0000ULL));
+
+    EarlyStage1Builder upper_builder{domain_arena, Stage1Region::upper};
+    auto upper_root = upper_builder.initialize();
+    require(upper_root);
+    require(!upper_builder.executable_process_root());
+    require(!upper_builder.sealed_kernel_root());
+    require(upper_builder.seal());
+    require(upper_builder.sealed_kernel_root());
+    require(kernel_domain.establish(upper_builder));
     require(kernel_domain.established());
-    require(kernel_domain.root_physical() == 0x0000'0000'0040'0000ULL);
-    require(!kernel_domain.establish(0x0000'0000'0050'0000ULL));
-    require(kernel_domain.root_physical() == 0x0000'0000'0040'0000ULL);
+    require(kernel_domain.root_physical() == upper_root.value());
+
+    EarlyStage1Builder other_upper{domain_arena, Stage1Region::upper};
+    require(other_upper.initialize());
+    require(other_upper.seal());
+    require(!kernel_domain.establish(other_upper));
+    require(kernel_domain.root_physical() == upper_root.value());
 
     require(page_aligned(0x4000ULL));
     require(!page_aligned(0x4001ULL));
@@ -116,16 +142,16 @@ int main() {
     require(split_tcr != 0ULL);
     require((split_tcr & 0x3FULL) == stage1_t0sz);
     require(((split_tcr >> 16U) & 0x3FULL) == stage1_t1sz);
-    require(((split_tcr >> 8U) & 0x3ULL) == 1ULL);   // IRGN0 WBWA
-    require(((split_tcr >> 10U) & 0x3ULL) == 1ULL);  // ORGN0 WBWA
-    require(((split_tcr >> 12U) & 0x3ULL) == 3ULL);  // SH0 inner
-    require((split_tcr & (1ULL << 22U)) == 0ULL);    // A1: ASID from TTBR0
-    require((split_tcr & (1ULL << 23U)) == 0ULL);    // EPD1: TTBR1 walks enabled
-    require(((split_tcr >> 24U) & 0x3ULL) == 1ULL);  // IRGN1 WBWA
-    require(((split_tcr >> 26U) & 0x3ULL) == 1ULL);  // ORGN1 WBWA
-    require(((split_tcr >> 28U) & 0x3ULL) == 3ULL);  // SH1 inner
-    require(((split_tcr >> 30U) & 0x3ULL) == 2ULL);  // TG1 4 KiB
-    require(((split_tcr >> 32U) & 0x7ULL) == 5ULL);  // IPS capped at 48-bit
+    require(((split_tcr >> 8U) & 0x3ULL) == 1ULL);
+    require(((split_tcr >> 10U) & 0x3ULL) == 1ULL);
+    require(((split_tcr >> 12U) & 0x3ULL) == 3ULL);
+    require((split_tcr & (1ULL << 22U)) == 0ULL);
+    require((split_tcr & (1ULL << 23U)) == 0ULL);
+    require(((split_tcr >> 24U) & 0x3ULL) == 1ULL);
+    require(((split_tcr >> 26U) & 0x3ULL) == 1ULL);
+    require(((split_tcr >> 28U) & 0x3ULL) == 3ULL);
+    require(((split_tcr >> 30U) & 0x3ULL) == 2ULL);
+    require(((split_tcr >> 32U) & 0x7ULL) == 5ULL);
     require(split_tcr_el1_for_ips(6U) == 0ULL);
 
     return 0;
