@@ -12,7 +12,7 @@ int main() {
     using namespace os::kernel;
     using namespace os::kernel::aarch64;
 
-    alignas(4096) std::array<std::byte, 7U * 4096U> storage{};
+    alignas(4096) std::array<std::byte, 14U * 4096U> storage{};
     const auto begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(storage.data()));
     const auto end = begin + storage.size();
@@ -24,6 +24,7 @@ int main() {
     auto root = builder.initialize();
     require(static_cast<bool>(root));
     require(root.value() == begin);
+    require(builder.lifecycle() == EarlyStage1Builder::Lifecycle::building);
 
     constexpr std::uint64_t va = 0x0000'0000'4000'0000ULL;
     constexpr std::uint64_t pa = 0x0000'0000'8000'0000ULL;
@@ -90,6 +91,46 @@ int main() {
     require((user_leaf & (3ULL << 6U)) == descriptor::ap_el1_ro_el0_ro);
     require((user_leaf & descriptor::privileged_execute_never) != 0ULL);
     require((user_leaf & descriptor::unprivileged_execute_never) == 0ULL);
+
+    // A process translation root becomes immutable before it is executable.
+    require(builder.seal());
+    require(builder.executable_process_root());
+    require(!builder.map_user_page(
+        user_va + architectural_page_size,
+        user_pa + architectural_page_size,
+        MachinePermissions::read_write));
+    require(!builder.unmap_page(user_va));
+
+    // A second process receives a genuinely separate L1 root from the same
+    // bounded boot arena; sealing A does not freeze construction of B.
+    EarlyStage1Builder other{arena};
+    auto other_root = other.initialize();
+    require(other_root);
+    require(other_root.value() != root.value());
+    constexpr std::uint64_t other_user_pa = 0x0000'0000'8300'0000ULL;
+    require(other.map_user_page(
+        user_va,
+        other_user_pa,
+        MachinePermissions::read_execute));
+    require(other.seal());
+    require(other.executable_process_root());
+
+    auto* other_l1 = reinterpret_cast<std::uint64_t*>(
+        static_cast<std::uintptr_t>(other_root.value()));
+    const auto other_l2_pa = other_l1[level1_index(user_va)] & page_address_mask;
+    auto* other_l2 = reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(other_l2_pa));
+    const auto other_l3_pa = other_l2[level2_index(user_va)] & page_address_mask;
+    auto* other_l3 = reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(other_l3_pa));
+    require((other_l3[level3_index(user_va)] & page_address_mask) == other_user_pa);
+    require((user_l3[level3_index(user_va)] & page_address_mask) == user_pa);
+
+    // Teardown is an explicit lifecycle transition. Only after begin_retire()
+    // can leaf mappings be destructively removed.
+    require(builder.begin_retire());
+    require(builder.lifecycle() == EarlyStage1Builder::Lifecycle::retiring);
+    require(builder.unmap_page(user_va));
+    auto retired_user = builder.mapped(user_va);
+    require(retired_user && !retired_user.value());
 
     return 0;
 }
