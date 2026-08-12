@@ -10,19 +10,14 @@
 
 namespace os::kernel {
 
-// Cookie IPC is endpoint-addressed, never thread-addressed. A service may restart
-// with the same higher-level principal/name, but its kernel IPC incarnation gets
-// a fresh endpoint generation. Stale clients therefore cannot accidentally send
-// into a replacement service merely because a thread id was reused.
 using IpcEndpointSlot = std::uint16_t;
 using IpcEndpointGeneration = std::uint32_t;
 using IpcTransactionId = std::uint64_t;
 
 inline constexpr std::size_t max_ipc_endpoints = 64U;
 inline constexpr std::size_t max_ipc_reply_seals = max_threads;
+inline constexpr std::size_t max_ipc_pending_calls = max_threads;
 
-// Rights interpreted only by the IPC layer. CapabilityTable itself remains
-// policy-agnostic and merely attenuates bitmasks.
 inline constexpr Rights ipc_right_send = 1U << 0U;
 inline constexpr Rights ipc_right_receive = 1U << 1U;
 inline constexpr Rights ipc_right_all = ipc_right_send | ipc_right_receive;
@@ -30,14 +25,11 @@ inline constexpr Rights ipc_right_all = ipc_right_send | ipc_right_receive;
 struct IpcEndpoint final {
     IpcEndpointSlot slot {0U};
     IpcEndpointGeneration generation {0U};
-
     [[nodiscard]] constexpr bool valid() const noexcept { return generation != 0U; }
     [[nodiscard]] friend constexpr bool operator==(const IpcEndpoint&, const IpcEndpoint&) = default;
 };
 
-// Kernel object id used by CapabilityTable. Layout is deliberately explicit:
-//   [63:48] type tag | [47:16] endpoint generation | [15:0] slot+1
-// so object kind, incarnation and slot cannot overlap or be confused.
+// [63:48] IPC type tag | [47:16] generation | [15:0] slot+1.
 inline constexpr ObjectId ipc_object_tag = 0xC1C0'0000'0000'0000ULL;
 inline constexpr ObjectId ipc_object_tag_mask = 0xFFFF'0000'0000'0000ULL;
 inline constexpr ObjectId ipc_object_generation_mask = 0x0000'FFFF'FFFF'0000ULL;
@@ -55,7 +47,6 @@ struct IpcReplySeal final {
     IpcTransactionId transaction {0U};
     ThreadId caller {invalid_thread};
     ThreadId server {invalid_thread};
-
     [[nodiscard]] constexpr bool valid() const noexcept {
         return endpoint.valid() && transaction != 0U &&
             caller != invalid_thread && server != invalid_thread;
@@ -66,7 +57,6 @@ struct IpcReplySeal final {
 struct IpcReceived final {
     ThreadId caller {invalid_thread};
     IpcReplySeal reply {};
-
     [[nodiscard]] constexpr bool valid() const noexcept {
         return caller != invalid_thread && reply.valid() && reply.caller == caller;
     }
@@ -83,14 +73,19 @@ inline constexpr std::uint32_t reply_seal_limit = 166U;
 inline constexpr std::uint32_t stale_reply_seal = 167U;
 inline constexpr std::uint32_t wrong_reply_server = 168U;
 inline constexpr std::uint32_t transaction_exhausted = 169U;
+inline constexpr std::uint32_t pending_call_limit = 170U;
+inline constexpr std::uint32_t pending_call_missing = 171U;
 } // namespace ipc_errors
 
-// Endpoint/reply authority only. Payload copying and user-buffer access remain a
-// later machine boundary so this state machine stays fuzzable on a host.
+// Endpoint/reply authority only. Payload copying and user-buffer access are a
+// later machine boundary, keeping this state machine deterministic and fuzzable.
 class IpcEndpointTable final {
 public:
     [[nodiscard]] os::core::Result<IpcEndpoint> create(ThreadId server) noexcept;
-    [[nodiscard]] os::core::Result<void> retire(ThreadId server, IpcEndpoint endpoint) noexcept;
+    [[nodiscard]] os::core::Result<void> retire(
+        ThreadId server,
+        IpcEndpoint endpoint,
+        Rendezvous& rendezvous) noexcept;
 
     [[nodiscard]] os::core::Result<void> send(
         ThreadId caller,
@@ -98,8 +93,6 @@ public:
         const CapabilityTable& capabilities,
         Rendezvous& rendezvous) noexcept;
 
-    // Returns caller=invalid_thread when receive legitimately blocks because no
-    // sender is waiting. A Reply Seal exists only for a request actually taken.
     [[nodiscard]] os::core::Result<IpcReceived> receive(
         ThreadId server,
         CapabilityId endpoint_capability,
@@ -114,6 +107,7 @@ public:
     [[nodiscard]] bool active(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] std::size_t active_endpoint_count() const noexcept { return active_; }
     [[nodiscard]] std::size_t active_reply_seal_count() const noexcept { return reply_seals_; }
+    [[nodiscard]] std::size_t pending_call_count() const noexcept { return pending_calls_; }
 
 private:
     struct EndpointSlot final {
@@ -125,6 +119,12 @@ private:
         IpcReplySeal seal {};
         bool active {false};
     };
+    struct PendingSlot final {
+        IpcEndpoint endpoint {};
+        ThreadId caller {invalid_thread};
+        ThreadId server {invalid_thread};
+        bool active {false};
+    };
 
     [[nodiscard]] os::core::Result<IpcEndpoint> endpoint_for_capability(
         ThreadId holder,
@@ -134,12 +134,17 @@ private:
     [[nodiscard]] EndpointSlot* slot_for(IpcEndpoint endpoint) noexcept;
     [[nodiscard]] const EndpointSlot* slot_for(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] ReplySlot* reply_slot(const IpcReplySeal& seal) noexcept;
+    [[nodiscard]] PendingSlot* pending_slot(ThreadId caller, IpcEndpoint endpoint) noexcept;
+    [[nodiscard]] PendingSlot* free_pending_slot() noexcept;
     void invalidate_replies_for(IpcEndpoint endpoint) noexcept;
+    void cancel_pending_for(IpcEndpoint endpoint, Rendezvous& rendezvous) noexcept;
 
     std::array<EndpointSlot, max_ipc_endpoints> endpoints_ {};
     std::array<ReplySlot, max_ipc_reply_seals> replies_ {};
+    std::array<PendingSlot, max_ipc_pending_calls> pending_ {};
     std::size_t active_ {0U};
     std::size_t reply_seals_ {0U};
+    std::size_t pending_calls_ {0U};
     IpcTransactionId next_transaction_ {1U};
 };
 
