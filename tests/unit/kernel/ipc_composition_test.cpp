@@ -59,8 +59,6 @@ int main() {
     require(collected && collected.value() == response.value());
     require(!kernel.ipc_take_reply(client));
 
-    // A second call is cancelled by endpoint retirement. No completed response
-    // exists for a cancelled transaction, so it cannot be mistaken for success.
     require(kernel.ipc_send(client, client_cap.value(), request.value()));
     require(kernel.retire_ipc_endpoint(server, endpoint.value()));
     auto wake = kernel.threads().wake_reason_of(client);
@@ -95,8 +93,46 @@ int main() {
     require(wake && wake.value() == os::kernel::WakeReason::endpoint_retired);
     require(kernel.live_thread_count() == 1U);
 
-    // Inline payloads are a hard ceiling, not a hint. Larger transfer must use
-    // the later explicit memory-authority path rather than growing kernel state.
+    // A dying caller after receive must release the pending request and the
+    // server's one-shot Reply Seal. The server survives; bounded IPC state does
+    // not depend on a dead client ever running cleanup code.
+    {
+        os::kernel::Kernel death_kernel{};
+        constexpr os::kernel::ThreadId dying_client = 31U;
+        constexpr os::kernel::ThreadId live_server = 32U;
+        require(death_kernel.create_thread(dying_client, 3U));
+        require(death_kernel.create_thread(live_server, 3U));
+        auto ep = death_kernel.create_ipc_endpoint(live_server);
+        require(ep);
+        auto owner = death_kernel.capabilities().mint(
+            live_server,
+            os::kernel::ipc_object_id(ep.value()),
+            os::kernel::ipc_right_all,
+            true);
+        require(owner);
+        auto sender = death_kernel.capabilities().grant(
+            live_server,
+            owner.value(),
+            dying_client,
+            os::kernel::ipc_right_send,
+            false);
+        require(sender);
+        require(death_kernel.ipc_send(dying_client, sender.value(), request.value()));
+        auto in_flight = death_kernel.ipc_receive(live_server, owner.value());
+        require(in_flight && in_flight.value().valid());
+        require(death_kernel.ipc().pending_call_count() == 1U);
+        require(death_kernel.ipc().active_reply_seal_count() == 1U);
+
+        auto dead = death_kernel.destroy_thread(dying_client);
+        require(dead);
+        require(death_kernel.ipc().pending_call_count() == 0U);
+        require(death_kernel.ipc().active_reply_seal_count() == 0U);
+        require(death_kernel.live_thread_count() == 1U);
+        auto server_state = death_kernel.threads().state_of(live_server);
+        require(server_state && server_state.value() == os::kernel::ThreadState::ready);
+        require(!death_kernel.ipc_reply(live_server, in_flight.value().reply));
+    }
+
     const std::array<std::byte, os::kernel::max_ipc_inline_bytes + 1U> oversized{};
     require(!os::kernel::IpcEnvelope::from(std::span<const std::byte>{oversized}));
 
