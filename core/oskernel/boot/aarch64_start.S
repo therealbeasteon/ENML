@@ -23,13 +23,14 @@ _start:
     .long 0x00000000                           // reserved / PE header offset
 
 // AArch64 Cookie boot contract:
-//   x0 = physical pointer to a flattened device tree
+//   x0 = physical pointer to a flattened device tree when supplied by loader
+//   bare-metal QEMU virt fallback = DTB at RAM base 0x4000_0000
 //   MMU is disabled
 //   entry is at EL1
 //
-// The machine port owns how the image is loaded. No QEMU MMIO constants are
-// encoded here; the 64-byte envelope only makes the raw image self-describing
-// to standard AArch64 loaders while preserving the Cookie entry contract.
+// The fallback is only for the QEMU virt standalone image. QEMU documents the
+// generated DTB at the start of RAM for bare-metal boot; real platform loaders
+// should continue to provide x0 explicitly.
 .Lcookie_entry:
     mrs x1, CurrentEL
     cmp x1, #0x4
@@ -41,6 +42,9 @@ _start:
     msr daifset, #0xf
     isb
 
+    cbnz x0, .Ldtb_ready
+    movz x0, #0x4000, lsl #16                  // QEMU virt RAM/DTB base 0x40000000
+.Ldtb_ready:
     mov x19, x0
     adrp x1, __cookie_bootstrap_stack_top
     add  x1, x1, :lo12:__cookie_bootstrap_stack_top
