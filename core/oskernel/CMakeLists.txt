@@ -78,8 +78,12 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             boot/aarch64_boot.cpp
             boot/freestanding_memory.cpp
             src/abi.cpp
+            src/rendezvous.cpp
+            src/capability.cpp
+            src/ipc_endpoint.cpp
             src/ipc_syscall.cpp
             src/ipc_continuation.cpp
+            src/interrupt.cpp
             src/scheduler.cpp
             src/scheduler_deadline.cpp
             src/address_space_epoch.cpp
@@ -88,6 +92,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/aarch64_user_frames.cpp
             src/aarch64_preemption.cpp
             src/aarch64_execution_universe.cpp
+            src/kernel.cpp
             src/fdt.cpp
             src/hardware_inventory.cpp
             src/gic_v3_discovery.cpp
