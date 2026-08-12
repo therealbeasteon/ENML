@@ -3,6 +3,9 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <optional>
+
+#include <os/supervisor/subsystem_lease.hpp>
 
 namespace os::supervisor {
 
@@ -23,6 +26,12 @@ enum class ConnectionPurpose : std::uint8_t {
     network_tether = 5U,
     accessory_control = 6U,
     debug = 7U,
+};
+
+enum class ConnectionRisk : std::uint8_t {
+    no_data = 1U,
+    data = 2U,
+    privileged_data = 3U,
 };
 
 struct UserPresenceProof final {
@@ -50,13 +59,50 @@ struct ConnectionGrant final {
     }
 };
 
+[[nodiscard]] constexpr ConnectionRisk connection_risk(ConnectionPurpose purpose) noexcept {
+    switch (purpose) {
+    case ConnectionPurpose::charge_only:
+        return ConnectionRisk::no_data;
+    case ConnectionPurpose::audio:
+    case ConnectionPurpose::display:
+        return ConnectionRisk::data;
+    case ConnectionPurpose::file_transfer:
+    case ConnectionPurpose::network_tether:
+    case ConnectionPurpose::accessory_control:
+    case ConnectionPurpose::debug:
+        return ConnectionRisk::privileged_data;
+    }
+    return ConnectionRisk::privileged_data;
+}
+
+// External data authority must also keep exactly one attack-surface domain
+// alive. Charging is intentionally absent: accepting power never acquires a USB
+// data lease. NFC gets its own future controller domain rather than being
+// mislabeled as sensors, so it currently cannot mint a data grant below.
+[[nodiscard]] constexpr std::optional<SubsystemDomain>
+connection_subsystem_domain(ConnectionTransport transport) noexcept {
+    switch (transport) {
+    case ConnectionTransport::usb:
+    case ConnectionTransport::thunderbolt_like:
+    case ConnectionTransport::debug_link:
+        return SubsystemDomain::usb_data;
+    case ConnectionTransport::bluetooth:
+        return SubsystemDomain::bluetooth;
+    case ConnectionTransport::wifi_direct:
+        return SubsystemDomain::network;
+    case ConnectionTransport::nfc_accessory:
+        return std::nullopt;
+    }
+    return std::nullopt;
+}
+
 // Power is not data authority. Cookie may accept electrical power without any
-// authenticated grant, but every data-capable role requires a fresh grant tied
-// to the current lock generation. Re-locking advances the generation and makes
-// all prior grants stale even if the cable/peer remains physically present.
+// authenticated grant, but every data-capable role requires a fresh knowledge-
+// factor proof tied to the current lock generation. Re-locking advances the
+// generation and makes all prior grants stale even if the cable/peer remains.
 [[nodiscard]] constexpr bool requires_user_authentication(
     ConnectionPurpose purpose) noexcept {
-    return purpose != ConnectionPurpose::charge_only;
+    return connection_risk(purpose) != ConnectionRisk::no_data;
 }
 
 [[nodiscard]] constexpr bool grant_authorizes(
@@ -94,7 +140,11 @@ public:
             };
         }
 
+        // First Cookie regime deliberately requires a PIN/password for every
+        // *new external data relationship*. Bluetooth bonds and physical
+        // attachment are identity/proximity facts, not current user consent.
         if (!proof.valid() || proof.lock_generation != current_lock_generation) return {};
+        if (!connection_subsystem_domain(transport).has_value()) return {};
         if (active_ >= max_active_grants) return {};
 
         ++active_;
@@ -121,6 +171,15 @@ public:
         std::uint64_t current_lock_generation) const noexcept {
         return grant.valid() && grant.generation == generation_ &&
                grant.lock_generation == current_lock_generation;
+    }
+
+    [[nodiscard]] constexpr std::optional<SubsystemDomain>
+    required_domain(const ConnectionGrant& grant,
+                    std::uint64_t current_lock_generation) const noexcept {
+        if (!active(grant, current_lock_generation) || !grant.data_signaling) {
+            return std::nullopt;
+        }
+        return connection_subsystem_domain(grant.transport);
     }
 
     [[nodiscard]] constexpr std::size_t active_grants() const noexcept { return active_; }
