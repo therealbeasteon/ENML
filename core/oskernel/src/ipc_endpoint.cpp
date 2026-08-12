@@ -211,12 +211,13 @@ os::core::Result<IpcEndpoint> IpcEndpointTable::endpoint_for_capability(
     CapabilityId capability,
     Rights required,
     const CapabilityTable& capabilities) const noexcept {
-    if (holder == invalid_thread || capability == invalid_capability ||
-        !capabilities.holds(holder, capability)) {
+    if (holder == invalid_thread || capability == invalid_capability) {
         return ipc_error(ipc_errors::invalid_capability);
     }
     auto description = capabilities.describe(capability);
-    if (!description) return ipc_error(ipc_errors::invalid_capability);
+    if (!description || description.value().holder != holder) {
+        return ipc_error(ipc_errors::invalid_capability);
+    }
     if (!has_rights(description.value().rights, required)) {
         return ipc_error(ipc_errors::wrong_rights);
     }
