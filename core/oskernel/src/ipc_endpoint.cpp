@@ -60,6 +60,16 @@ IpcEndpointTable::ReplySlot* IpcEndpointTable::reply_slot(const IpcReplySeal& se
     return nullptr;
 }
 
+IpcEndpointTable::ReplySlot* IpcEndpointTable::reply_slot(
+    ThreadId server, IpcTransactionId transaction) noexcept {
+    if (server == invalid_thread || transaction == 0U) return nullptr;
+    for (auto& slot : replies_) {
+        if (!slot.active) continue;
+        if (slot.seal.server == server && slot.seal.transaction == transaction) return &slot;
+    }
+    return nullptr;
+}
+
 IpcEndpointTable::PendingSlot* IpcEndpointTable::pending_slot(
     ThreadId caller, IpcEndpoint endpoint) noexcept {
     for (auto& slot : pending_) {
@@ -167,8 +177,6 @@ std::size_t IpcEndpointTable::release_thread(
 
     const std::size_t retired = retire_all_owned_by(thread, rendezvous);
 
-    // A dying caller cannot leave bounded IPC state behind. Do not attempt to
-    // wake it: Rendezvous::exit_thread() runs immediately after this operation.
     for (auto& pending : pending_) {
         if (!pending.active || pending.caller != thread) continue;
         const IpcEndpoint endpoint = pending.endpoint;
@@ -182,8 +190,6 @@ std::size_t IpcEndpointTable::release_thread(
         }
     }
 
-    // A server may have a Reply Seal whose caller died after receive but before
-    // reply. That authority becomes meaningless at the caller's death.
     for (auto& reply : replies_) {
         if (!reply.active) continue;
         if (reply.seal.caller != thread && reply.seal.server != thread) continue;
@@ -327,6 +333,17 @@ os::core::Result<void> IpcEndpointTable::reply(
     *pending = PendingSlot{};
     --pending_calls_;
     return {};
+}
+
+os::core::Result<void> IpcEndpointTable::reply_transaction(
+    ThreadId server,
+    IpcTransactionId transaction,
+    Rendezvous& rendezvous,
+    IpcEnvelope response) noexcept {
+    auto* slot = reply_slot(server, transaction);
+    if (slot == nullptr) return ipc_error(ipc_errors::stale_reply_seal);
+    const IpcReplySeal seal = slot->seal;
+    return reply(server, seal, rendezvous, response);
 }
 
 os::core::Result<IpcEnvelope> IpcEndpointTable::take_reply(ThreadId caller) noexcept {
