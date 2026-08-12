@@ -55,9 +55,7 @@ os::core::Result<Teardown> Kernel::destroy_thread(ThreadId thread) noexcept {
     const std::size_t retired_endpoints = ipc_.release_thread(thread, threads_);
 
     auto released = threads_.exit_thread(thread);
-    if (!released) {
-        return os::core::Result<Teardown>{released.error()};
-    }
+    if (!released) return os::core::Result<Teardown>{released.error()};
 
     Teardown teardown{};
     teardown.threads_released = released.value();
@@ -198,12 +196,44 @@ os::core::Result<void> Kernel::ipc_cancel_send_continuation(ThreadId caller) noe
     return ipc_continuations_.cancel(caller);
 }
 
+os::core::Result<void> Kernel::ipc_arm_receive_continuation(
+    ThreadId server,
+    AddressSpaceEpoch epoch,
+    CapabilityId endpoint_capability,
+    std::uint64_t exchange_address,
+    const AddressSpaceEpochAuthority& epochs) noexcept {
+    if (!tracks(server)) {
+        return os::core::make_error(os::core::ErrorDomain::kernel,
+                                    rendezvous_errors::unknown_thread);
+    }
+    return ipc_continuations_.arm_receive(
+        server, epoch, endpoint_capability, exchange_address, epochs);
+}
+
+os::core::Result<IpcReceiveContinuation> Kernel::ipc_take_receive_continuation(
+    ThreadId server,
+    AddressSpaceEpoch expected,
+    const AddressSpaceEpochAuthority& epochs) noexcept {
+    if (!tracks(server)) {
+        return os::core::Result<IpcReceiveContinuation>{
+            os::core::make_error(os::core::ErrorDomain::kernel,
+                                 rendezvous_errors::unknown_thread)};
+    }
+    return ipc_continuations_.take_receive(server, expected, epochs);
+}
+
+os::core::Result<void> Kernel::ipc_cancel_receive_continuation(ThreadId server) noexcept {
+    if (!tracks(server)) {
+        return os::core::make_error(os::core::ErrorDomain::kernel,
+                                    rendezvous_errors::unknown_thread);
+    }
+    return ipc_continuations_.cancel_receive(server);
+}
+
 os::core::Result<Dispatch> Kernel::dispatch_interrupt(InterruptSource source) noexcept {
     auto taken = interrupts_.dispatch(source);
     if (!taken) return taken;
-    if (taken.value().wake && taken.value().owner != invalid_thread) {
-        synchronise();
-    }
+    if (taken.value().wake && taken.value().owner != invalid_thread) synchronise();
     return taken;
 }
 
