@@ -73,12 +73,12 @@ ProtectedNamespaceRegistry::create(
 }
 
 os::core::Result<ProtectedObjectVersion>
-ProtectedNamespaceRegistry::advance_generation(
+ProtectedNamespaceRegistry::propose_next_generation(
     os::core::PrincipalId principal,
     os::core::UserId user,
     const RelativePath& path,
-    std::uint64_t expected_generation) noexcept {
-    auto* entry = find(principal, user, path);
+    std::uint64_t expected_generation) const noexcept {
+    const auto* entry = find(principal, user, path);
     if (entry == nullptr) {
         return protected_namespace_error(protected_namespace_errors::not_found);
     }
@@ -86,8 +86,30 @@ ProtectedNamespaceRegistry::advance_generation(
         entry->generation == std::numeric_limits<std::uint64_t>::max()) {
         return protected_namespace_error(protected_namespace_errors::generation_conflict);
     }
-    ++entry->generation;
-    return entry->version();
+    return ProtectedObjectVersion{
+        .user = entry->user,
+        .object_id = entry->object_id,
+        .generation = entry->generation + 1U,
+    };
+}
+
+os::core::Result<void>
+ProtectedNamespaceRegistry::publish_generation(
+    os::core::PrincipalId principal,
+    os::core::UserId user,
+    const RelativePath& path,
+    std::uint64_t expected_generation,
+    std::uint64_t new_generation) noexcept {
+    auto* entry = find(principal, user, path);
+    if (entry == nullptr) {
+        return protected_namespace_error(protected_namespace_errors::not_found);
+    }
+    if (expected_generation == 0U || new_generation == 0U ||
+        entry->generation != expected_generation || new_generation <= expected_generation) {
+        return protected_namespace_error(protected_namespace_errors::generation_conflict);
+    }
+    entry->generation = new_generation;
+    return {};
 }
 
 std::size_t ProtectedNamespaceRegistry::size() const noexcept {
