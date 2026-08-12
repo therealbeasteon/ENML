@@ -31,7 +31,6 @@ struct IpcEndpoint final {
     [[nodiscard]] friend constexpr bool operator==(const IpcEndpoint&, const IpcEndpoint&) = default;
 };
 
-// [63:48] IPC type tag | [47:16] generation | [15:0] slot+1.
 inline constexpr ObjectId ipc_object_tag = 0xC1C0'0000'0000'0000ULL;
 inline constexpr ObjectId ipc_object_tag_mask = 0xFFFF'0000'0000'0000ULL;
 inline constexpr ObjectId ipc_object_generation_mask = 0x0000'FFFF'FFFF'0000ULL;
@@ -44,10 +43,6 @@ inline constexpr ObjectId ipc_object_slot_mask = 0x0000'0000'0000'FFFFULL;
         static_cast<ObjectId>(endpoint.slot + 1U);
 }
 
-// One bounded control payload. This is not a kernel message queue: an envelope
-// exists only while a call is in flight, and the number of in-flight calls is
-// already bounded by max_threads. Larger data requires a later explicit
-// cross-address-space memory authority rather than a larger hidden buffer.
 struct IpcEnvelope final {
     std::array<std::byte, max_ipc_inline_bytes> bytes {};
     std::uint8_t size {0U};
@@ -116,6 +111,14 @@ public:
         ThreadId server,
         Rendezvous& rendezvous) noexcept;
 
+    // Settles every IPC obligation associated with a dying thread. This is
+    // broader than endpoint ownership: a dead caller must not leave a pending
+    // call, Reply Seal or completed response occupying bounded kernel state.
+    // Returns the number of endpoints retired because this thread owned them.
+    [[nodiscard]] std::size_t release_thread(
+        ThreadId thread,
+        Rendezvous& rendezvous) noexcept;
+
     [[nodiscard]] os::core::Result<void> send(
         ThreadId caller,
         CapabilityId endpoint_capability,
@@ -135,8 +138,6 @@ public:
         Rendezvous& rendezvous,
         IpcEnvelope response = {}) noexcept;
 
-    // A replied caller consumes its response once after it becomes runnable.
-    // Endpoint retirement/peer failure leave no response to collect.
     [[nodiscard]] os::core::Result<IpcEnvelope> take_reply(ThreadId caller) noexcept;
 
     [[nodiscard]] bool active(IpcEndpoint endpoint) const noexcept;
