@@ -5,9 +5,11 @@
 #include <string_view>
 
 #include <os/core/span.hpp>
+#include <os/kernel/abi.hpp>
 #include <os/kernel/aarch64_entry.hpp>
 #include <os/kernel/aarch64_page_tables.hpp>
 #include <os/kernel/aarch64_translation.hpp>
+#include <os/kernel/boot_memory.hpp>
 #include <os/kernel/boot_memory_plan.hpp>
 #include <os/kernel/fdt.hpp>
 #include <os/kernel/hardware_inventory.hpp>
@@ -37,8 +39,12 @@ constexpr std::size_t max_boot_dtb_bytes = 2U * 1024U * 1024U;
 constexpr std::size_t early_page_table_pages = 96U;
 constexpr std::size_t runtime_stack_pages = 8U;
 constexpr std::uint64_t runtime_stack_virtual = 0x0000'007F'FEF0'0000ULL;
+constexpr std::uint64_t user_code_virtual = 0x0000'0000'1000'0000ULL;
+constexpr std::uint64_t user_stack_virtual = 0x0000'0000'1001'0000ULL;
+constexpr std::uint64_t syscall_return_cookie = 0xC00CULL;
 
 volatile std::uint32_t* boot_uart = nullptr;
+std::uint32_t el0_yield_count = 0U;
 
 [[noreturn]] void halt() noexcept {
     asm volatile("msr daifset, #0xf" ::: "memory");
@@ -76,9 +82,7 @@ void uart_write_char(char value) noexcept {
     if (boot_uart == nullptr) return;
     constexpr std::size_t fr_index = 0x18U / sizeof(std::uint32_t);
     constexpr std::uint32_t tx_fifo_full = 1U << 5U;
-    while ((boot_uart[fr_index] & tx_fifo_full) != 0U) {
-        asm volatile("yield" ::: "memory");
-    }
+    while ((boot_uart[fr_index] & tx_fifo_full) != 0U) asm volatile("yield" ::: "memory");
     boot_uart[0] = static_cast<std::uint32_t>(static_cast<unsigned char>(value));
 }
 
@@ -129,9 +133,31 @@ find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
         permissions, MachineMemoryKind::normal);
 }
 
+void install_first_user_program(std::uint64_t physical_page) noexcept {
+    // AArch64 little-endian instruction words:
+    //   movz x8, #KernelCall::yield
+    //   svc  #0
+    //   movz x8, #KernelCall::yield
+    //   svc  #0
+    //   b    .
+    auto* words = reinterpret_cast<volatile std::uint32_t*>(
+        static_cast<std::uintptr_t>(physical_page));
+    constexpr std::uint32_t movz_x8_base = 0xD2800008U;
+    constexpr std::uint32_t svc_zero = 0xD4000001U;
+    constexpr std::uint32_t branch_self = 0x14000000U;
+    constexpr std::uint32_t yield_number =
+        static_cast<std::uint32_t>(os::kernel::KernelCall::yield);
+    words[0] = movz_x8_base | (yield_number << 5U);
+    words[1] = svc_zero;
+    words[2] = movz_x8_base | (yield_number << 5U);
+    words[3] = svc_zero;
+    words[4] = branch_self;
+}
+
 [[noreturn]] void guarded_runtime_main() noexcept {
     uart_write("COOKIE:M7.5d:GUARDED\n");
-    for (;;) asm volatile("wfe" ::: "memory");
+    // The EL0 page mappings are already active in this TTBR0_EL1 regime.
+    cookie_aarch64_enter_el0(user_code_virtual, user_stack_virtual + page_size);
 }
 
 } // namespace
@@ -142,11 +168,28 @@ extern "C" [[noreturn]] void cookie_aarch64_unhandled_exception() noexcept {
 }
 
 extern "C" void cookie_kernel_syscall_entry(
-    os::kernel::aarch64::ExceptionFrame*) noexcept {
-    // M7.5d has not admitted an EL0 process yet. A lower-EL syscall at this
-    // stage therefore indicates unexpected execution state and must not be
-    // treated as a successful no-op.
-    uart_write("COOKIE:PANIC:EARLY_SVC\n");
+    os::kernel::aarch64::ExceptionFrame* frame) noexcept {
+    if (frame == nullptr) halt();
+    auto call = os::kernel::decode_call(static_cast<std::uint16_t>(frame->x[8]));
+    if (!call || call.value().call != os::kernel::KernelCall::yield ||
+        call.value().authority != os::kernel::CallAuthority::unprivileged ||
+        call.value().argument_count != 0U) {
+        uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
+        halt();
+    }
+
+    if (el0_yield_count == 0U) {
+        frame->x[0] = syscall_return_cookie;
+        el0_yield_count = 1U;
+        return;
+    }
+    if (el0_yield_count == 1U && frame->x[0] == syscall_return_cookie) {
+        el0_yield_count = 2U;
+        uart_write("COOKIE:M7.5f:EL0_SVC_RETURN\n");
+        return;
+    }
+
+    uart_write("COOKIE:PANIC:EL0_STATE\n");
     halt();
 }
 
@@ -178,6 +221,23 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         inventory.value(), std::span<const HardwareRange>{protected_ranges},
         early_page_table_pages, runtime_stack_pages, page_size);
     if (!plan || !plan.value().valid()) halt();
+
+    const std::array<HardwareRange, 4U> user_code_protected{
+        image_range, dtb_range, plan.value().page_tables, plan.value().kernel_stack};
+    auto user_code = os::kernel::select_early_ram(
+        inventory.value(), page_size, page_size,
+        std::span<const HardwareRange>{user_code_protected});
+    if (!user_code) halt();
+
+    const std::array<HardwareRange, 5U> user_stack_protected{
+        image_range, dtb_range, plan.value().page_tables,
+        plan.value().kernel_stack, user_code.value()};
+    auto user_stack = os::kernel::select_early_ram(
+        inventory.value(), page_size, page_size,
+        std::span<const HardwareRange>{user_stack_protected});
+    if (!user_stack) halt();
+
+    install_first_user_program(user_code.value().base);
 
     os::kernel::aarch64::EarlyPageArena arena{
         plan.value().page_tables.base,
@@ -231,7 +291,19 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             kernel_space,
             static_cast<std::uintptr_t>(runtime_stack_virtual),
             static_cast<std::uintptr_t>(plan.value().kernel_stack.base),
-            static_cast<std::size_t>(plan.value().kernel_stack.size))) halt();
+            static_cast<std::size_t>(plan.value().kernel_stack.size)) ||
+        !os::kernel::aarch64_map_user(
+            kernel_space,
+            static_cast<std::uintptr_t>(user_code_virtual),
+            static_cast<std::uintptr_t>(user_code.value().base),
+            static_cast<std::size_t>(page_size),
+            MachinePermissions::read_execute) ||
+        !os::kernel::aarch64_map_user(
+            kernel_space,
+            static_cast<std::uintptr_t>(user_stack_virtual),
+            static_cast<std::uintptr_t>(user_stack.value().base),
+            static_cast<std::size_t>(page_size),
+            MachinePermissions::read_write)) halt();
 
     if (!os::kernel::aarch64::activate_stage1_translation(root.value())) halt();
     if (!os::kernel::aarch64::install_exception_vectors()) halt();
