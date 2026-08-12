@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 #include <os/core/identity.hpp>
 #include <os/core/result.hpp>
@@ -42,6 +43,7 @@ inline constexpr std::uint32_t already_exists = 2U;
 inline constexpr std::uint32_t capacity = 3U;
 inline constexpr std::uint32_t generation_conflict = 4U;
 inline constexpr std::uint32_t invalid_identity = 5U;
+inline constexpr std::uint32_t duplicate_object = 6U;
 } // namespace protected_namespace_errors
 
 [[nodiscard]] constexpr os::core::Error protected_namespace_error(std::uint32_t code) noexcept {
@@ -88,6 +90,19 @@ public:
         const RelativePath& path,
         std::uint64_t expected_generation,
         std::uint64_t new_generation) noexcept;
+
+    // Snapshot support is intentionally bounded and all-or-nothing. Restore
+    // validates the entire replacement set, including duplicate namespace keys
+    // and duplicate stable object IDs, before mutating trusted registry state.
+    [[nodiscard]] os::core::Result<std::size_t>
+    copy_user_entries(
+        os::core::UserId user,
+        std::span<ProtectedNamespaceEntry> output) const noexcept;
+
+    [[nodiscard]] os::core::Result<void>
+    replace_user_entries(
+        os::core::UserId user,
+        std::span<const ProtectedNamespaceEntry> entries) noexcept;
 
     [[nodiscard]] std::size_t size() const noexcept;
 
