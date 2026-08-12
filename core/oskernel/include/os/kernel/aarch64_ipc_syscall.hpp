@@ -16,6 +16,7 @@ inline constexpr std::uint32_t wrong_thread = 270U;
 inline constexpr std::uint32_t bad_syscall = 271U;
 inline constexpr std::uint32_t copy_failed = 272U;
 inline constexpr std::uint32_t no_reply_completion = 273U;
+inline constexpr std::uint32_t no_receive_completion = 274U;
 } // namespace ipc_machine_errors
 
 struct IpcSvcResult final {
@@ -31,7 +32,11 @@ struct IpcSvcResult final {
     const ProcessTranslationTable& translations,
     const AddressSpaceEpochAuthority& epochs) noexcept;
 
-[[nodiscard]] os::core::Result<bool> complete_ipc_send_current(
+// Called only after the scheduler has installed `current`'s validated
+// translation and before ERET. Completes whichever synchronous IPC syscall was
+// sleeping: receive copies the delivered request and returns {transaction,size};
+// send copies the reply back into its original exchange frame and returns size.
+[[nodiscard]] os::core::Result<bool> complete_ipc_current(
     ThreadId current,
     ExceptionFrame& frame,
     Kernel& kernel,
