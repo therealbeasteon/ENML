@@ -102,6 +102,14 @@ target_compile_options(kernel_hardware_inventory_test PRIVATE
 add_test(NAME kernel_hardware_inventory_test COMMAND kernel_hardware_inventory_test)
 set_tests_properties(kernel_hardware_inventory_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_gic_v3_discovery_test gic_v3_discovery_test.cpp)
+target_link_libraries(kernel_gic_v3_discovery_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_gic_v3_discovery_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_gic_v3_discovery_test COMMAND kernel_gic_v3_discovery_test)
+set_tests_properties(kernel_gic_v3_discovery_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_boot_memory_test boot_memory_test.cpp)
 target_link_libraries(kernel_boot_memory_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_boot_memory_test PRIVATE
