@@ -8,6 +8,7 @@ add_library(oskernel STATIC
     src/fdt.cpp
     src/hardware_inventory.cpp
     src/boot_memory.cpp
+    src/boot_memory_plan.cpp
     src/machine_host.cpp
 )
 
