@@ -7,7 +7,6 @@
 #include <os/storage/protected_crypto.hpp>
 
 namespace {
-
 constexpr os::keys::KeyProtectionBinding system_binding{
     .scope = os::keys::KeyProtectionScope::system,
     .owner = os::keys::KeyOwner{
@@ -22,7 +21,6 @@ constexpr os::keys::KeyProtectionBinding profile_binding{
         .user = os::core::UserId{42U},
     },
 };
-
 } // namespace
 
 int main() {
@@ -34,10 +32,11 @@ int main() {
     assert(key);
 
     os::storage::ProtectedChunkCrypto crypto{provider};
-    const os::storage::ProtectedChunkHeaderV1 header{
+    const os::storage::ProtectedChunkHeaderV2 header{
         .crypto_profile = os::keys::CryptoProfileId::aes_256_gcm_v1,
         .user = os::core::UserId{42U},
         .object_id = os::storage::ProtectedObjectId{0x1111U, 0x2222U},
+        .object_generation = 9U,
         .chunk_index = 7U,
         .plaintext_size = 5U,
         .flags = 0U,
@@ -53,6 +52,7 @@ int main() {
     const os::storage::ProtectedChunkAddress expected{
         .user = header.user,
         .object_id = header.object_id,
+        .object_generation = header.object_generation,
         .chunk_index = header.chunk_index,
     };
     auto result = crypto.open(
@@ -61,21 +61,25 @@ int main() {
     assert(result.value() == message.size());
     for (std::size_t i = 0U; i < message.size(); ++i) assert(opened[i] == message[i]);
 
-    // A complete valid record cannot be transplanted to another object/chunk;
-    // expected identity comes from trusted Storage state, not from disk.
     auto wrong_address = expected;
     wrong_address.object_id = os::storage::ProtectedObjectId{0x3333U, 0x4444U};
     assert(!crypto.open(
         key.value(), wrong_address, os::core::ByteSpan{record.data(), sealed.value()}, opened));
+
     wrong_address = expected;
     wrong_address.chunk_index += 1U;
     assert(!crypto.open(
         key.value(), wrong_address, os::core::ByteSpan{record.data(), sealed.value()}, opened));
 
-    // Header and ciphertext tampering must fail. Header corruption may fail at
-    // parsing or at provider authentication; ciphertext corruption must fail AEAD.
+    // Critical rollback gate: a valid ciphertext for the same object/chunk but
+    // an older generation is rejected against trusted namespace generation.
+    wrong_address = expected;
+    wrong_address.object_generation += 1U;
+    assert(!crypto.open(
+        key.value(), wrong_address, os::core::ByteSpan{record.data(), sealed.value()}, opened));
+
     auto tampered = record;
-    tampered[20U] ^= std::byte{0x01};
+    tampered[36U] ^= std::byte{0x01};
     assert(!crypto.open(
         key.value(), expected, os::core::ByteSpan{tampered.data(), sealed.value()}, opened));
 
