@@ -22,12 +22,12 @@ jobs:
           .github/scripts/run-build.sh 'kernel-gcc' --preset host-debug --target
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
-          kernel_aarch64_mapping_state_test kernel_fdt_test
+          kernel_aarch64_user_frames_test kernel_aarch64_translation_test
+          kernel_aarch64_page_tables_test kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
           kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
-          kernel_scheduler_test kernel_composition_test --parallel 2
+          kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-gcc' --preset host-debug
 
@@ -42,12 +42,12 @@ jobs:
           .github/scripts/run-build.sh 'kernel-sanitizers' --preset host-asan --target
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
-          kernel_aarch64_mapping_state_test kernel_fdt_test
+          kernel_aarch64_user_frames_test kernel_aarch64_translation_test
+          kernel_aarch64_page_tables_test kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
           kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
-          kernel_scheduler_test kernel_composition_test --parallel 2
+          kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates with sanitizers
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-sanitizers' --preset host-asan
 
@@ -65,12 +65,12 @@ jobs:
           .github/scripts/run-build.sh 'kernel-clang' build/m5-kernel-clang --target
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
-          kernel_aarch64_mapping_state_test kernel_fdt_test
+          kernel_aarch64_user_frames_test kernel_aarch64_translation_test
+          kernel_aarch64_page_tables_test kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
           kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
-          kernel_scheduler_test kernel_composition_test --parallel 2
+          kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-clang' --test-dir build/m5-kernel-clang
 
@@ -94,13 +94,13 @@ jobs:
           .github/scripts/run-build.sh 'kernel-arm64-native' build/m7-arm64-native --target
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
-          kernel_aarch64_mapping_state_test kernel_fdt_test
+          kernel_aarch64_user_frames_test kernel_aarch64_translation_test
+          kernel_aarch64_page_tables_test kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
           kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
-          kernel_scheduler_test kernel_composition_test oskernel_machine_aarch64
-          cookie_kernel_aarch64_boot --parallel 2
+          kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test
+          oskernel_machine_aarch64 cookie_kernel_aarch64_boot --parallel 2
       - name: Test kernel gates natively
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --test-dir build/m7-arm64-native
       - name: Boot Cookie Kernel, EL0, and timer IRQs under QEMU virt GICv3
