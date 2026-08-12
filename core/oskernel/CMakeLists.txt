@@ -23,13 +23,15 @@ target_compile_options(oskernel PRIVATE
 
 # The host machine remains the executable contract implementation while Cookie
 # is migrating off Linux. On a native AArch64 builder, compile the real machine
-# backend and vector entry as a separate archive. Assembly is enabled only here
-# so architecture code cannot leak into portable targets by accident.
+# backend, vector entry and context-switch assembly as a separate archive.
+# Assembly is enabled only here so architecture code cannot leak into portable
+# targets by accident.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     enable_language(ASM)
     add_library(oskernel_machine_aarch64 STATIC
         src/machine_aarch64.cpp
         src/aarch64_vectors.S
+        src/aarch64_context_switch.S
     )
     add_library(emnl::oskernel_machine_aarch64 ALIAS oskernel_machine_aarch64)
     target_include_directories(oskernel_machine_aarch64
