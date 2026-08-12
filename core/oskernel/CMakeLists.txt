@@ -38,7 +38,11 @@ target_compile_options(oskernel PRIVATE
 )
 
 option(EMNL_BUILD_AARCH64_BOOT_IMAGE "Build the freestanding Cookie AArch64 kernel image" OFF)
-set(EMNL_AARCH64_BOOT_LOAD_ADDRESS "0x40080000" CACHE STRING
+# QEMU virt reserves 0x40000000..0x40100000 for its generated DTB when using
+# the generic bare-metal loader. Keep Cookie's linked image outside that region.
+# The address remains a machine-port cache variable so physical boards can
+# supply their own non-overlapping placement without changing kernel code.
+set(EMNL_AARCH64_BOOT_LOAD_ADDRESS "0x40200000" CACHE STRING
     "Machine-port load address for the standalone AArch64 image")
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
