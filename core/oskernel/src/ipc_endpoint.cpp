@@ -9,11 +9,9 @@ namespace {
 [[nodiscard]] constexpr os::core::Error ipc_error(std::uint32_t code) noexcept {
     return os::core::make_error(os::core::ErrorDomain::kernel, code);
 }
-
 [[nodiscard]] constexpr bool has_rights(Rights actual, Rights required) noexcept {
     return (actual & required) == required;
 }
-
 [[nodiscard]] constexpr os::core::Result<IpcEndpoint> decode_endpoint_object(ObjectId object) noexcept {
     if ((object & ipc_object_tag_mask) != ipc_object_tag) {
         return ipc_error(ipc_errors::invalid_capability);
@@ -47,9 +45,20 @@ const IpcEndpointTable::EndpointSlot* IpcEndpointTable::slot_for(IpcEndpoint end
 
 IpcEndpointTable::ReplySlot* IpcEndpointTable::reply_slot(const IpcReplySeal& seal) noexcept {
     if (!seal.valid()) return nullptr;
-    for (auto& slot : replies_) {
-        if (slot.active && slot.seal == seal) return &slot;
+    for (auto& slot : replies_) if (slot.active && slot.seal == seal) return &slot;
+    return nullptr;
+}
+
+IpcEndpointTable::PendingSlot* IpcEndpointTable::pending_slot(
+    ThreadId caller, IpcEndpoint endpoint) noexcept {
+    for (auto& slot : pending_) {
+        if (slot.active && slot.caller == caller && slot.endpoint == endpoint) return &slot;
     }
+    return nullptr;
+}
+
+IpcEndpointTable::PendingSlot* IpcEndpointTable::free_pending_slot() noexcept {
+    for (auto& slot : pending_) if (!slot.active) return &slot;
     return nullptr;
 }
 
@@ -61,14 +70,22 @@ void IpcEndpointTable::invalidate_replies_for(IpcEndpoint endpoint) noexcept {
     }
 }
 
+void IpcEndpointTable::cancel_pending_for(
+    IpcEndpoint endpoint, Rendezvous& rendezvous) noexcept {
+    for (auto& pending : pending_) {
+        if (!pending.active || !(pending.endpoint == endpoint)) continue;
+        (void)rendezvous.cancel_call(pending.caller, pending.server);
+        pending = PendingSlot{};
+        --pending_calls_;
+    }
+}
+
 os::core::Result<IpcEndpoint> IpcEndpointTable::create(ThreadId server) noexcept {
     if (server == invalid_thread) return ipc_error(ipc_errors::not_endpoint_owner);
     for (std::size_t index = 0U; index < endpoints_.size(); ++index) {
         auto& slot = endpoints_[index];
         if (slot.active) continue;
-        if (slot.generation == std::numeric_limits<IpcEndpointGeneration>::max()) {
-            continue;
-        }
+        if (slot.generation == std::numeric_limits<IpcEndpointGeneration>::max()) continue;
         ++slot.generation;
         if (slot.generation == 0U) continue;
         slot.server = server;
@@ -83,19 +100,21 @@ os::core::Result<IpcEndpoint> IpcEndpointTable::create(ThreadId server) noexcept
 }
 
 os::core::Result<void> IpcEndpointTable::retire(
-    ThreadId server, IpcEndpoint endpoint) noexcept {
+    ThreadId server,
+    IpcEndpoint endpoint,
+    Rendezvous& rendezvous) noexcept {
     auto* slot = slot_for(endpoint);
     if (slot == nullptr) return ipc_error(ipc_errors::stale_endpoint);
     if (server == invalid_thread || slot->server != server) {
         return ipc_error(ipc_errors::not_endpoint_owner);
     }
 
-    // Revocation is visible before reuse. The numeric slot may later return, but
-    // its generation changes and all reply seals from this incarnation are dead.
-    invalidate_replies_for(endpoint);
+    // Revocation becomes visible before any cancelled caller can run again.
     slot->server = invalid_thread;
     slot->active = false;
     --active_;
+    invalidate_replies_for(endpoint);
+    cancel_pending_for(endpoint, rendezvous);
     return {};
 }
 
@@ -127,9 +146,22 @@ os::core::Result<void> IpcEndpointTable::send(
     auto endpoint = endpoint_for_capability(
         caller, endpoint_capability, ipc_right_send, capabilities);
     if (!endpoint) return endpoint.error();
-    const auto* slot = slot_for(endpoint.value());
-    if (slot == nullptr) return ipc_error(ipc_errors::stale_endpoint);
-    return rendezvous.send(caller, slot->server);
+    const auto* owner = slot_for(endpoint.value());
+    if (owner == nullptr) return ipc_error(ipc_errors::stale_endpoint);
+
+    auto* pending = free_pending_slot();
+    if (pending == nullptr) return ipc_error(ipc_errors::pending_call_limit);
+    auto sent = rendezvous.send(caller, owner->server);
+    if (!sent) return sent.error();
+
+    *pending = PendingSlot{
+        .endpoint = endpoint.value(),
+        .caller = caller,
+        .server = owner->server,
+        .active = true,
+    };
+    ++pending_calls_;
+    return {};
 }
 
 os::core::Result<IpcReceived> IpcEndpointTable::receive(
@@ -148,18 +180,16 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     if (!caller) return caller.error();
     if (caller.value() == invalid_thread) return IpcReceived{};
 
+    if (pending_slot(caller.value(), endpoint.value()) == nullptr) {
+        return ipc_error(ipc_errors::pending_call_missing);
+    }
     if (next_transaction_ == 0U ||
         next_transaction_ == std::numeric_limits<IpcTransactionId>::max()) {
         return ipc_error(ipc_errors::transaction_exhausted);
     }
 
     ReplySlot* free = nullptr;
-    for (auto& slot : replies_) {
-        if (!slot.active) {
-            free = &slot;
-            break;
-        }
-    }
+    for (auto& slot : replies_) if (!slot.active) { free = &slot; break; }
     if (free == nullptr) return ipc_error(ipc_errors::reply_seal_limit);
 
     const IpcReplySeal seal{
@@ -183,14 +213,17 @@ os::core::Result<void> IpcEndpointTable::reply(
     if (endpoint == nullptr || endpoint->server != server) {
         return ipc_error(ipc_errors::stale_reply_seal);
     }
-    auto* slot = reply_slot(seal);
-    if (slot == nullptr) return ipc_error(ipc_errors::stale_reply_seal);
+    auto* seal_slot = reply_slot(seal);
+    auto* pending = pending_slot(seal.caller, seal.endpoint);
+    if (seal_slot == nullptr || pending == nullptr) {
+        return ipc_error(ipc_errors::stale_reply_seal);
+    }
 
-    // Consume authority before waking the caller. If a future machine copyout
-    // step fails, the transaction must be failed/retired rather than making the
-    // same reply token replayable.
-    *slot = ReplySlot{};
+    *seal_slot = ReplySlot{};
     --reply_seals_;
+    *pending = PendingSlot{};
+    --pending_calls_;
+
     auto replied = rendezvous.reply(server, seal.caller);
     if (!replied) return replied.error();
     return {};
