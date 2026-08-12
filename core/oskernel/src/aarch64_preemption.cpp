@@ -23,9 +23,6 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
     }
 
     // Stage every failure-prone authority before mutating live execution state.
-    // A scheduler choice is not enough: the selected thread must still own a
-    // live process translation, both outgoing/incoming EL0 frames must be valid,
-    // and the next tickless deadline must be representable.
     auto translation = translations.resolve(decision.thread, epochs);
     if (!translation) {
         return preemption_error(preemption_errors::translation_unavailable);
@@ -46,9 +43,6 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
     auto prepared_deadline = deadlines_.prepare(decision, now_nanoseconds);
     if (!prepared_deadline) return prepared_deadline.error();
 
-    // Commit authority first, after all preflight checks. From here the frame
-    // operations are guaranteed by the preflight in the current single-CPU
-    // regime; SMP will place this transaction under execution-state ownership.
     auto committed_deadline = deadlines_.commit(prepared_deadline.value());
     if (!committed_deadline) return committed_deadline.error();
 
@@ -87,6 +81,20 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::start(
     const auto decision = scheduler.choose(now_nanoseconds);
     return apply_decision(
         scheduler, translations, epochs, decision, now_nanoseconds, live, false);
+}
+
+os::core::Result<PreemptionResult> PreemptionCoordinator::reschedule(
+    Scheduler& scheduler,
+    const ProcessTranslationTable& translations,
+    const AddressSpaceEpochAuthority& epochs,
+    std::uint64_t now_nanoseconds,
+    ExceptionFrame& live) noexcept {
+    if (running_ == invalid_thread || scheduler.running() != running_) {
+        return preemption_error(preemption_errors::wrong_running_thread);
+    }
+    const auto decision = scheduler.choose(now_nanoseconds);
+    return apply_decision(
+        scheduler, translations, epochs, decision, now_nanoseconds, live, true);
 }
 
 os::core::Result<PreemptionResult> PreemptionCoordinator::on_timer(
