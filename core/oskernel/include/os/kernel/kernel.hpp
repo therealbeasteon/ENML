@@ -26,10 +26,6 @@ struct Teardown final {
     [[nodiscard]] friend constexpr bool operator==(const Teardown&, const Teardown&) = default;
 };
 
-// Composition boundary for Cookie Kernel state machines. Scheduler state is
-// always recomputed after an operation that can block/wake a thread; callers do
-// not get direct mutable access to Rendezvous or IPC internals and therefore
-// cannot perform half of a communication transition.
 class Kernel final {
 public:
     Kernel() noexcept = default;
@@ -44,22 +40,22 @@ public:
     [[nodiscard]] os::core::Result<void> reply(ThreadId self, ThreadId caller) noexcept;
     [[nodiscard]] os::core::Result<void> yield(ThreadId self) noexcept;
 
-    // Native IPC composition. The endpoint table validates capability authority;
-    // Rendezvous owns blocking/reply relationships; Kernel alone makes the
-    // scheduler observe the resulting state change.
     [[nodiscard]] os::core::Result<IpcEndpoint> create_ipc_endpoint(ThreadId server) noexcept;
     [[nodiscard]] os::core::Result<void> retire_ipc_endpoint(
         ThreadId server,
         IpcEndpoint endpoint) noexcept;
     [[nodiscard]] os::core::Result<void> ipc_send(
         ThreadId caller,
-        CapabilityId endpoint_capability) noexcept;
+        CapabilityId endpoint_capability,
+        IpcEnvelope request = {}) noexcept;
     [[nodiscard]] os::core::Result<IpcReceived> ipc_receive(
         ThreadId server,
         CapabilityId endpoint_capability) noexcept;
     [[nodiscard]] os::core::Result<void> ipc_reply(
         ThreadId server,
-        const IpcReplySeal& seal) noexcept;
+        const IpcReplySeal& seal,
+        IpcEnvelope response = {}) noexcept;
+    [[nodiscard]] os::core::Result<IpcEnvelope> ipc_take_reply(ThreadId caller) noexcept;
 
     os::core::Result<Dispatch> dispatch_interrupt(InterruptSource source) noexcept;
     Decision schedule(std::uint64_t now_nanoseconds) noexcept;
