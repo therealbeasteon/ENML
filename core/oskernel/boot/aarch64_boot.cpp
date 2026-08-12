@@ -98,28 +98,26 @@ find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
     return nullptr;
 }
 
-[[nodiscard]] bool map_range(
-    os::kernel::aarch64::EarlyStage1Builder& builder,
+[[nodiscard]] bool map_machine_range(
+    os::kernel::MachineAddressSpace& space,
     std::uint64_t virtual_begin,
     std::uint64_t physical_begin,
     std::uint64_t length,
     MachinePermissions permissions,
     MachineMemoryKind kind) noexcept {
-    if (length == 0ULL || (length % page_size) != 0ULL) return false;
-    const std::uint64_t pages = length / page_size;
-    for (std::uint64_t page = 0ULL; page < pages; ++page) {
-        auto mapped = builder.map_page(
-            virtual_begin + page * page_size,
-            physical_begin + page * page_size,
-            permissions,
-            kind);
-        if (!mapped) return false;
-    }
-    return true;
+    if (length == 0ULL || length > static_cast<std::uint64_t>(SIZE_MAX)) return false;
+    auto mapped = os::kernel::machine_map(
+        space,
+        static_cast<std::uintptr_t>(virtual_begin),
+        static_cast<std::uintptr_t>(physical_begin),
+        static_cast<std::size_t>(length),
+        permissions,
+        kind);
+    return static_cast<bool>(mapped);
 }
 
 [[nodiscard]] bool map_identity_symbols(
-    os::kernel::aarch64::EarlyStage1Builder& builder,
+    os::kernel::MachineAddressSpace& space,
     const char* begin,
     const char* end,
     MachinePermissions permissions) noexcept {
@@ -128,18 +126,12 @@ find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
     if (finish < start || (start & (page_size - 1ULL)) != 0ULL ||
         (finish & (page_size - 1ULL)) != 0ULL) return false;
     if (finish == start) return true;
-    return map_range(
-        builder, start, start, finish - start,
+    return map_machine_range(
+        space, start, start, finish - start,
         permissions, MachineMemoryKind::normal);
 }
 
 void install_first_user_program(std::uint64_t physical_page) noexcept {
-    // AArch64 little-endian instruction words:
-    //   movz x8, #KernelCall::yield
-    //   svc  #0
-    //   movz x8, #KernelCall::yield
-    //   svc  #0
-    //   b    .
     auto* words = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(physical_page));
     constexpr std::uint32_t movz_x8_base = 0xD2800008U;
@@ -156,7 +148,6 @@ void install_first_user_program(std::uint64_t physical_page) noexcept {
 
 [[noreturn]] void guarded_runtime_main() noexcept {
     uart_write("COOKIE:M7.5d:GUARDED\n");
-    // The EL0 page mappings are already active in this TTBR0_EL1 regime.
     cookie_aarch64_enter_el0(user_code_virtual, user_stack_virtual + page_size);
 }
 
@@ -247,46 +238,38 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     auto root = builder.initialize();
     if (!root) halt();
 
+    // From this point onward every mapping, including bootstrap mappings, is
+    // admitted through the one machine-wide physical ledger. EL0 cannot alias
+    // an existing kernel RW page as executable because bootstrap state is no
+    // longer invisible to the W^X authority.
+    os::kernel::MachinePhysicalLedger physical_ledger{};
+    os::kernel::MachineAddressSpace kernel_space{};
+    if (!os::kernel::machine_bind_address_space(kernel_space, physical_ledger) ||
+        !os::kernel::aarch64_attach_early_stage1(kernel_space, builder)) halt();
+
     if (!map_identity_symbols(
-            builder, __cookie_text_start, __cookie_text_end,
+            kernel_space, __cookie_text_start, __cookie_text_end,
             MachinePermissions::read_execute) ||
         !map_identity_symbols(
-            builder, __cookie_rodata_start, __cookie_rodata_end,
+            kernel_space, __cookie_rodata_start, __cookie_rodata_end,
             MachinePermissions::read) ||
         !map_identity_symbols(
-            builder, __cookie_data_start, __bss_end,
+            kernel_space, __cookie_data_start, __bss_end,
             MachinePermissions::read_write) ||
-        !map_range(
-            builder,
+        !map_machine_range(
+            kernel_space,
             plan.value().page_tables.base,
             plan.value().page_tables.base,
             plan.value().page_tables.size,
             MachinePermissions::read_write,
             MachineMemoryKind::normal) ||
-        !map_range(
-            builder,
+        !map_machine_range(
+            kernel_space,
             dtb_range.base,
             dtb_range.base,
             dtb_range.size,
             MachinePermissions::read,
-            MachineMemoryKind::normal)) halt();
-
-    const auto* uart = find_pl011(inventory.value());
-    if (uart == nullptr || !uart->registers.valid()) halt();
-    const auto uart_begin = align_down(uart->registers.base);
-    std::uint64_t uart_end = 0ULL;
-    if (uart->registers.base > UINT64_MAX - uart->registers.size ||
-        !align_up(uart->registers.base + uart->registers.size, uart_end) ||
-        !map_range(
-            builder, uart_begin, uart_begin, uart_end - uart_begin,
-            MachinePermissions::read_write, MachineMemoryKind::device)) halt();
-    boot_uart = reinterpret_cast<volatile std::uint32_t*>(
-        static_cast<std::uintptr_t>(uart->registers.base));
-
-    os::kernel::MachinePhysicalLedger physical_ledger{};
-    os::kernel::MachineAddressSpace kernel_space{};
-    if (!os::kernel::machine_bind_address_space(kernel_space, physical_ledger) ||
-        !os::kernel::aarch64_attach_early_stage1(kernel_space, builder) ||
+            MachineMemoryKind::normal) ||
         !os::kernel::machine_map_kernel_stack(
             kernel_space,
             static_cast<std::uintptr_t>(runtime_stack_virtual),
@@ -304,6 +287,18 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             static_cast<std::uintptr_t>(user_stack.value().base),
             static_cast<std::size_t>(page_size),
             MachinePermissions::read_write)) halt();
+
+    const auto* uart = find_pl011(inventory.value());
+    if (uart == nullptr || !uart->registers.valid()) halt();
+    const auto uart_begin = align_down(uart->registers.base);
+    std::uint64_t uart_end = 0ULL;
+    if (uart->registers.base > UINT64_MAX - uart->registers.size ||
+        !align_up(uart->registers.base + uart->registers.size, uart_end) ||
+        !map_machine_range(
+            kernel_space, uart_begin, uart_begin, uart_end - uart_begin,
+            MachinePermissions::read_write, MachineMemoryKind::device)) halt();
+    boot_uart = reinterpret_cast<volatile std::uint32_t*>(
+        static_cast<std::uintptr_t>(uart->registers.base));
 
     if (!os::kernel::aarch64::activate_stage1_translation(root.value())) halt();
     if (!os::kernel::aarch64::install_exception_vectors()) halt();
