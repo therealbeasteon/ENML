@@ -35,9 +35,6 @@ struct MachineAddressSpace final {
     MachineAddressSpace& space,
     aarch64::EarlyStage1Builder& builder) noexcept;
 
-// M7.5f bring-up seam for EL0 mappings. This is intentionally AArch64-local
-// until the first user process proves the hardware semantics; the portable VM
-// contract will absorb it only after those semantics are validated.
 [[nodiscard]] os::core::Result<void> aarch64_map_user(
     MachineAddressSpace& space,
     std::uintptr_t virtual_base,
@@ -48,5 +45,9 @@ struct MachineAddressSpace final {
 extern "C" void cookie_aarch64_switch_context(
     MachineContext* from,
     const MachineContext* to) noexcept;
+
+extern "C" [[noreturn]] void cookie_aarch64_enter_el0(
+    std::uint64_t entry,
+    std::uint64_t stack) noexcept;
 
 } // namespace os::kernel
