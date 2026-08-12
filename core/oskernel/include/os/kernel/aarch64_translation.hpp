@@ -30,7 +30,6 @@ namespace descriptor {
 inline constexpr std::uint64_t valid = 1ULL << 0U;
 inline constexpr std::uint64_t table_or_page = 1ULL << 1U;
 inline constexpr std::uint64_t attr_index_shift = 2U;
-// AP[2:1] encodings used by Cookie's stage-1 leafs.
 inline constexpr std::uint64_t ap_el1_rw_el0_none = 0ULL << 6U;
 inline constexpr std::uint64_t ap_el1_rw_el0_rw = 1ULL << 6U;
 inline constexpr std::uint64_t ap_el1_ro_el0_none = 2ULL << 6U;
@@ -87,8 +86,6 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
            descriptor::valid | descriptor::table_or_page;
 }
 
-// EL1-only mapping encoding. This remains deliberately separate from user_page_descriptor():
-// adding EL0 access must never silently broaden a kernel mapping.
 [[nodiscard]] constexpr std::uint64_t page_descriptor(
     std::uint64_t physical_address,
     MachinePermissions permissions,
@@ -129,11 +126,6 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
     return value;
 }
 
-// Explicit EL0 mapping encoding for ordinary memory only. Device memory is never
-// user-mappable through this primitive. Executable pages are read-only at both
-// EL0 and EL1 and PXN prevents the kernel from executing user code while it is
-// privileged; writable pages are UXN and PXN. MachinePermissions has no RWX
-// state, so writable+executable user memory is unrepresentable.
 [[nodiscard]] constexpr std::uint64_t user_page_descriptor(
     std::uint64_t physical_address,
     MachinePermissions permissions) noexcept {
@@ -154,22 +146,18 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
         return value | descriptor::ap_el1_rw_el0_rw |
                descriptor::unprivileged_execute_never;
     case MachinePermissions::read_execute:
-        // PXN remains set while UXN is deliberately clear: EL0 may execute,
-        // EL1 may not execute the same user-controlled bytes.
         return value | descriptor::ap_el1_ro_el0_ro;
     default:
         return 0ULL;
     }
 }
 
-// 39-bit TTBR0_EL1 regime, 4 KiB granule, inner-shareable WBWA table walks.
-// Cookie v1 intentionally caps the configured physical-address width at 48 bits
-// even if hardware reports 52-bit support; wider descriptor layouts get their
-// own review rather than silently changing this format.
 [[nodiscard]] constexpr std::uint8_t cookie_ips(std::uint8_t hardware_parange) noexcept {
     return hardware_parange <= 5U ? hardware_parange : 5U;
 }
 
+// Bring-up TCR: lower 39-bit TTBR0 only. TTBR1 walks remain disabled until the
+// kernel has been relocated into the separately reviewed upper region.
 [[nodiscard]] constexpr std::uint64_t tcr_el1_for_ips(std::uint8_t ips) noexcept {
     if (ips > 5U) return 0ULL;
     constexpr std::uint64_t irgn0_wbwa = 1ULL << 8U;
@@ -182,7 +170,29 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
            (static_cast<std::uint64_t>(ips) << 32U);
 }
 
+// Mature split contract: TTBR0 is the disposable user domain and TTBR1 is the
+// stable kernel domain. Both use 39-bit, 4 KiB, inner-shareable WBWA walks.
+// A1 remains clear so the current ASID comes from TTBR0_EL1; EPD1 remains clear
+// so upper-region walks are enabled. This function is pure/testable and is not
+// used by activate_stage1_translation() until high-kernel relocation is ready.
+[[nodiscard]] constexpr std::uint64_t split_tcr_el1_for_ips(std::uint8_t ips) noexcept {
+    if (ips > 5U) return 0ULL;
+    constexpr std::uint64_t irgn0_wbwa = 1ULL << 8U;
+    constexpr std::uint64_t orgn0_wbwa = 1ULL << 10U;
+    constexpr std::uint64_t sh0_inner = 3ULL << 12U;
+    constexpr std::uint64_t t1sz_shift = 16U;
+    constexpr std::uint64_t irgn1_wbwa = 1ULL << 24U;
+    constexpr std::uint64_t orgn1_wbwa = 1ULL << 26U;
+    constexpr std::uint64_t sh1_inner = 3ULL << 28U;
+    constexpr std::uint64_t tg1_4k = 2ULL << 30U;
+    return static_cast<std::uint64_t>(stage1_t0sz) |
+           irgn0_wbwa | orgn0_wbwa | sh0_inner |
+           (static_cast<std::uint64_t>(stage1_t1sz) << t1sz_shift) |
+           irgn1_wbwa | orgn1_wbwa | sh1_inner | tg1_4k |
+           (static_cast<std::uint64_t>(ips) << 32U);
+}
+
 [[nodiscard]] os::core::Result<void>
 activate_stage1_translation(std::uint64_t level1_root_physical) noexcept;
 
-} // namespace os::kernel::aarch64;
+} // namespace os::kernel::aarch64
