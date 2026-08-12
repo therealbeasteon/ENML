@@ -4,6 +4,7 @@
 
 #include <os/core/result.hpp>
 #include <os/kernel/aarch64_user_frames.hpp>
+#include <os/kernel/process_translation.hpp>
 #include <os/kernel/scheduler.hpp>
 #include <os/kernel/scheduler_deadline.hpp>
 
@@ -13,20 +14,26 @@ namespace preemption_errors {
 inline constexpr std::uint32_t no_runnable_thread = 120U;
 inline constexpr std::uint32_t running_thread_missing = 121U;
 inline constexpr std::uint32_t wrong_running_thread = 122U;
+inline constexpr std::uint32_t translation_unavailable = 123U;
 } // namespace preemption_errors
 
 struct PreemptionResult final {
     ThreadId previous {invalid_thread};
     ThreadId next {invalid_thread};
     SchedulerDeadline deadline {};
+    ProcessTranslationBinding translation {};
     bool switched {false};
     bool preempted {false};
 };
 
-// Architecture-local execution state driven by the portable scheduler. It does
-// not acknowledge GIC interrupts or program timers; those remain machine-layer
-// operations. This object only turns a scheduler decision into a safe EL0 frame
-// transition and a generation-bound next deadline.
+// Architecture-local execution state driven by the portable scheduler.
+//
+// Cookie's switch is intentionally two-authority: a scheduler decision is not
+// enough to mutate the live EL0 frame. The selected thread must first resolve to
+// a still-active process translation epoch/root. Only after that validation do
+// we capture/restore register state. The machine layer can then install the
+// returned translation binding before ERET. This prevents a stale scheduler
+// entry from partially switching execution into a dead memory universe.
 class PreemptionCoordinator final {
 public:
     [[nodiscard]] os::core::Result<void> admit_frame(
@@ -37,11 +44,15 @@ public:
 
     [[nodiscard]] os::core::Result<PreemptionResult> start(
         Scheduler& scheduler,
+        const ProcessTranslationTable& translations,
+        const AddressSpaceEpochAuthority& epochs,
         std::uint64_t now_nanoseconds,
         ExceptionFrame& live) noexcept;
 
     [[nodiscard]] os::core::Result<PreemptionResult> on_timer(
         Scheduler& scheduler,
+        const ProcessTranslationTable& translations,
+        const AddressSpaceEpochAuthority& epochs,
         const SchedulerDeadline& delivered,
         std::uint64_t now_nanoseconds,
         ExceptionFrame& live) noexcept;
@@ -54,6 +65,8 @@ public:
 private:
     [[nodiscard]] os::core::Result<PreemptionResult> apply_decision(
         Scheduler& scheduler,
+        const ProcessTranslationTable& translations,
+        const AddressSpaceEpochAuthority& epochs,
         const Decision& decision,
         std::uint64_t now_nanoseconds,
         ExceptionFrame& live,
