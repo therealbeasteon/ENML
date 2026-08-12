@@ -52,8 +52,6 @@ int main() {
     auto wake = rendezvous.wake_reason_of(client);
     require(wake && wake.value() == WakeReason::replied);
 
-    // Completed replies are consumed exactly once. A caller cannot begin a new
-    // synchronous call while an earlier response is still parked in-kernel.
     require(!ipc.send(client, client_cap.value(), capabilities, rendezvous));
     require(ipc.take_reply(client));
     require(!ipc.take_reply(client));
@@ -141,6 +139,25 @@ int main() {
     require(then_b.value().caller == attacker);
     require(ipc.reply(server, then_b.value().reply, rendezvous));
     require(ipc.take_reply(attacker));
+
+    // Retirement also owns the receiver side: a server blocked on an endpoint
+    // is released when that exact endpoint generation is retired.
+    auto endpoint_c = ipc.create(server);
+    require(endpoint_c);
+    const auto object_c = ipc_object_id(endpoint_c.value());
+    auto server_cap_c = capabilities.mint(
+        server, object_c, ipc_right_receive, false);
+    require(server_cap_c);
+    auto wait_c = ipc.receive(server, server_cap_c.value(), capabilities, rendezvous);
+    require(wait_c && !wait_c.value().valid());
+    server_state = rendezvous.state_of(server);
+    require(server_state && server_state.value() == ThreadState::receive_blocked);
+    require(ipc.retire(server, endpoint_c.value(), rendezvous));
+    server_state = rendezvous.state_of(server);
+    require(server_state && server_state.value() == ThreadState::ready);
+    auto server_wake = rendezvous.wake_reason_of(server);
+    require(server_wake && server_wake.value() == WakeReason::endpoint_retired);
+    require(ipc.pending_call_count() == 0U);
 
     return 0;
 }
