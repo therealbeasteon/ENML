@@ -18,6 +18,22 @@ using AddressSpaceAsid = std::uint16_t;
 inline constexpr std::size_t max_address_space_epochs = 63U;
 inline constexpr AddressSpaceAsid kernel_reserved_asid = 0U;
 
+// Stable software identity for one lifetime of an address space. ASID is
+// deliberately absent: it is a hardware translation-cache tag and is reused
+// after the old translations have been invalidated. Security policy must bind to
+// this identity, never to ASID alone.
+struct AddressSpaceIdentity final {
+    AddressSpaceSlot slot {0U};
+    AddressSpaceGeneration generation {0U};
+
+    [[nodiscard]] constexpr bool valid() const noexcept {
+        return generation != 0U;
+    }
+
+    [[nodiscard]] friend constexpr bool operator==(
+        const AddressSpaceIdentity&, const AddressSpaceIdentity&) = default;
+};
+
 struct AddressSpaceEpoch final {
     AddressSpaceSlot slot {0U};
     AddressSpaceGeneration generation {0U};
@@ -25,6 +41,11 @@ struct AddressSpaceEpoch final {
 
     [[nodiscard]] constexpr bool valid() const noexcept {
         return generation != 0U && asid != kernel_reserved_asid;
+    }
+
+    [[nodiscard]] constexpr AddressSpaceIdentity identity() const noexcept {
+        if (!valid()) return {};
+        return AddressSpaceIdentity{slot, generation};
     }
 
     [[nodiscard]] friend constexpr bool operator==(
