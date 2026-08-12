@@ -1,4 +1,7 @@
+#include <array>
+#include <cstddef>
 #include <cstdlib>
+#include <span>
 
 #include <os/kernel/kernel.hpp>
 
@@ -31,32 +34,42 @@ int main() {
         false);
     require(client_cap);
 
-    // Send blocks the client through the composed Kernel and scheduler state is
-    // synchronized immediately; no caller has to remember a separate update.
-    require(kernel.ipc_send(client, client_cap.value()));
+    const std::array<std::byte, 4U> request_bytes{
+        std::byte{0x43}, std::byte{0x4F}, std::byte{0x4F}, std::byte{0x4B}};
+    auto request = os::kernel::IpcEnvelope::from(std::span<const std::byte>{request_bytes});
+    require(request);
+
+    require(kernel.ipc_send(client, client_cap.value(), request.value()));
     auto client_runnable = kernel.runqueue().is_runnable(client);
     require(client_runnable && !client_runnable.value());
 
     auto received = kernel.ipc_receive(server, owner_cap.value());
     require(received && received.value().valid());
     require(received.value().caller == client);
+    require(received.value().request == request.value());
 
-    require(kernel.ipc_reply(server, received.value().reply));
+    const std::array<std::byte, 2U> reply_bytes{std::byte{0x4F}, std::byte{0x4B}};
+    auto response = os::kernel::IpcEnvelope::from(std::span<const std::byte>{reply_bytes});
+    require(response);
+    require(kernel.ipc_reply(server, received.value().reply, response.value()));
     client_runnable = kernel.runqueue().is_runnable(client);
     require(client_runnable && client_runnable.value());
 
-    // A second call is cancelled by endpoint retirement. The client becomes
-    // runnable with endpoint_retired, while the server thread itself survives.
-    require(kernel.ipc_send(client, client_cap.value()));
+    auto collected = kernel.ipc_take_reply(client);
+    require(collected && collected.value() == response.value());
+    require(!kernel.ipc_take_reply(client));
+
+    // A second call is cancelled by endpoint retirement. No completed response
+    // exists for a cancelled transaction, so it cannot be mistaken for success.
+    require(kernel.ipc_send(client, client_cap.value(), request.value()));
     require(kernel.retire_ipc_endpoint(server, endpoint.value()));
     auto wake = kernel.threads().wake_reason_of(client);
     require(wake && wake.value() == os::kernel::WakeReason::endpoint_retired);
+    require(!kernel.ipc_take_reply(client));
     client_runnable = kernel.runqueue().is_runnable(client);
     require(client_runnable && client_runnable.value());
     require(kernel.live_thread_count() == 2U);
 
-    // Thread death also retires every endpoint owned by the dying server before
-    // generic rendezvous teardown, so endpoint lifecycle cannot be forgotten.
     auto endpoint2 = kernel.create_ipc_endpoint(server);
     require(endpoint2);
     auto owner2 = kernel.capabilities().mint(
@@ -81,6 +94,11 @@ int main() {
     wake = kernel.threads().wake_reason_of(client);
     require(wake && wake.value() == os::kernel::WakeReason::endpoint_retired);
     require(kernel.live_thread_count() == 1U);
+
+    // Inline payloads are a hard ceiling, not a hint. Larger transfer must use
+    // the later explicit memory-authority path rather than growing kernel state.
+    const std::array<std::byte, os::kernel::max_ipc_inline_bytes + 1U> oversized{};
+    require(!os::kernel::IpcEnvelope::from(std::span<const std::byte>{oversized}));
 
     return 0;
 }
