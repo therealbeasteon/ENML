@@ -84,6 +84,25 @@ int main() {
     if (!check(table.live_capability_count() == 0U,
                "revocation left context-bound authority behind")) return 1;
 
+    // The migration boundary is bidirectional. A stronger ExecutionAuthority
+    // must not be accepted as authority over a legacy ThreadId-only capability;
+    // otherwise callers could silently cross protection modes while M7.8 is
+    // being introduced.
+    auto legacy = table.mint(thread, object, rights, true);
+    if (!check(static_cast<bool>(legacy), "legacy setup mint refused")) return 1;
+    if (!check(table.holds(thread, legacy.value()), "legacy holder lost legacy capability")) return 1;
+    if (!check(!table.holds(first, legacy.value()),
+               "context authority exercised a legacy capability")) return 1;
+    if (!check(refused(table.grant(first, legacy.value(), peer, rights, false),
+                       capability_errors::not_holder),
+               "context grant crossed into legacy authority")) return 1;
+    if (!check(refused(table.revoke(first, legacy.value()),
+                       capability_errors::not_revocable),
+               "context revoke crossed into legacy authority")) return 1;
+    auto legacy_removed = table.revoke(thread, legacy.value());
+    if (!check(static_cast<bool>(legacy_removed) && legacy_removed.value() == 1U,
+               "legacy holder could not revoke legacy capability")) return 1;
+
     // Administrative teardown is intentionally stronger than a process claim:
     // destroying a numeric thread must still remove every generation it holds.
     auto teardown_root = table.mint(first, object, rights, true);
