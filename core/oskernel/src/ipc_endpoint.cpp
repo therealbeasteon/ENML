@@ -290,13 +290,10 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     PendingSlot* pending = nullptr;
     auto delivered = rendezvous.partner_of(server);
     if (!delivered) return delivered.error();
+
     if (delivered.value() != invalid_thread) {
         pending = pending_slot(delivered.value(), endpoint.value());
         if (pending == nullptr) return ipc_error(ipc_errors::pending_call_missing);
-        auto consumed = rendezvous.receive(server);
-        if (!consumed || consumed.value() != delivered.value()) {
-            return ipc_error(ipc_errors::pending_call_missing);
-        }
     } else {
         pending = pending_slot(endpoint.value());
         if (pending == nullptr) {
@@ -305,31 +302,6 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
             owner->receive_waiting = true;
             return IpcReceived{};
         }
-
-        if (next_transaction_ == 0U ||
-            next_transaction_ == std::numeric_limits<IpcTransactionId>::max()) {
-            return ipc_error(ipc_errors::transaction_exhausted);
-        }
-        ReplySlot* free = nullptr;
-        for (auto& slot : replies_) if (!slot.active) { free = &slot; break; }
-        if (free == nullptr) return ipc_error(ipc_errors::reply_seal_limit);
-
-        auto accepted = rendezvous.accept_sender(server, pending->caller);
-        if (!accepted) return accepted.error();
-
-        const IpcReplySeal seal{
-            .endpoint = endpoint.value(),
-            .transaction = next_transaction_++,
-            .caller = pending->caller,
-            .server = server,
-        };
-        *free = ReplySlot{.seal = seal, .active = true};
-        ++reply_seals_;
-        return IpcReceived{
-            .caller = pending->caller,
-            .reply = seal,
-            .request = pending->request,
-        };
     }
 
     if (next_transaction_ == 0U ||
@@ -339,6 +311,16 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     ReplySlot* free = nullptr;
     for (auto& slot : replies_) if (!slot.active) { free = &slot; break; }
     if (free == nullptr) return ipc_error(ipc_errors::reply_seal_limit);
+
+    if (delivered.value() != invalid_thread) {
+        auto consumed = rendezvous.receive(server);
+        if (!consumed || consumed.value() != delivered.value()) {
+            return ipc_error(ipc_errors::pending_call_missing);
+        }
+    } else {
+        auto accepted = rendezvous.accept_sender(server, pending->caller);
+        if (!accepted) return accepted.error();
+    }
 
     const IpcReplySeal seal{
         .endpoint = endpoint.value(),
