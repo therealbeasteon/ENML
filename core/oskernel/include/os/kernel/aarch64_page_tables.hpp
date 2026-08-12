@@ -97,6 +97,53 @@ public:
         return {};
     }
 
+    // Non-mutating page-table walk for admission preflight. This is used before
+    // multi-page operations so Cookie can reject overlap/corruption before the
+    // first descriptor is written. A malformed intermediate descriptor is an
+    // internal consistency failure, never treated as an unmapped hole.
+    [[nodiscard]] os::core::Result<bool> mapped(std::uint64_t virtual_address) const noexcept {
+        if (root_ == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
+        if (!page_aligned(virtual_address) || !stage1_virtual_address(virtual_address)) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::alignment);
+        }
+
+        const auto* l1 = table_pointer(root_);
+        const auto l1_entry = l1[level1_index(virtual_address)];
+        if ((l1_entry & descriptor::valid) == 0ULL) return false;
+        if ((l1_entry & descriptor::table_or_page) == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+        const auto l2_pa = l1_entry & page_address_mask;
+        if (!stage1_physical_address(l2_pa)) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+
+        const auto* l2 = table_pointer(l2_pa);
+        const auto l2_entry = l2[level2_index(virtual_address)];
+        if ((l2_entry & descriptor::valid) == 0ULL) return false;
+        if ((l2_entry & descriptor::table_or_page) == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+        const auto l3_pa = l2_entry & page_address_mask;
+        if (!stage1_physical_address(l3_pa)) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+
+        const auto* l3 = table_pointer(l3_pa);
+        const auto leaf = l3[level3_index(virtual_address)];
+        if ((leaf & descriptor::valid) == 0ULL) return false;
+        if ((leaf & descriptor::table_or_page) == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+        return true;
+    }
+
+    [[nodiscard]] std::size_t remaining_table_pages() const noexcept {
+        return arena_ == nullptr ? 0U : arena_->remaining_pages();
+    }
+
     [[nodiscard]] std::uint64_t root_physical() const noexcept { return root_; }
 
 private:
