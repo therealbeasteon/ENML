@@ -1,3 +1,4 @@
+#include <os/kernel/aarch64_kernel_mapping_manifest.hpp>
 #include <os/kernel/aarch64_kernel_translation_domain.hpp>
 #include <os/kernel/aarch64_translation.hpp>
 
@@ -26,6 +27,48 @@ int main() {
     require(kernel_stage1_virtual_address(UINT64_MAX));
     require(!kernel_stage1_virtual_address(kernel_virtual_base - 1ULL));
     require(!kernel_stage1_virtual_address(0ULL));
+
+    // The future TTBR1 map is projected from the one reviewed physical manifest,
+    // preserving attributes while replacing temporary low aliases with a
+    // deterministic upper-canonical alias.
+    KernelMappingManifest manifest{};
+    require(manifest.add({
+        .virtual_base = 0x0000'0000'0040'0000ULL,
+        .physical_base = 0x0000'0000'0040'0000ULL,
+        .length = architectural_page_size,
+        .permissions = MachinePermissions::read_execute,
+        .kind = MachineMemoryKind::normal,
+    }));
+    require(manifest.add({
+        .virtual_base = 0x0000'0000'0900'0000ULL,
+        .physical_base = 0x0000'0000'0900'0000ULL,
+        .length = architectural_page_size,
+        .permissions = MachinePermissions::read_write,
+        .kind = MachineMemoryKind::device,
+    }));
+    auto projected = project_kernel_manifest_to_upper(manifest);
+    require(projected);
+    require(projected.value().size() == manifest.size());
+    require(projected.value()[0].virtual_base ==
+            kernel_virtual_alias(manifest[0].physical_base));
+    require(projected.value()[0].physical_base == manifest[0].physical_base);
+    require(projected.value()[0].permissions == manifest[0].permissions);
+    require(projected.value()[0].kind == manifest[0].kind);
+    require(kernel_stage1_virtual_address(projected.value()[0].virtual_base));
+    require(projected.value()[1].virtual_base ==
+            kernel_virtual_alias(manifest[1].physical_base));
+    require(projected.value()[1].kind == MachineMemoryKind::device);
+
+    KernelMappingManifest outside_ttbr1_span{};
+    require(outside_ttbr1_span.add({
+        .virtual_base = 0x1000ULL,
+        .physical_base = user_virtual_limit,
+        .length = architectural_page_size,
+        .permissions = MachinePermissions::read_write,
+        .kind = MachineMemoryKind::normal,
+    }));
+    require(!project_kernel_manifest_to_upper(outside_ttbr1_span));
+    require(kernel_virtual_alias(user_virtual_limit) == 0ULL);
 
     // Kernel translation authority cannot be minted from a raw address or a
     // process/lower root. It requires a sealed upper-region page-table builder.
