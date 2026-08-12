@@ -2,6 +2,7 @@
 
 #include <cstdint>
 
+#include <os/core/result.hpp>
 #include <os/kernel/aarch64.hpp>
 #include <os/kernel/machine.hpp>
 
@@ -104,16 +105,30 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
 }
 
 // 39-bit TTBR0_EL1 regime, 4 KiB granule, inner-shareable WBWA table walks.
-// IPS is kept as an explicit reviewed input from ID_AA64MMFR0_EL1 rather than
-// assuming every future Cookie machine has the same physical-address width.
+// Cookie v1 intentionally caps the configured physical-address width at 48 bits
+// even if hardware reports 52-bit support; wider descriptor layouts get their
+// own review rather than silently changing this format.
+[[nodiscard]] constexpr std::uint8_t cookie_ips(std::uint8_t hardware_parange) noexcept {
+    return hardware_parange <= 5U ? hardware_parange : 5U;
+}
+
 [[nodiscard]] constexpr std::uint64_t tcr_el1_for_ips(std::uint8_t ips) noexcept {
-    if (ips > 6U) return 0ULL;
+    if (ips > 5U) return 0ULL;
     constexpr std::uint64_t irgn0_wbwa = 1ULL << 8U;
     constexpr std::uint64_t orgn0_wbwa = 1ULL << 10U;
     constexpr std::uint64_t sh0_inner = 3ULL << 12U;
+    constexpr std::uint64_t epd1_disable_ttbr1_walks = 1ULL << 23U;
     return static_cast<std::uint64_t>(stage1_t0sz) |
            irgn0_wbwa | orgn0_wbwa | sh0_inner |
+           epd1_disable_ttbr1_walks |
            (static_cast<std::uint64_t>(ips) << 32U);
 }
+
+// Installs a fully constructed, page-aligned L1 translation-table root and
+// enables the initial EL1 stage-1 translation regime. The caller must identity-
+// map the executing code, current stack, vector table and the table pages before
+// calling this function; the activation code cannot make a bad table safe.
+[[nodiscard]] os::core::Result<void>
+activate_stage1_translation(std::uint64_t level1_root_physical) noexcept;
 
 } // namespace os::kernel::aarch64
