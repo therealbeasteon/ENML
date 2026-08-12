@@ -9,9 +9,6 @@
 
 namespace os::kernel::aarch64 {
 
-// Monotonic boot-only page allocator for translation tables. It owns a
-// bootloader/machine-port supplied RAM interval and never frees or allocates
-// outside it. The general physical allocator replaces it after boot.
 class EarlyPageArena final {
 public:
     EarlyPageArena(std::uint64_t begin, std::uint64_t end) noexcept
@@ -44,9 +41,9 @@ private:
 };
 
 // Page-only stage-1 table builder used before the general VM subsystem exists.
-// Table page physical addresses must be directly addressable by the boot CPU
-// (MMU off or identity mapped). No block mappings are accepted, which keeps
-// guard pages and permission transitions unambiguous during bring-up.
+// Intermediate table pages are monotonic in the early regime: leaf mappings can
+// be removed, but empty L2/L3 table pages are not reclaimed until the general
+// physical allocator owns page-table lifetime.
 class EarlyStage1Builder final {
 public:
     explicit EarlyStage1Builder(EarlyPageArena& arena) noexcept : arena_(&arena) {}
@@ -97,47 +94,27 @@ public:
         return {};
     }
 
-    // Non-mutating page-table walk for admission preflight. This is used before
-    // multi-page operations so Cookie can reject overlap/corruption before the
-    // first descriptor is written. A malformed intermediate descriptor is an
-    // internal consistency failure, never treated as an unmapped hole.
     [[nodiscard]] os::core::Result<bool> mapped(std::uint64_t virtual_address) const noexcept {
-        if (root_ == 0ULL) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        auto leaf = leaf_pointer(virtual_address);
+        if (!leaf) {
+            if (leaf.error().code == machine_errors::not_mapped) return false;
+            return leaf.error();
         }
-        if (!page_aligned(virtual_address) || !stage1_virtual_address(virtual_address)) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::alignment);
-        }
+        return ((*leaf.value()) & descriptor::valid) != 0ULL;
+    }
 
-        const auto* l1 = table_pointer(root_);
-        const auto l1_entry = l1[level1_index(virtual_address)];
-        if ((l1_entry & descriptor::valid) == 0ULL) return false;
-        if ((l1_entry & descriptor::table_or_page) == 0ULL) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+    // Clears exactly one level-3 page descriptor. This deliberately performs no
+    // TLBI: architectural invalidation belongs to the machine layer, which must
+    // order descriptor writes and TLB invalidation with DSB/ISB. Separating the
+    // table mutation from CPU invalidation makes that ordering explicit.
+    [[nodiscard]] os::core::Result<void> unmap_page(std::uint64_t virtual_address) noexcept {
+        auto leaf = leaf_pointer(virtual_address);
+        if (!leaf) return leaf.error();
+        if (((*leaf.value()) & descriptor::valid) == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::not_mapped);
         }
-        const auto l2_pa = l1_entry & page_address_mask;
-        if (!stage1_physical_address(l2_pa)) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
-        }
-
-        const auto* l2 = table_pointer(l2_pa);
-        const auto l2_entry = l2[level2_index(virtual_address)];
-        if ((l2_entry & descriptor::valid) == 0ULL) return false;
-        if ((l2_entry & descriptor::table_or_page) == 0ULL) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
-        }
-        const auto l3_pa = l2_entry & page_address_mask;
-        if (!stage1_physical_address(l3_pa)) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
-        }
-
-        const auto* l3 = table_pointer(l3_pa);
-        const auto leaf = l3[level3_index(virtual_address)];
-        if ((leaf & descriptor::valid) == 0ULL) return false;
-        if ((leaf & descriptor::table_or_page) == 0ULL) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
-        }
-        return true;
+        *leaf.value() = 0ULL;
+        return {};
     }
 
     [[nodiscard]] std::size_t remaining_table_pages() const noexcept {
@@ -157,6 +134,50 @@ private:
     static void zero_table(std::uint64_t physical) noexcept {
         auto* table = table_pointer(physical);
         for (std::size_t i = 0U; i < table_entries; ++i) table[i] = 0ULL;
+    }
+
+    [[nodiscard]] os::core::Result<std::uint64_t*>
+    leaf_pointer(std::uint64_t virtual_address) const noexcept {
+        if (root_ == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
+        if (!page_aligned(virtual_address) || !stage1_virtual_address(virtual_address)) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::alignment);
+        }
+
+        auto* l1 = table_pointer(root_);
+        const auto l1_entry = l1[level1_index(virtual_address)];
+        if ((l1_entry & descriptor::valid) == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::not_mapped);
+        }
+        if ((l1_entry & descriptor::table_or_page) == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+        const auto l2_pa = l1_entry & page_address_mask;
+        if (!stage1_physical_address(l2_pa)) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+
+        auto* l2 = table_pointer(l2_pa);
+        const auto l2_entry = l2[level2_index(virtual_address)];
+        if ((l2_entry & descriptor::valid) == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::not_mapped);
+        }
+        if ((l2_entry & descriptor::table_or_page) == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+        const auto l3_pa = l2_entry & page_address_mask;
+        if (!stage1_physical_address(l3_pa)) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+
+        auto* l3 = table_pointer(l3_pa);
+        auto* leaf = &l3[level3_index(virtual_address)];
+        if (((*leaf) & descriptor::valid) != 0ULL &&
+            ((*leaf) & descriptor::table_or_page) == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
+        }
+        return leaf;
     }
 
     [[nodiscard]] os::core::Result<std::uint64_t>
