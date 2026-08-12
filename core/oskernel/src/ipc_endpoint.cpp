@@ -270,12 +270,6 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     if (owner == nullptr) return ipc_error(ipc_errors::stale_endpoint);
     if (owner->server != server) return ipc_error(ipc_errors::not_endpoint_owner);
 
-    auto caller = rendezvous.receive(server);
-    if (!caller) return caller.error();
-    if (caller.value() == invalid_thread) return IpcReceived{};
-
-    auto* pending = pending_slot(caller.value(), endpoint.value());
-    if (pending == nullptr) return ipc_error(ipc_errors::pending_call_missing);
     if (next_transaction_ == 0U ||
         next_transaction_ == std::numeric_limits<IpcTransactionId>::max()) {
         return ipc_error(ipc_errors::transaction_exhausted);
@@ -284,6 +278,13 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     ReplySlot* free = nullptr;
     for (auto& slot : replies_) if (!slot.active) { free = &slot; break; }
     if (free == nullptr) return ipc_error(ipc_errors::reply_seal_limit);
+
+    auto caller = rendezvous.receive(server);
+    if (!caller) return caller.error();
+    if (caller.value() == invalid_thread) return IpcReceived{};
+
+    auto* pending = pending_slot(caller.value(), endpoint.value());
+    if (pending == nullptr) return ipc_error(ipc_errors::pending_call_missing);
 
     const IpcReplySeal seal{
         .endpoint = endpoint.value(),
