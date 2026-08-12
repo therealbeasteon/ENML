@@ -12,7 +12,7 @@ namespace {
 [[nodiscard]] constexpr bool has_rights(Rights actual, Rights required) noexcept {
     return (actual & required) == required;
 }
-[[nodiscard]] constexpr os::core::Result<IpcEndpoint> decode_endpoint_object(ObjectId object) noexcept {
+[[nodiscard]] os::core::Result<IpcEndpoint> decode_endpoint_object(ObjectId object) noexcept {
     if ((object & ipc_object_tag_mask) != ipc_object_tag) {
         return ipc_error(ipc_errors::invalid_capability);
     }
