@@ -3,6 +3,7 @@
 
 #include <os/core/error.hpp>
 #include <os/kernel/abi.hpp>
+#include <os/kernel/ipc_continuation.hpp>
 #include <os/kernel/ipc_syscall.hpp>
 
 namespace {
@@ -90,10 +91,6 @@ int main() {
     if (!check(!os::kernel::call_at(os::kernel::kernel_call_count()),
                "index past the surface accepted")) return 1;
 
-    // Native IPC reuses send/receive/reply; it does not grow the call surface.
-    // send(cap, exchange_ptr, request_len), receive(cap, exchange_ptr), and
-    // reply(transaction, exchange_ptr, response_len) are hostile-register
-    // decoders before any user-memory ticket is created.
     {
         auto send = os::kernel::decode_ipc_send_syscall(7U, 0x1000U, 64U);
         if (!check(static_cast<bool>(send), "valid IPC send registers rejected")) return 1;
@@ -122,6 +119,39 @@ int main() {
         if (!check(!os::kernel::decode_ipc_reply_syscall(
                        11U, 0x3000U, os::kernel::max_ipc_inline_bytes + 1U),
                    "oversized IPC reply accepted")) return 1;
+    }
+
+    // A blocked send's eventual write-back destination is generation-bound.
+    // Reusing the same virtual address after the old epoch retires does not make
+    // the stale continuation valid for the replacement address space.
+    {
+        os::kernel::AddressSpaceEpochAuthority epochs{};
+        auto first = epochs.acquire();
+        if (!check(static_cast<bool>(first), "failed to acquire IPC continuation epoch")) return 1;
+        os::kernel::IpcContinuationTable continuations{};
+        if (!check(static_cast<bool>(continuations.arm(3U, first.value(), 0x4000U, epochs)),
+                   "failed to arm IPC continuation")) return 1;
+        if (!check(!continuations.arm(3U, first.value(), 0x5000U, epochs),
+                   "duplicate IPC continuation accepted")) return 1;
+
+        auto retiring = epochs.begin_retire(first.value());
+        if (!check(static_cast<bool>(retiring), "failed to retire IPC continuation epoch")) return 1;
+        if (!check(!continuations.take(3U, first.value(), epochs),
+                   "retired IPC continuation remained usable")) return 1;
+        if (!check(continuations.count() == 0U,
+                   "stale IPC continuation was not consumed")) return 1;
+        if (!check(static_cast<bool>(epochs.complete_retire(retiring.value())),
+                   "failed to complete IPC continuation epoch retirement")) return 1;
+
+        auto replacement = epochs.acquire();
+        if (!check(static_cast<bool>(replacement), "failed to acquire replacement epoch")) return 1;
+        if (!check(static_cast<bool>(continuations.arm(
+                       3U, replacement.value(), 0x4000U, epochs)),
+                   "replacement IPC continuation rejected")) return 1;
+        auto live = continuations.take(3U, replacement.value(), epochs);
+        if (!check(static_cast<bool>(live), "live IPC continuation rejected")) return 1;
+        if (!check(live.value().exchange_address == 0x4000U,
+                   "IPC continuation exchange address changed")) return 1;
     }
 
     return 0;
