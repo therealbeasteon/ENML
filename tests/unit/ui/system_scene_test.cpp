@@ -1,5 +1,6 @@
 #include <cstdlib>
 
+#include <os/ui/system_layouts.hpp>
 #include <os/ui/system_scenes.hpp>
 
 namespace {
@@ -31,6 +32,18 @@ int main() {
         .width_class = WidthClass::expanded,
         .height_class = HeightClass::regular,
         .cutout = CutoutKind::none,
+        .rounded_display = false,
+        .one_handed_preferred = false,
+    };
+
+    const DeviceProfile foldable {
+        .width_q6 = 1536U * 64U,
+        .height_q6 = 1840U * 64U,
+        .safe_insets = InsetsQ6{},
+        .posture = DevicePosture::unfolded,
+        .width_class = WidthClass::expanded,
+        .height_class = HeightClass::regular,
+        .cutout = CutoutKind::hinge,
         .rounded_display = false,
         .one_handed_preferred = false,
     };
@@ -78,6 +91,50 @@ int main() {
     require(system_scene_grammar_valid(wide_lock));
     require(!wide_home.lower_reach_priority);
     require(!wide_lock.lower_reach_priority);
+
+    require(system_layouts_valid(tall_phone));
+    const auto lock_layout = resolve_lock_layout(tall_phone);
+    require(scene_band_valid(lock_layout.trusted_status, tall_phone));
+    require(scene_band_valid(lock_layout.identity_field, tall_phone));
+    require(scene_band_valid(lock_layout.notification_field, tall_phone));
+    require(scene_band_valid(lock_layout.action_field, tall_phone));
+    require(lock_layout.action_field.top_q6 > lock_layout.identity_field.top_q6);
+
+    const auto phone_controls = resolve_quick_controls_layout(tall_phone);
+    require(phone_controls.columns == 2U);
+    require(phone_controls.lower_weighted);
+    require(!phone_controls.split_around_hinge);
+
+    const auto phone_notes = resolve_notification_stream_layout(tall_phone);
+    require(phone_notes.visible_groups == 4U);
+    require(phone_notes.newest_near_reach_zone);
+    require(!phone_notes.two_column_when_expanded);
+
+    const auto phone_switcher = resolve_switcher_geometry(tall_phone);
+    require(phone_switcher.contract.layout == SwitcherLayout::flowing_stack);
+    require(phone_switcher.primary_lanes == 1U);
+    require(phone_switcher.selected_task_centered);
+
+    require(system_layouts_valid(wide_phone));
+    const auto wide_controls = resolve_quick_controls_layout(wide_phone);
+    require(wide_controls.columns == 4U);
+    require(!wide_controls.lower_weighted);
+    const auto wide_notes = resolve_notification_stream_layout(wide_phone);
+    require(wide_notes.two_column_when_expanded);
+    const auto wide_switcher = resolve_switcher_geometry(wide_phone);
+    require(wide_switcher.contract.layout == SwitcherLayout::paired_field);
+    require(wide_switcher.primary_lanes == 2U);
+
+    require(system_layouts_valid(foldable));
+    const auto fold_controls = resolve_quick_controls_layout(foldable);
+    require(fold_controls.split_around_hinge);
+    const auto fold_switcher = resolve_switcher_geometry(foldable);
+    require(fold_switcher.contract.layout == SwitcherLayout::seam_split);
+    require(fold_switcher.reserve_center_seam);
+    require(!fold_switcher.selected_task_centered);
+
+    const DeviceProfile impossible {};
+    require(!system_layouts_valid(impossible));
 
     return 0;
 }
