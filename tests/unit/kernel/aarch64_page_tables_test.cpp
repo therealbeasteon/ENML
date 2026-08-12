@@ -26,14 +26,29 @@ int main() {
     require(static_cast<bool>(root));
     require(root.value() == begin);
     require(arena.remaining_pages() == 4U);
+    require(builder.remaining_table_pages() == 4U);
 
     constexpr std::uint64_t va = 0x0000'0000'4000'0000ULL;
     constexpr std::uint64_t pa = 0x0000'0000'8000'0000ULL;
+    auto before = builder.mapped(va);
+    require(static_cast<bool>(before));
+    require(!before.value());
+    require(builder.remaining_table_pages() == 4U);
+
     auto mapped = builder.map_page(
         va, pa, MachinePermissions::read_execute, MachineMemoryKind::normal);
     require(static_cast<bool>(mapped));
     // One L2 and one L3 table were allocated beneath the L1 root.
     require(arena.remaining_pages() == 2U);
+
+    auto after = builder.mapped(va);
+    require(static_cast<bool>(after));
+    require(after.value());
+    require(builder.remaining_table_pages() == 2U);
+
+    auto adjacent_before = builder.mapped(va + 4096ULL);
+    require(static_cast<bool>(adjacent_before));
+    require(!adjacent_before.value());
 
     auto duplicate = builder.map_page(
         va, pa, MachinePermissions::read_execute, MachineMemoryKind::normal);
@@ -48,6 +63,9 @@ int main() {
     require(static_cast<bool>(second));
     // Same L1/L2 path: no extra table allocation.
     require(arena.remaining_pages() == 2U);
+    auto adjacent_after = builder.mapped(va + 4096ULL);
+    require(static_cast<bool>(adjacent_after));
+    require(adjacent_after.value());
 
     auto bad_device_exec = builder.map_page(
         va + 8192ULL,
