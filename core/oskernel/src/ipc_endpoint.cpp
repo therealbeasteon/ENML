@@ -118,6 +118,27 @@ os::core::Result<void> IpcEndpointTable::retire(
     return {};
 }
 
+std::size_t IpcEndpointTable::retire_all_owned_by(
+    ThreadId server,
+    Rendezvous& rendezvous) noexcept {
+    if (server == invalid_thread) return 0U;
+    std::size_t retired = 0U;
+    for (std::size_t index = 0U; index < endpoints_.size(); ++index) {
+        auto& slot = endpoints_[index];
+        if (!slot.active || slot.server != server) continue;
+        const IpcEndpoint endpoint{
+            .slot = static_cast<IpcEndpointSlot>(index),
+            .generation = slot.generation,
+        };
+        // This cannot fail: the endpoint was read directly from a live slot and
+        // the owner is the exact server being torn down. Keep one retirement
+        // path so explicit endpoint restart and process death have identical
+        // stale-capability/reply-seal semantics.
+        if (retire(server, endpoint, rendezvous)) ++retired;
+    }
+    return retired;
+}
+
 os::core::Result<IpcEndpoint> IpcEndpointTable::endpoint_for_capability(
     ThreadId holder,
     CapabilityId capability,
