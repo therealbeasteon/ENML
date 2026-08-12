@@ -28,9 +28,23 @@ namespace {
     return translations.resolve(current, epochs);
 }
 
+[[nodiscard]] os::core::Result<UserAccessTicket> ticket_from_binding(
+    const ProcessTranslationBinding& binding,
+    UserRange range,
+    UserAccessIntent intent) noexcept {
+    if (!binding.valid()) return machine_error(user_access_errors::stale_translation);
+    if (!range.valid()) return machine_error(user_access_errors::invalid_range);
+    return UserAccessTicket{
+        .thread = binding.thread,
+        .epoch = binding.epoch,
+        .root_physical = binding.root_physical,
+        .range = range,
+        .intent = intent,
+    };
+}
+
 [[nodiscard]] os::core::Result<IpcEnvelope> read_envelope(
-    ThreadId current,
-    AddressSpaceEpoch epoch,
+    const ProcessTranslationBinding& binding,
     std::uint64_t address,
     std::size_t length,
     const ProcessTranslationTable& translations,
@@ -38,13 +52,10 @@ namespace {
     if (length == 0U) return IpcEnvelope{};
 
     std::array<std::byte, max_ipc_inline_bytes> bytes{};
-    auto ticket = prepare_user_access(
-        current,
-        epoch,
+    auto ticket = ticket_from_binding(
+        binding,
         UserRange{address, length},
-        UserAccessIntent::read_from_user,
-        translations,
-        epochs);
+        UserAccessIntent::read_from_user);
     if (!ticket) return ticket.error();
 
     auto copied = copy_from_user_current(
@@ -57,21 +68,17 @@ namespace {
 }
 
 [[nodiscard]] os::core::Result<void> write_envelope(
-    ThreadId current,
-    AddressSpaceEpoch epoch,
+    const ProcessTranslationBinding& binding,
     std::uint64_t address,
     const IpcEnvelope& envelope,
     const ProcessTranslationTable& translations,
     const AddressSpaceEpochAuthority& epochs) noexcept {
     if (envelope.size == 0U) return {};
 
-    auto ticket = prepare_user_access(
-        current,
-        epoch,
+    auto ticket = ticket_from_binding(
+        binding,
         UserRange{address, envelope.size},
-        UserAccessIntent::write_to_user,
-        translations,
-        epochs);
+        UserAccessIntent::write_to_user);
     if (!ticket) return ticket.error();
     return copy_to_user_current(ticket.value(), envelope.view(), translations, epochs);
 }
@@ -93,8 +100,7 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
         auto decoded = decode_ipc_send_syscall(frame.x[0], frame.x[1], frame.x[2]);
         if (!decoded) return decoded.error();
         auto envelope = read_envelope(
-            current,
-            binding.value().epoch,
+            binding.value(),
             decoded.value().request.address,
             decoded.value().request.length,
             translations,
@@ -145,8 +151,7 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
 
         (void)kernel.ipc_cancel_receive_continuation(current);
         auto wrote = write_envelope(
-            current,
-            binding.value().epoch,
+            binding.value(),
             decoded.value().exchange_address,
             received.value().request,
             translations,
@@ -161,8 +166,7 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
         auto decoded = decode_ipc_reply_syscall(frame.x[0], frame.x[1], frame.x[2]);
         if (!decoded) return decoded.error();
         auto response = read_envelope(
-            current,
-            binding.value().epoch,
+            binding.value(),
             decoded.value().response.address,
             decoded.value().response.length,
             translations,
@@ -202,8 +206,7 @@ os::core::Result<bool> complete_ipc_current(
             return machine_error(ipc_machine_errors::no_receive_completion);
         }
         auto wrote = write_envelope(
-            current,
-            continuation.value().epoch,
+            binding.value(),
             continuation.value().exchange_address,
             received.value().request,
             translations,
@@ -226,8 +229,7 @@ os::core::Result<bool> complete_ipc_current(
     auto response = kernel.ipc_take_reply(current);
     if (!response) return response.error();
     auto wrote = write_envelope(
-        current,
-        continuation.value().epoch,
+        binding.value(),
         continuation.value().exchange_address,
         response.value(),
         translations,
