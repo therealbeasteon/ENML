@@ -95,8 +95,8 @@ public:
     [[nodiscard]] const IpcEndpointTable& ipc() const noexcept { return ipc_; }
     [[nodiscard]] const IpcContinuationTable& ipc_continuations() const noexcept { return ipc_continuations_; }
     [[nodiscard]] const Rendezvous& threads() const noexcept { return threads_; }
-    [[nodiscard]] Scheduler& runqueue() noexcept { return scheduler_; }
-    [[nodiscard]] const Scheduler& runqueue() const noexcept { return scheduler_; }
+    [[nodiscard]] constexpr Scheduler& runqueue() noexcept { return scheduler_; }
+    [[nodiscard]] constexpr const Scheduler& runqueue() const noexcept { return scheduler_; }
 
     [[nodiscard]] std::size_t live_thread_count() const noexcept;
 
