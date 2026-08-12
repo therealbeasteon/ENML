@@ -3,6 +3,7 @@
 #include <array>
 #include <cstddef>
 #include <cstdint>
+#include <span>
 
 #include <os/core/result.hpp>
 #include <os/kernel/capability.hpp>
@@ -17,6 +18,7 @@ using IpcTransactionId = std::uint64_t;
 inline constexpr std::size_t max_ipc_endpoints = 64U;
 inline constexpr std::size_t max_ipc_reply_seals = max_threads;
 inline constexpr std::size_t max_ipc_pending_calls = max_threads;
+inline constexpr std::size_t max_ipc_inline_bytes = 64U;
 
 inline constexpr Rights ipc_right_send = 1U << 0U;
 inline constexpr Rights ipc_right_receive = 1U << 1U;
@@ -42,6 +44,28 @@ inline constexpr ObjectId ipc_object_slot_mask = 0x0000'0000'0000'FFFFULL;
         static_cast<ObjectId>(endpoint.slot + 1U);
 }
 
+// One bounded control payload. This is not a kernel message queue: an envelope
+// exists only while a call is in flight, and the number of in-flight calls is
+// already bounded by max_threads. Larger data requires a later explicit
+// cross-address-space memory authority rather than a larger hidden buffer.
+struct IpcEnvelope final {
+    std::array<std::byte, max_ipc_inline_bytes> bytes {};
+    std::uint8_t size {0U};
+
+    [[nodiscard]] constexpr bool valid() const noexcept {
+        return size <= max_ipc_inline_bytes;
+    }
+
+    [[nodiscard]] static os::core::Result<IpcEnvelope> from(
+        std::span<const std::byte> source) noexcept;
+
+    [[nodiscard]] constexpr std::span<const std::byte> view() const noexcept {
+        return std::span<const std::byte>{bytes.data(), size};
+    }
+
+    [[nodiscard]] friend constexpr bool operator==(const IpcEnvelope&, const IpcEnvelope&) = default;
+};
+
 struct IpcReplySeal final {
     IpcEndpoint endpoint {};
     IpcTransactionId transaction {0U};
@@ -57,8 +81,9 @@ struct IpcReplySeal final {
 struct IpcReceived final {
     ThreadId caller {invalid_thread};
     IpcReplySeal reply {};
+    IpcEnvelope request {};
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return caller != invalid_thread && reply.valid() && reply.caller == caller;
+        return caller != invalid_thread && reply.valid() && reply.caller == caller && request.valid();
     }
 };
 
@@ -75,10 +100,10 @@ inline constexpr std::uint32_t wrong_reply_server = 168U;
 inline constexpr std::uint32_t transaction_exhausted = 169U;
 inline constexpr std::uint32_t pending_call_limit = 170U;
 inline constexpr std::uint32_t pending_call_missing = 171U;
+inline constexpr std::uint32_t payload_too_large = 172U;
+inline constexpr std::uint32_t reply_unavailable = 173U;
 } // namespace ipc_errors
 
-// Endpoint/reply authority only. Payload copying and user-buffer access are a
-// later machine boundary, keeping this state machine deterministic and fuzzable.
 class IpcEndpointTable final {
 public:
     [[nodiscard]] os::core::Result<IpcEndpoint> create(ThreadId server) noexcept;
@@ -87,10 +112,6 @@ public:
         IpcEndpoint endpoint,
         Rendezvous& rendezvous) noexcept;
 
-    // Thread teardown is one kernel transaction. Every endpoint owned by the
-    // dying thread is retired before the rendezvous thread itself disappears,
-    // so blocked clients receive endpoint_retired rather than being stranded or
-    // ambiguously observing only peer death.
     [[nodiscard]] std::size_t retire_all_owned_by(
         ThreadId server,
         Rendezvous& rendezvous) noexcept;
@@ -99,7 +120,8 @@ public:
         ThreadId caller,
         CapabilityId endpoint_capability,
         const CapabilityTable& capabilities,
-        Rendezvous& rendezvous) noexcept;
+        Rendezvous& rendezvous,
+        IpcEnvelope request = {}) noexcept;
 
     [[nodiscard]] os::core::Result<IpcReceived> receive(
         ThreadId server,
@@ -110,7 +132,12 @@ public:
     [[nodiscard]] os::core::Result<void> reply(
         ThreadId server,
         const IpcReplySeal& seal,
-        Rendezvous& rendezvous) noexcept;
+        Rendezvous& rendezvous,
+        IpcEnvelope response = {}) noexcept;
+
+    // A replied caller consumes its response once after it becomes runnable.
+    // Endpoint retirement/peer failure leave no response to collect.
+    [[nodiscard]] os::core::Result<IpcEnvelope> take_reply(ThreadId caller) noexcept;
 
     [[nodiscard]] bool active(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] std::size_t active_endpoint_count() const noexcept { return active_; }
@@ -131,6 +158,12 @@ private:
         IpcEndpoint endpoint {};
         ThreadId caller {invalid_thread};
         ThreadId server {invalid_thread};
+        IpcEnvelope request {};
+        bool active {false};
+    };
+    struct CompletedSlot final {
+        ThreadId caller {invalid_thread};
+        IpcEnvelope response {};
         bool active {false};
     };
 
@@ -144,12 +177,16 @@ private:
     [[nodiscard]] ReplySlot* reply_slot(const IpcReplySeal& seal) noexcept;
     [[nodiscard]] PendingSlot* pending_slot(ThreadId caller, IpcEndpoint endpoint) noexcept;
     [[nodiscard]] PendingSlot* free_pending_slot() noexcept;
+    [[nodiscard]] CompletedSlot* completed_slot(ThreadId caller) noexcept;
+    [[nodiscard]] CompletedSlot* free_completed_slot() noexcept;
     void invalidate_replies_for(IpcEndpoint endpoint) noexcept;
     void cancel_pending_for(IpcEndpoint endpoint, Rendezvous& rendezvous) noexcept;
+    void discard_completed_for(ThreadId caller) noexcept;
 
     std::array<EndpointSlot, max_ipc_endpoints> endpoints_ {};
     std::array<ReplySlot, max_ipc_reply_seals> replies_ {};
     std::array<PendingSlot, max_ipc_pending_calls> pending_ {};
+    std::array<CompletedSlot, max_threads> completed_ {};
     std::size_t active_ {0U};
     std::size_t reply_seals_ {0U};
     std::size_t pending_calls_ {0U};
