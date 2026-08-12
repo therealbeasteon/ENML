@@ -8,6 +8,7 @@
 #include <os/ui/layout_policy.hpp>
 #include <os/ui/motion_stability.hpp>
 #include <os/ui/quality_policy.hpp>
+#include <os/ui/render_budget.hpp>
 #include <os/ui/secure_surface.hpp>
 
 namespace {
@@ -187,12 +188,20 @@ int main() {
     require(smooth_decision.maximum_quality == QualityTier::ambient);
     require(smooth_decision.preserve_spatial_motion);
     require(!smooth_decision.hitch_recovery);
+    const auto smooth_render = render_options_for(smooth_decision);
+    require(smooth_render.quality == VisualQualityTier::full);
+    require(smooth_render.capabilities.live_backdrop);
+    require(smooth_render.capabilities.spatial_motion);
 
     FrameTelemetry dragging = smooth_120hz;
     dragging.direct_manipulation_active = true;
     const auto drag_decision = schedule_frame(dragging, nominal);
     require(drag_decision.maximum_quality == QualityTier::continuity);
     require(drag_decision.prioritize_direct_manipulation);
+    const auto drag_render = render_options_for(drag_decision);
+    require(drag_render.quality == VisualQualityTier::economy);
+    require(!drag_render.capabilities.live_backdrop);
+    require(drag_render.capabilities.max_depth_blur_q6 == 0U);
 
     FrameTelemetry hitch = smooth_120hz;
     hitch.consecutive_misses = 3U;
@@ -205,6 +214,8 @@ int main() {
     const auto stale_decision = schedule_frame(stale_input, nominal);
     require(!stale_decision.preserve_spatial_motion);
     require(stale_decision.maximum_quality == QualityTier::continuity);
+    const auto stale_render = render_options_for(stale_decision);
+    require(!stale_render.capabilities.spatial_motion);
 
     const FrameTelemetry invalid_refresh {
         .refresh_hz = 0U,
@@ -220,6 +231,10 @@ int main() {
     require(invalid_decision.maximum_quality == QualityTier::essential);
     require(!invalid_decision.preserve_spatial_motion);
     require(invalid_decision.hitch_recovery);
+    const auto invalid_render = render_options_for(invalid_decision);
+    require(invalid_render.quality == VisualQualityTier::economy);
+    require(!invalid_render.capabilities.live_backdrop);
+    require(!invalid_render.capabilities.spatial_motion);
 
     MotionContinuity gesture {
         .progress_q16 = 40'000U,
