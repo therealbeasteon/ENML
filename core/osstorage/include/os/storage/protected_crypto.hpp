@@ -18,17 +18,14 @@ inline constexpr std::size_t max_protected_chunk_record_bytes =
 struct ProtectedChunkAddress final {
     os::core::UserId user {};
     ProtectedObjectId object_id {};
+    std::uint64_t object_generation {0U};
     std::uint64_t chunk_index {0U};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return user.value() != 0U && object_id.valid();
+        return user.value() != 0U && object_id.valid() && object_generation != 0U;
     }
 };
 
-// Storage-owned cryptographic boundary. The provider owns key material and nonce
-// generation; this class owns the canonical persistent envelope and validates
-// that authenticated on-disk identity matches the independently trusted object
-// and chunk address selected by system.storage.
 class ProtectedChunkCrypto final {
 public:
     explicit ProtectedChunkCrypto(os::keys::KeyProvider& provider) noexcept
@@ -37,7 +34,7 @@ public:
     [[nodiscard]] os::core::Result<std::size_t>
     seal(
         os::keys::ProviderKeyReference key,
-        const ProtectedChunkHeaderV1& header,
+        const ProtectedChunkHeaderV2& header,
         os::core::ByteSpan plaintext,
         os::core::MutableByteSpan output) noexcept;
 
