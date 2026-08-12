@@ -12,8 +12,8 @@ int main() {
     using namespace os::kernel;
     using namespace os::kernel::aarch64;
 
-    alignas(4096) std::array<std::byte, 12U * 4096U> tables_a{};
-    alignas(4096) std::array<std::byte, 12U * 4096U> tables_b{};
+    alignas(4096) std::array<std::byte, 14U * 4096U> tables_a{};
+    alignas(4096) std::array<std::byte, 14U * 4096U> tables_b{};
     const auto a_begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(tables_a.data()));
     const auto b_begin = static_cast<std::uint64_t>(
@@ -72,10 +72,12 @@ int main() {
     require(static_cast<bool>(user_code));
     require(user_code.value().user_accessible);
     require(!user_code.value().kernel_stack);
+    require(!user_code.value().user_stack);
     require(user_code.value().kind == MachineMemoryKind::normal);
+    require(space_a.valid_user_entry(user_code_va));
+    require(space_a.valid_user_entry(user_code_va + 16ULL));
+    require(!space_a.valid_user_entry(user_code_va + 4096ULL));
 
-    // A writable alias of user executable code is forbidden globally just as
-    // it is for kernel executable code.
     auto writable_user_alias = space_b.map_user(
         user_code_va + 0x200000ULL, user_code_pa, 4096ULL,
         MachinePermissions::read_write);
@@ -84,13 +86,33 @@ int main() {
 
     constexpr std::uint64_t user_stack_va = 0x0000'0000'1001'0000ULL;
     constexpr std::uint64_t user_stack_pa = 0x0000'0000'8201'0000ULL;
-    require(static_cast<bool>(space_a.map_user(
-        user_stack_va, user_stack_pa, 4096ULL,
-        MachinePermissions::read_write)));
+    require(static_cast<bool>(space_a.map_user_stack(
+        user_stack_va, user_stack_pa, 4096ULL)));
     auto user_stack = space_a.exact_mapping(user_stack_va, 4096ULL);
     require(static_cast<bool>(user_stack));
     require(user_stack.value().user_accessible);
+    require(user_stack.value().user_stack);
     require(user_stack.value().permissions == MachinePermissions::read_write);
+    require(space_a.valid_user_stack_top(user_stack_va + 4096ULL));
+    require(!space_a.valid_user_stack_top(user_stack_va + 2048ULL));
+
+    auto user_guard = builder_a.mapped(user_stack_va - 4096ULL);
+    require(static_cast<bool>(user_guard));
+    require(!user_guard.value());
+
+    // A mapped page occupying the guard position makes user-stack creation fail.
+    constexpr std::uint64_t blocked_stack_va = 0x0000'0000'1003'0000ULL;
+    require(static_cast<bool>(space_a.map_user(
+        blocked_stack_va - 4096ULL,
+        0x0000'0000'8202'0000ULL,
+        4096ULL,
+        MachinePermissions::read_write)));
+    auto blocked_stack = space_a.map_user_stack(
+        blocked_stack_va,
+        0x0000'0000'8203'0000ULL,
+        4096ULL);
+    require(!blocked_stack);
+    require(blocked_stack.error().code == machine_errors::missing_guard_page);
 
     constexpr std::uint64_t stack_va = 0x0000'0000'6000'1000ULL;
     constexpr std::uint64_t stack_pa = 0x0000'0000'8100'0000ULL;
