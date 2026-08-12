@@ -42,6 +42,17 @@ struct MachineAddressSpace final {
     std::size_t length,
     MachinePermissions permissions) noexcept;
 
+[[nodiscard]] os::core::Result<void> aarch64_map_user_stack(
+    MachineAddressSpace& space,
+    std::uintptr_t virtual_base,
+    std::uintptr_t physical_base,
+    std::size_t length) noexcept;
+
+[[nodiscard]] os::core::Result<void> aarch64_validate_user_context(
+    MachineAddressSpace& space,
+    std::uintptr_t entry,
+    std::uintptr_t stack) noexcept;
+
 extern "C" void cookie_aarch64_switch_context(
     MachineContext* from,
     const MachineContext* to) noexcept;
