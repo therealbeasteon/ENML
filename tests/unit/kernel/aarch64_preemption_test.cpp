@@ -1,3 +1,4 @@
+#include <os/kernel/aarch64_execution_universe.hpp>
 #include <os/kernel/aarch64_preemption.hpp>
 #include <os/kernel/aarch64_translation_root_sealer.hpp>
 
@@ -15,9 +16,6 @@ int main() {
     using namespace os::kernel;
     using namespace os::kernel::aarch64;
 
-    // Rejected deadline preparation is side-effect free. A failed scheduling
-    // transaction must not revoke the timer authority belonging to the current
-    // execution universe.
     SchedulerDeadlineAuthority deadline_authority{};
     Decision overflowing{};
     overflowing.thread = 1U;
@@ -75,6 +73,11 @@ int main() {
     auto start = preemption.start(scheduler, translations, epochs, 1'000'000U, live);
     require(start);
     require(start.value().translation.root_physical == root_a.value().root_physical());
+    auto start_plan = prepare_execution_universe(start.value());
+    require(start_plan);
+    require(start_plan.value().thread == 1U);
+    require(start_plan.value().epoch == epoch_a.value());
+    require(start_plan.value().root_physical == root_a.value().root_physical());
     live.x[0] = 0xA55AU;
 
     auto to_b = preemption.on_timer(
@@ -83,6 +86,10 @@ int main() {
     require(to_b);
     require(to_b.value().next == 2U);
     require(to_b.value().translation.root_physical == root_b.value().root_physical());
+    auto b_plan = prepare_execution_universe(to_b.value());
+    require(b_plan);
+    require(b_plan.value().thread == 2U);
+    require(b_plan.value().epoch == epoch_b.value());
     require(live.x[0] == 0xB0U);
 
     live.x[0] = 0xB55BU;
@@ -99,6 +106,13 @@ int main() {
         to_a.value().deadline.absolute_nanoseconds, live);
     require(final);
     require(!final.value().deadline.active);
+    auto final_plan = prepare_execution_universe(final.value());
+    require(final_plan);
+    require(!final_plan.value().deadline.active);
+
+    auto mismatched = final.value();
+    mismatched.next = 2U;
+    require(!prepare_execution_universe(mismatched));
 
     AddressSpaceEpochAuthority stale_epochs{};
     auto stale_epoch = stale_epochs.acquire();
