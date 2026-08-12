@@ -29,6 +29,7 @@ add_emnl_ui_test(ui_input_transform_test input_transform_test.cpp)
 add_emnl_ui_test(ui_input_routing_test input_routing_test.cpp)
 add_emnl_ui_test(ui_accessibility_bridge_test accessibility_bridge_test.cpp)
 add_emnl_ui_test(ui_motion_timeline_test motion_timeline_test.cpp)
+add_emnl_ui_test(ui_identity_adaptation_test identity_adaptation_test.cpp)
 
 if(EMNL_BUILD_LINUX_TEXT_BACKEND)
     find_file(EMNL_TEST_FONT_FILE
