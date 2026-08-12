@@ -51,10 +51,6 @@ os::core::Result<void> Kernel::create_thread(ThreadId thread, Priority priority)
 }
 
 os::core::Result<Teardown> Kernel::destroy_thread(ThreadId thread) noexcept {
-    // IPC endpoints are retired while the Rendezvous thread still exists, so
-    // callers blocked specifically on those endpoints receive endpoint_retired.
-    // Only after that do we remove the thread itself and release any remaining
-    // direct rendezvous relationships as peer_exited.
     const std::size_t retired_endpoints = ipc_.retire_all_owned_by(thread, threads_);
 
     auto released = threads_.exit_thread(thread);
@@ -123,8 +119,9 @@ os::core::Result<void> Kernel::retire_ipc_endpoint(
 
 os::core::Result<void> Kernel::ipc_send(
     ThreadId caller,
-    CapabilityId endpoint_capability) noexcept {
-    auto sent = ipc_.send(caller, endpoint_capability, capabilities_, threads_);
+    CapabilityId endpoint_capability,
+    IpcEnvelope request) noexcept {
+    auto sent = ipc_.send(caller, endpoint_capability, capabilities_, threads_, request);
     if (!sent) return sent;
     synchronise();
     return {};
@@ -141,11 +138,21 @@ os::core::Result<IpcReceived> Kernel::ipc_receive(
 
 os::core::Result<void> Kernel::ipc_reply(
     ThreadId server,
-    const IpcReplySeal& seal) noexcept {
-    auto replied = ipc_.reply(server, seal, threads_);
+    const IpcReplySeal& seal,
+    IpcEnvelope response) noexcept {
+    auto replied = ipc_.reply(server, seal, threads_, response);
     if (!replied) return replied;
     synchronise();
     return {};
+}
+
+os::core::Result<IpcEnvelope> Kernel::ipc_take_reply(ThreadId caller) noexcept {
+    if (!tracks(caller)) {
+        return os::core::Result<IpcEnvelope>{
+            os::core::make_error(os::core::ErrorDomain::kernel,
+                                 rendezvous_errors::unknown_thread)};
+    }
+    return ipc_.take_reply(caller);
 }
 
 os::core::Result<Dispatch> Kernel::dispatch_interrupt(InterruptSource source) noexcept {
