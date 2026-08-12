@@ -41,6 +41,15 @@ int main() {
     require(ra.value().root_physical == root_a.value().root_physical());
     require(rb.value().root_physical == root_b.value().root_physical());
 
+    const auto authority_a = ra.value().authority();
+    const auto authority_b = rb.value().authority();
+    require(authority_a.valid());
+    require(authority_b.valid());
+    require(authority_a.thread == 1U);
+    require(authority_a.address_space == a.value().identity());
+    require(authority_b.address_space == b.value().identity());
+    require(authority_a != authority_b);
+
     require(!table.bind(1U, b.value(), root_b.value(), epochs));
     require(!table.bind(3U, a.value(), root_a.value(), epochs));
 
@@ -52,5 +61,19 @@ int main() {
 
     require(table.retire(1U, a.value()));
     require(epochs.complete_retire(retiring.value()));
+
+    // The hardware ASID may now be recycled. A new binding for the same numeric
+    // thread id must nevertheless carry a different software authority identity.
+    auto recycled = epochs.acquire();
+    require(recycled);
+    require(recycled.value().asid == a.value().asid);
+    require(recycled.value().identity() != a.value().identity());
+    require(table.bind(1U, recycled.value(), root_a.value(), epochs));
+    auto rebound = table.resolve(1U, epochs);
+    require(rebound);
+    require(rebound.value().authority().thread == authority_a.thread);
+    require(rebound.value().authority().address_space != authority_a.address_space);
+    require(rebound.value().authority() != authority_a);
+
     return 0;
 }
