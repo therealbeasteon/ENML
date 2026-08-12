@@ -55,6 +55,10 @@ public:
         ThreadId server,
         const IpcReplySeal& seal,
         IpcEnvelope response = {}) noexcept;
+    [[nodiscard]] os::core::Result<void> ipc_reply_transaction(
+        ThreadId server,
+        IpcTransactionId transaction,
+        IpcEnvelope response = {}) noexcept;
     [[nodiscard]] os::core::Result<IpcEnvelope> ipc_take_reply(ThreadId caller) noexcept;
 
     os::core::Result<Dispatch> dispatch_interrupt(InterruptSource source) noexcept;
