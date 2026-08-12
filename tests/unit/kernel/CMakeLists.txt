@@ -78,6 +78,16 @@ target_compile_options(kernel_user_access_test PRIVATE
 add_test(NAME kernel_user_access_test COMMAND kernel_user_access_test)
 set_tests_properties(kernel_user_access_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_aarch64_user_copy_guard_test
+    aarch64_user_copy_guard_test.cpp
+    ${PROJECT_SOURCE_DIR}/core/oskernel/src/aarch64_user_copy_guard.cpp)
+target_link_libraries(kernel_aarch64_user_copy_guard_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_user_copy_guard_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_user_copy_guard_test COMMAND kernel_aarch64_user_copy_guard_test)
+set_tests_properties(kernel_aarch64_user_copy_guard_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_machine_host_test machine_host_test.cpp)
 target_link_libraries(kernel_machine_host_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_machine_host_test PRIVATE
