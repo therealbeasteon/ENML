@@ -10,6 +10,7 @@
 #include <os/ui/quality_policy.hpp>
 #include <os/ui/render_budget.hpp>
 #include <os/ui/secure_surface.hpp>
+#include <os/ui/signature.hpp>
 
 namespace {
 
@@ -21,6 +22,40 @@ void require(bool condition) {
 
 int main() {
     using namespace os::ui;
+
+    const auto home_signature = cookie_home_signature();
+    require(signature_profile_valid(home_signature));
+    require(home_signature.bias == SpatialBias::lower_weighted);
+    require(home_signature.rhythm == SurfaceRhythm::quiet);
+    require(home_signature.primary_contour == ContourFamily::anchor);
+    require(home_signature.accent_contour == ContourFamily::sweep);
+    require(home_signature.motion == MotionCharacter::handoff);
+
+    const auto secure_signature = cookie_secure_signature();
+    require(signature_profile_valid(secure_signature));
+    require(secure_signature.primary_contour == ContourFamily::frame);
+    require(secure_signature.accent_contour == ContourFamily::halo);
+    require(secure_signature.motion == MotionCharacter::secure);
+
+    SignatureProfile generic_card_wall = home_signature;
+    generic_card_wall.repeated_uniform_cards = true;
+    require(!signature_profile_valid(generic_card_wall));
+
+    SignatureProfile glass_dependent = home_signature;
+    glass_dependent.full_screen_glass_sheet = true;
+    require(!signature_profile_valid(glass_dependent));
+
+    SignatureProfile forced_mask = home_signature;
+    forced_mask.icon_mask_uniformity_required = true;
+    require(!signature_profile_valid(forced_mask));
+
+    SignatureProfile halo_everywhere = home_signature;
+    halo_everywhere.accent_contour = ContourFamily::halo;
+    require(!signature_profile_valid(halo_everywhere));
+
+    SignatureProfile insecure_secure_motion = home_signature;
+    insecure_secure_motion.motion = MotionCharacter::secure;
+    require(!signature_profile_valid(insecure_secure_motion));
 
     const DeviceProfile tall_phone {
         .width_q6 = 412U * 64U,
