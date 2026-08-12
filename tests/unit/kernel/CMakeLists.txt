@@ -70,6 +70,14 @@ target_compile_options(kernel_process_translation_test PRIVATE
 add_test(NAME kernel_process_translation_test COMMAND kernel_process_translation_test)
 set_tests_properties(kernel_process_translation_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_user_access_test user_access_test.cpp)
+target_link_libraries(kernel_user_access_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_user_access_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_user_access_test COMMAND kernel_user_access_test)
+set_tests_properties(kernel_user_access_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_machine_host_test machine_host_test.cpp)
 target_link_libraries(kernel_machine_host_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_machine_host_test PRIVATE
