@@ -73,8 +73,7 @@ namespace {
         translations,
         epochs);
     if (!ticket) return ticket.error();
-    return copy_to_user_current(
-        ticket.value(), envelope.view(), translations, epochs);
+    return copy_to_user_current(ticket.value(), envelope.view(), translations, epochs);
 }
 
 } // namespace
@@ -117,23 +116,34 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
             (void)kernel.ipc_cancel_send_continuation(current);
             return sent.error();
         }
-        // send is synchronous: success here means the request is in flight and
-        // this thread is no longer runnable until a reply or endpoint death.
         return IpcSvcResult{.reschedule = true, .completed = false};
     }
 
     case KernelCall::receive: {
         auto decoded = decode_ipc_receive_syscall(frame.x[0], frame.x[1]);
         if (!decoded) return decoded.error();
+
+        // Arm before rendezvous state can block. Immediate delivery cancels the
+        // continuation again; failure never leaves a sleeping syscall without
+        // the state required to complete it later.
+        auto armed = kernel.ipc_arm_receive_continuation(
+            current,
+            binding.value().epoch,
+            decoded.value().endpoint_capability,
+            decoded.value().exchange_address,
+            epochs);
+        if (!armed) return armed.error();
+
         auto received = kernel.ipc_receive(current, decoded.value().endpoint_capability);
-        if (!received) return received.error();
+        if (!received) {
+            (void)kernel.ipc_cancel_receive_continuation(current);
+            return received.error();
+        }
         if (!received.value().valid()) {
-            // Receiver-first rendezvous is represented by a blocked thread.
-            // A receive-continuation will carry payload completion in the next
-            // slice; sender-first native IPC (the first QEMU proof) completes
-            // immediately here.
             return IpcSvcResult{.reschedule = true, .completed = false};
         }
+
+        (void)kernel.ipc_cancel_receive_continuation(current);
         auto wrote = write_envelope(
             current,
             binding.value().epoch,
@@ -172,22 +182,43 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
     }
 }
 
-os::core::Result<bool> complete_ipc_send_current(
+os::core::Result<bool> complete_ipc_current(
     ThreadId current,
     ExceptionFrame& frame,
     Kernel& kernel,
     const ProcessTranslationTable& translations,
     const AddressSpaceEpochAuthority& epochs) noexcept {
-    if (!kernel.ipc().reply_available(current)) return false;
-
     auto binding = current_binding(current, translations, epochs);
     if (!binding) return binding.error();
+
+    if (kernel.ipc_continuations().receive_armed(current)) {
+        auto continuation = kernel.ipc_take_receive_continuation(
+            current, binding.value().epoch, epochs);
+        if (!continuation) return continuation.error();
+
+        auto received = kernel.ipc_receive(
+            current, continuation.value().endpoint_capability);
+        if (!received || !received.value().valid()) {
+            return machine_error(ipc_machine_errors::no_receive_completion);
+        }
+        auto wrote = write_envelope(
+            current,
+            continuation.value().epoch,
+            continuation.value().exchange_address,
+            received.value().request,
+            translations,
+            epochs);
+        if (!wrote) return wrote.error();
+        frame.x[0] = received.value().reply.transaction;
+        frame.x[1] = received.value().request.size;
+        return true;
+    }
+
+    if (!kernel.ipc().reply_available(current)) return false;
 
     auto continuation = kernel.ipc_take_send_continuation(
         current, binding.value().epoch, epochs);
     if (!continuation) {
-        // Do not leave a completed reply occupying bounded kernel state when its
-        // original memory incarnation has disappeared.
         (void)kernel.ipc_take_reply(current);
         return continuation.error();
     }
