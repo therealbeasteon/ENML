@@ -30,6 +30,7 @@ add_emnl_ui_test(ui_input_routing_test input_routing_test.cpp)
 add_emnl_ui_test(ui_accessibility_bridge_test accessibility_bridge_test.cpp)
 add_emnl_ui_test(ui_motion_timeline_test motion_timeline_test.cpp)
 add_emnl_ui_test(ui_identity_adaptation_test identity_adaptation_test.cpp)
+add_emnl_ui_test(ui_wallpaper_widget_test wallpaper_widget_test.cpp)
 
 if(EMNL_BUILD_LINUX_TEXT_BACKEND)
     find_file(EMNL_TEST_FONT_FILE
@@ -45,7 +46,7 @@ if(EMNL_BUILD_LINUX_TEXT_BACKEND)
     target_compile_definitions(ui_linux_text_backend_test PRIVATE
         EMNL_TEST_FONT_PATH="${EMNL_TEST_FONT_FILE}"
     )
-    target_compile_options(ui_linux_text_backend_test PRIVATE
+    target_compile_options(${name} PRIVATE
         $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
     )
     add_test(NAME ui_linux_text_backend_test COMMAND ui_linux_text_backend_test)
