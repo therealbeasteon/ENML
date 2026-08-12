@@ -99,7 +99,7 @@ jobs:
           cookie_kernel_aarch64_boot --parallel 2
       - name: Test kernel gates natively
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --test-dir build/m7-arm64-native
-      - name: Boot Cookie Kernel under QEMU virt
+      - name: Boot Cookie Kernel and EL0 process under QEMU virt
         shell: bash
         run: |
           set -euo pipefail
@@ -122,3 +122,4 @@ jobs:
           cat cookie-qemu.log
           grep -F 'COOKIE:M7.5d:MMU' cookie-qemu.log
           grep -F 'COOKIE:M7.5d:GUARDED' cookie-qemu.log
+          grep -F 'COOKIE:M7.5f:EL0_SVC_RETURN' cookie-qemu.log
