@@ -46,6 +46,12 @@ constexpr std::uint64_t syscall_return_cookie = 0xC00CULL;
 volatile std::uint32_t* boot_uart = nullptr;
 std::uint32_t el0_yield_count = 0U;
 
+// These are persistent kernel authorities, not temporary bootstrap locals.
+// Keeping them in BSS avoids consuming most of the 16 KiB bootstrap stack with
+// the 256-entry physical ledger and per-address-space mapping table.
+os::kernel::MachinePhysicalLedger boot_physical_ledger{};
+os::kernel::MachineAddressSpace boot_kernel_space{};
+
 [[noreturn]] void halt() noexcept {
     asm volatile("msr daifset, #0xf" ::: "memory");
     for (;;) asm volatile("wfe" ::: "memory");
@@ -148,7 +154,16 @@ void install_first_user_program(std::uint64_t physical_page) noexcept {
 
 [[noreturn]] void guarded_runtime_main() noexcept {
     uart_write("COOKIE:M7.5d:GUARDED\n");
-    cookie_aarch64_enter_el0(user_code_virtual, user_stack_virtual + page_size);
+    const auto user_stack_top = user_stack_virtual + page_size;
+    auto valid = os::kernel::aarch64_validate_user_context(
+        boot_kernel_space,
+        static_cast<std::uintptr_t>(user_code_virtual),
+        static_cast<std::uintptr_t>(user_stack_top));
+    if (!valid) {
+        uart_write("COOKIE:PANIC:EL0_CONTEXT\n");
+        halt();
+    }
+    cookie_aarch64_enter_el0(user_code_virtual, user_stack_top);
 }
 
 } // namespace
@@ -238,55 +253,49 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     auto root = builder.initialize();
     if (!root) halt();
 
-    // From this point onward every mapping, including bootstrap mappings, is
-    // admitted through the one machine-wide physical ledger. EL0 cannot alias
-    // an existing kernel RW page as executable because bootstrap state is no
-    // longer invisible to the W^X authority.
-    os::kernel::MachinePhysicalLedger physical_ledger{};
-    os::kernel::MachineAddressSpace kernel_space{};
-    if (!os::kernel::machine_bind_address_space(kernel_space, physical_ledger) ||
-        !os::kernel::aarch64_attach_early_stage1(kernel_space, builder)) halt();
+    if (!os::kernel::machine_bind_address_space(
+            boot_kernel_space, boot_physical_ledger) ||
+        !os::kernel::aarch64_attach_early_stage1(boot_kernel_space, builder)) halt();
 
     if (!map_identity_symbols(
-            kernel_space, __cookie_text_start, __cookie_text_end,
+            boot_kernel_space, __cookie_text_start, __cookie_text_end,
             MachinePermissions::read_execute) ||
         !map_identity_symbols(
-            kernel_space, __cookie_rodata_start, __cookie_rodata_end,
+            boot_kernel_space, __cookie_rodata_start, __cookie_rodata_end,
             MachinePermissions::read) ||
         !map_identity_symbols(
-            kernel_space, __cookie_data_start, __bss_end,
+            boot_kernel_space, __cookie_data_start, __bss_end,
             MachinePermissions::read_write) ||
         !map_machine_range(
-            kernel_space,
+            boot_kernel_space,
             plan.value().page_tables.base,
             plan.value().page_tables.base,
             plan.value().page_tables.size,
             MachinePermissions::read_write,
             MachineMemoryKind::normal) ||
         !map_machine_range(
-            kernel_space,
+            boot_kernel_space,
             dtb_range.base,
             dtb_range.base,
             dtb_range.size,
             MachinePermissions::read,
             MachineMemoryKind::normal) ||
         !os::kernel::machine_map_kernel_stack(
-            kernel_space,
+            boot_kernel_space,
             static_cast<std::uintptr_t>(runtime_stack_virtual),
             static_cast<std::uintptr_t>(plan.value().kernel_stack.base),
             static_cast<std::size_t>(plan.value().kernel_stack.size)) ||
         !os::kernel::aarch64_map_user(
-            kernel_space,
+            boot_kernel_space,
             static_cast<std::uintptr_t>(user_code_virtual),
             static_cast<std::uintptr_t>(user_code.value().base),
             static_cast<std::size_t>(page_size),
             MachinePermissions::read_execute) ||
-        !os::kernel::aarch64_map_user(
-            kernel_space,
+        !os::kernel::aarch64_map_user_stack(
+            boot_kernel_space,
             static_cast<std::uintptr_t>(user_stack_virtual),
             static_cast<std::uintptr_t>(user_stack.value().base),
-            static_cast<std::size_t>(page_size),
-            MachinePermissions::read_write)) halt();
+            static_cast<std::size_t>(page_size))) halt();
 
     const auto* uart = find_pl011(inventory.value());
     if (uart == nullptr || !uart->registers.valid()) halt();
@@ -295,7 +304,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (uart->registers.base > UINT64_MAX - uart->registers.size ||
         !align_up(uart->registers.base + uart->registers.size, uart_end) ||
         !map_machine_range(
-            kernel_space, uart_begin, uart_begin, uart_end - uart_begin,
+            boot_kernel_space, uart_begin, uart_begin, uart_end - uart_begin,
             MachinePermissions::read_write, MachineMemoryKind::device)) halt();
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
@@ -309,7 +318,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     const auto stack_top = runtime_stack_virtual + plan.value().kernel_stack.size;
     if (!os::kernel::machine_prepare_context(
             runtime_context,
-            kernel_space,
+            boot_kernel_space,
             reinterpret_cast<std::uintptr_t>(&guarded_runtime_main),
             static_cast<std::uintptr_t>(stack_top))) halt();
 
