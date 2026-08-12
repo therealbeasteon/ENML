@@ -29,6 +29,17 @@ namespace {
 }
 } // namespace
 
+os::core::Result<IpcEnvelope> IpcEnvelope::from(
+    std::span<const std::byte> source) noexcept {
+    if (source.size() > max_ipc_inline_bytes) {
+        return ipc_error(ipc_errors::payload_too_large);
+    }
+    IpcEnvelope envelope{};
+    envelope.size = static_cast<std::uint8_t>(source.size());
+    for (std::size_t i = 0U; i < source.size(); ++i) envelope.bytes[i] = source[i];
+    return envelope;
+}
+
 IpcEndpointTable::EndpointSlot* IpcEndpointTable::slot_for(IpcEndpoint endpoint) noexcept {
     if (!endpoint.valid() || endpoint.slot >= endpoints_.size()) return nullptr;
     auto& slot = endpoints_[endpoint.slot];
@@ -60,6 +71,21 @@ IpcEndpointTable::PendingSlot* IpcEndpointTable::pending_slot(
 IpcEndpointTable::PendingSlot* IpcEndpointTable::free_pending_slot() noexcept {
     for (auto& slot : pending_) if (!slot.active) return &slot;
     return nullptr;
+}
+
+IpcEndpointTable::CompletedSlot* IpcEndpointTable::completed_slot(ThreadId caller) noexcept {
+    for (auto& slot : completed_) if (slot.active && slot.caller == caller) return &slot;
+    return nullptr;
+}
+
+IpcEndpointTable::CompletedSlot* IpcEndpointTable::free_completed_slot() noexcept {
+    for (auto& slot : completed_) if (!slot.active) return &slot;
+    return nullptr;
+}
+
+void IpcEndpointTable::discard_completed_for(ThreadId caller) noexcept {
+    auto* slot = completed_slot(caller);
+    if (slot != nullptr) *slot = CompletedSlot{};
 }
 
 void IpcEndpointTable::invalidate_replies_for(IpcEndpoint endpoint) noexcept {
@@ -109,7 +135,6 @@ os::core::Result<void> IpcEndpointTable::retire(
         return ipc_error(ipc_errors::not_endpoint_owner);
     }
 
-    // Revocation becomes visible before any cancelled caller can run again.
     slot->server = invalid_thread;
     slot->active = false;
     --active_;
@@ -130,12 +155,9 @@ std::size_t IpcEndpointTable::retire_all_owned_by(
             .slot = static_cast<IpcEndpointSlot>(index),
             .generation = slot.generation,
         };
-        // This cannot fail: the endpoint was read directly from a live slot and
-        // the owner is the exact server being torn down. Keep one retirement
-        // path so explicit endpoint restart and process death have identical
-        // stale-capability/reply-seal semantics.
         if (retire(server, endpoint, rendezvous)) ++retired;
     }
+    discard_completed_for(server);
     return retired;
 }
 
@@ -163,7 +185,14 @@ os::core::Result<void> IpcEndpointTable::send(
     ThreadId caller,
     CapabilityId endpoint_capability,
     const CapabilityTable& capabilities,
-    Rendezvous& rendezvous) noexcept {
+    Rendezvous& rendezvous,
+    IpcEnvelope request) noexcept {
+    if (!request.valid()) return ipc_error(ipc_errors::payload_too_large);
+    // A caller must consume its previous response before beginning another
+    // synchronous transaction. This keeps exactly one response slot per thread
+    // and prevents a caller from turning completed replies into a kernel queue.
+    if (completed_slot(caller) != nullptr) return ipc_error(ipc_errors::reply_unavailable);
+
     auto endpoint = endpoint_for_capability(
         caller, endpoint_capability, ipc_right_send, capabilities);
     if (!endpoint) return endpoint.error();
@@ -179,6 +208,7 @@ os::core::Result<void> IpcEndpointTable::send(
         .endpoint = endpoint.value(),
         .caller = caller,
         .server = owner->server,
+        .request = request,
         .active = true,
     };
     ++pending_calls_;
@@ -201,9 +231,8 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     if (!caller) return caller.error();
     if (caller.value() == invalid_thread) return IpcReceived{};
 
-    if (pending_slot(caller.value(), endpoint.value()) == nullptr) {
-        return ipc_error(ipc_errors::pending_call_missing);
-    }
+    auto* pending = pending_slot(caller.value(), endpoint.value());
+    if (pending == nullptr) return ipc_error(ipc_errors::pending_call_missing);
     if (next_transaction_ == 0U ||
         next_transaction_ == std::numeric_limits<IpcTransactionId>::max()) {
         return ipc_error(ipc_errors::transaction_exhausted);
@@ -221,13 +250,19 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     };
     *free = ReplySlot{.seal = seal, .active = true};
     ++reply_seals_;
-    return IpcReceived{.caller = caller.value(), .reply = seal};
+    return IpcReceived{
+        .caller = caller.value(),
+        .reply = seal,
+        .request = pending->request,
+    };
 }
 
 os::core::Result<void> IpcEndpointTable::reply(
     ThreadId server,
     const IpcReplySeal& seal,
-    Rendezvous& rendezvous) noexcept {
+    Rendezvous& rendezvous,
+    IpcEnvelope response) noexcept {
+    if (!response.valid()) return ipc_error(ipc_errors::payload_too_large);
     if (!seal.valid()) return ipc_error(ipc_errors::stale_reply_seal);
     if (server != seal.server) return ipc_error(ipc_errors::wrong_reply_server);
     const auto* endpoint = slot_for(seal.endpoint);
@@ -239,15 +274,39 @@ os::core::Result<void> IpcEndpointTable::reply(
     if (seal_slot == nullptr || pending == nullptr) {
         return ipc_error(ipc_errors::stale_reply_seal);
     }
+    if (completed_slot(seal.caller) != nullptr) {
+        return ipc_error(ipc_errors::reply_unavailable);
+    }
+    auto* completed = free_completed_slot();
+    if (completed == nullptr) return ipc_error(ipc_errors::reply_unavailable);
+
+    // Reserve the response before consuming the one-shot reply authority. If
+    // rendezvous rejects the reply, roll the reservation back; the seal/pending
+    // call remain intact and no partial completion becomes visible.
+    *completed = CompletedSlot{
+        .caller = seal.caller,
+        .response = response,
+        .active = true,
+    };
+    auto replied = rendezvous.reply(server, seal.caller);
+    if (!replied) {
+        *completed = CompletedSlot{};
+        return replied.error();
+    }
 
     *seal_slot = ReplySlot{};
     --reply_seals_;
     *pending = PendingSlot{};
     --pending_calls_;
-
-    auto replied = rendezvous.reply(server, seal.caller);
-    if (!replied) return replied.error();
     return {};
+}
+
+os::core::Result<IpcEnvelope> IpcEndpointTable::take_reply(ThreadId caller) noexcept {
+    auto* slot = completed_slot(caller);
+    if (slot == nullptr) return ipc_error(ipc_errors::reply_unavailable);
+    const IpcEnvelope response = slot->response;
+    *slot = CompletedSlot{};
+    return response;
 }
 
 bool IpcEndpointTable::active(IpcEndpoint endpoint) const noexcept {
