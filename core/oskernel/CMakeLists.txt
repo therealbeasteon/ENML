@@ -49,6 +49,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         src/aarch64_asid.cpp
         src/aarch64_user_copy_guard.cpp
         src/aarch64_user_access.cpp
+        src/aarch64_ipc_syscall.cpp
         src/aarch64_execution_universe_machine.cpp
         src/aarch64_entry.cpp
         src/aarch64_gic_v3.cpp
@@ -104,6 +105,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/aarch64_asid.cpp
             src/aarch64_user_copy_guard.cpp
             src/aarch64_user_access.cpp
+            src/aarch64_ipc_syscall.cpp
             src/aarch64_execution_universe_machine.cpp
             src/aarch64_entry.cpp
             src/aarch64_gic_v3.cpp
