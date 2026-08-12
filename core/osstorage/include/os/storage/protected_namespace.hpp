@@ -49,8 +49,9 @@ inline constexpr std::uint32_t invalid_identity = 5U;
 }
 
 // Trusted namespace metadata. A pathname selects an entry, but the stable random
-// object ID is the cryptographic identity. Replacing file contents advances only
-// the generation; rename can later move `path` without changing object_id.
+// object ID is the cryptographic identity. Replacement first *proposes* a newer
+// version without mutation. The registry changes only when publication is ready
+// to make that version authoritative.
 class ProtectedNamespaceRegistry final {
 public:
     explicit ProtectedNamespaceRegistry(ProtectedObjectIdSource& ids) noexcept : ids_(&ids) {}
@@ -74,11 +75,19 @@ public:
         const RelativePath& path) noexcept;
 
     [[nodiscard]] os::core::Result<ProtectedObjectVersion>
-    advance_generation(
+    propose_next_generation(
         os::core::PrincipalId principal,
         os::core::UserId user,
         const RelativePath& path,
-        std::uint64_t expected_generation) noexcept;
+        std::uint64_t expected_generation) const noexcept;
+
+    [[nodiscard]] os::core::Result<void>
+    publish_generation(
+        os::core::PrincipalId principal,
+        os::core::UserId user,
+        const RelativePath& path,
+        std::uint64_t expected_generation,
+        std::uint64_t new_generation) noexcept;
 
     [[nodiscard]] std::size_t size() const noexcept;
 
