@@ -8,6 +8,7 @@ add_library(oskernel STATIC
     src/fdt.cpp
     src/hardware_inventory.cpp
     src/gic_v3_discovery.cpp
+    src/arch_timer_discovery.cpp
     src/boot_memory.cpp
     src/boot_memory_plan.cpp
     src/machine_host.cpp
@@ -36,6 +37,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         src/machine_aarch64.cpp
         src/aarch64_translation.cpp
         src/aarch64_entry.cpp
+        src/aarch64_gic_v3.cpp
         src/aarch64_vectors.S
         src/aarch64_context_switch.S
         src/aarch64_el0.S
@@ -64,11 +66,13 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/fdt.cpp
             src/hardware_inventory.cpp
             src/gic_v3_discovery.cpp
+            src/arch_timer_discovery.cpp
             src/boot_memory.cpp
             src/boot_memory_plan.cpp
             src/machine_aarch64.cpp
             src/aarch64_translation.cpp
             src/aarch64_entry.cpp
+            src/aarch64_gic_v3.cpp
             src/aarch64_vectors.S
             src/aarch64_context_switch.S
             src/aarch64_el0.S
