@@ -78,6 +78,13 @@ IpcEndpointTable::PendingSlot* IpcEndpointTable::pending_slot(
     return nullptr;
 }
 
+IpcEndpointTable::PendingSlot* IpcEndpointTable::pending_slot(IpcEndpoint endpoint) noexcept {
+    for (auto& slot : pending_) {
+        if (slot.active && slot.endpoint == endpoint) return &slot;
+    }
+    return nullptr;
+}
+
 IpcEndpointTable::PendingSlot* IpcEndpointTable::free_pending_slot() noexcept {
     for (auto& slot : pending_) if (!slot.active) return &slot;
     return nullptr;
@@ -131,6 +138,7 @@ os::core::Result<IpcEndpoint> IpcEndpointTable::create(ThreadId server) noexcept
         if (slot.generation == 0U) continue;
         slot.server = server;
         slot.active = true;
+        slot.receive_waiting = false;
         ++active_;
         return IpcEndpoint{
             .slot = static_cast<IpcEndpointSlot>(index),
@@ -150,6 +158,10 @@ os::core::Result<void> IpcEndpointTable::retire(
         return ipc_error(ipc_errors::not_endpoint_owner);
     }
 
+    if (slot->receive_waiting) {
+        (void)rendezvous.cancel_receive(server);
+        slot->receive_waiting = false;
+    }
     slot->server = invalid_thread;
     slot->active = false;
     --active_;
@@ -239,13 +251,17 @@ os::core::Result<void> IpcEndpointTable::send(
     auto endpoint = endpoint_for_capability(
         caller, endpoint_capability, ipc_right_send, capabilities);
     if (!endpoint) return endpoint.error();
-    const auto* owner = slot_for(endpoint.value());
+    auto* owner = slot_for(endpoint.value());
     if (owner == nullptr) return ipc_error(ipc_errors::stale_endpoint);
 
     auto* pending = free_pending_slot();
     if (pending == nullptr) return ipc_error(ipc_errors::pending_call_limit);
-    auto sent = rendezvous.send(caller, owner->server);
+
+    os::core::Result<void> sent = owner->receive_waiting
+        ? rendezvous.deliver_waiting_receiver(caller, owner->server)
+        : rendezvous.block_send(caller, owner->server);
     if (!sent) return sent.error();
+    if (owner->receive_waiting) owner->receive_waiting = false;
 
     *pending = PendingSlot{
         .endpoint = endpoint.value(),
@@ -266,36 +282,74 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     auto endpoint = endpoint_for_capability(
         server, endpoint_capability, ipc_right_receive, capabilities);
     if (!endpoint) return endpoint.error();
-    const auto* owner = slot_for(endpoint.value());
+    auto* owner = slot_for(endpoint.value());
     if (owner == nullptr) return ipc_error(ipc_errors::stale_endpoint);
     if (owner->server != server) return ipc_error(ipc_errors::not_endpoint_owner);
+    if (owner->receive_waiting) return ipc_error(ipc_errors::receive_already_waiting);
+
+    PendingSlot* pending = nullptr;
+    auto delivered = rendezvous.partner_of(server);
+    if (!delivered) return delivered.error();
+    if (delivered.value() != invalid_thread) {
+        pending = pending_slot(delivered.value(), endpoint.value());
+        if (pending == nullptr) return ipc_error(ipc_errors::pending_call_missing);
+        auto consumed = rendezvous.receive(server);
+        if (!consumed || consumed.value() != delivered.value()) {
+            return ipc_error(ipc_errors::pending_call_missing);
+        }
+    } else {
+        pending = pending_slot(endpoint.value());
+        if (pending == nullptr) {
+            auto waiting = rendezvous.wait_receive(server);
+            if (!waiting) return waiting.error();
+            owner->receive_waiting = true;
+            return IpcReceived{};
+        }
+
+        if (next_transaction_ == 0U ||
+            next_transaction_ == std::numeric_limits<IpcTransactionId>::max()) {
+            return ipc_error(ipc_errors::transaction_exhausted);
+        }
+        ReplySlot* free = nullptr;
+        for (auto& slot : replies_) if (!slot.active) { free = &slot; break; }
+        if (free == nullptr) return ipc_error(ipc_errors::reply_seal_limit);
+
+        auto accepted = rendezvous.accept_sender(server, pending->caller);
+        if (!accepted) return accepted.error();
+
+        const IpcReplySeal seal{
+            .endpoint = endpoint.value(),
+            .transaction = next_transaction_++,
+            .caller = pending->caller,
+            .server = server,
+        };
+        *free = ReplySlot{.seal = seal, .active = true};
+        ++reply_seals_;
+        return IpcReceived{
+            .caller = pending->caller,
+            .reply = seal,
+            .request = pending->request,
+        };
+    }
 
     if (next_transaction_ == 0U ||
         next_transaction_ == std::numeric_limits<IpcTransactionId>::max()) {
         return ipc_error(ipc_errors::transaction_exhausted);
     }
-
     ReplySlot* free = nullptr;
     for (auto& slot : replies_) if (!slot.active) { free = &slot; break; }
     if (free == nullptr) return ipc_error(ipc_errors::reply_seal_limit);
 
-    auto caller = rendezvous.receive(server);
-    if (!caller) return caller.error();
-    if (caller.value() == invalid_thread) return IpcReceived{};
-
-    auto* pending = pending_slot(caller.value(), endpoint.value());
-    if (pending == nullptr) return ipc_error(ipc_errors::pending_call_missing);
-
     const IpcReplySeal seal{
         .endpoint = endpoint.value(),
         .transaction = next_transaction_++,
-        .caller = caller.value(),
+        .caller = pending->caller,
         .server = server,
     };
     *free = ReplySlot{.seal = seal, .active = true};
     ++reply_seals_;
     return IpcReceived{
-        .caller = caller.value(),
+        .caller = pending->caller,
         .reply = seal,
         .request = pending->request,
     };
