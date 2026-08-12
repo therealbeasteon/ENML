@@ -61,6 +61,9 @@ struct IpcEnvelope final {
     [[nodiscard]] friend constexpr bool operator==(const IpcEnvelope&, const IpcEnvelope&) = default;
 };
 
+// Kernel-private reply authority. EL0 never receives this structure; receive
+// exposes only `transaction`, and reply_transaction() resolves that opaque token
+// against a live seal owned by the exact replying server.
 struct IpcReplySeal final {
     IpcEndpoint endpoint {};
     IpcTransactionId transaction {0U};
@@ -111,10 +114,6 @@ public:
         ThreadId server,
         Rendezvous& rendezvous) noexcept;
 
-    // Settles every IPC obligation associated with a dying thread. This is
-    // broader than endpoint ownership: a dead caller must not leave a pending
-    // call, Reply Seal or completed response occupying bounded kernel state.
-    // Returns the number of endpoints retired because this thread owned them.
     [[nodiscard]] std::size_t release_thread(
         ThreadId thread,
         Rendezvous& rendezvous) noexcept;
@@ -135,6 +134,14 @@ public:
     [[nodiscard]] os::core::Result<void> reply(
         ThreadId server,
         const IpcReplySeal& seal,
+        Rendezvous& rendezvous,
+        IpcEnvelope response = {}) noexcept;
+
+    // Syscall-facing form. A userspace server only learns the transaction id,
+    // never endpoint generation/caller identity encoded in the kernel seal.
+    [[nodiscard]] os::core::Result<void> reply_transaction(
+        ThreadId server,
+        IpcTransactionId transaction,
         Rendezvous& rendezvous,
         IpcEnvelope response = {}) noexcept;
 
@@ -176,6 +183,7 @@ private:
     [[nodiscard]] EndpointSlot* slot_for(IpcEndpoint endpoint) noexcept;
     [[nodiscard]] const EndpointSlot* slot_for(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] ReplySlot* reply_slot(const IpcReplySeal& seal) noexcept;
+    [[nodiscard]] ReplySlot* reply_slot(ThreadId server, IpcTransactionId transaction) noexcept;
     [[nodiscard]] PendingSlot* pending_slot(ThreadId caller, IpcEndpoint endpoint) noexcept;
     [[nodiscard]] PendingSlot* free_pending_slot() noexcept;
     [[nodiscard]] CompletedSlot* completed_slot(ThreadId caller) noexcept;
