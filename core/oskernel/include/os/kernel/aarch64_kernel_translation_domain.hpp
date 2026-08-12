@@ -4,7 +4,7 @@
 
 #include <os/core/error.hpp>
 #include <os/core/result.hpp>
-#include <os/kernel/aarch64_translation.hpp>
+#include <os/kernel/aarch64_page_tables.hpp>
 
 namespace os::kernel::aarch64 {
 
@@ -15,22 +15,24 @@ inline constexpr std::uint32_t already_established = 211U;
 
 // Machine-wide EL1 translation authority. Unlike a process translation binding,
 // this root has no ASID or process epoch and may be established only once for a
-// boot generation. Process switching must never replace it.
+// boot generation. Construction authority is deliberately narrower than a raw
+// physical address: only a sealed upper-region builder may establish it.
 class KernelTranslationDomain final {
 public:
     [[nodiscard]] os::core::Result<void> establish(
-        std::uint64_t root_physical) noexcept {
+        const EarlyStage1Builder& builder) noexcept {
         if (root_physical_ != 0ULL) {
             return os::core::make_error(
                 os::core::ErrorDomain::kernel,
                 kernel_translation_domain_errors::already_established);
         }
-        if (!stage1_physical_address(root_physical)) {
+        if (!builder.sealed_kernel_root() ||
+            !stage1_physical_address(builder.root_physical())) {
             return os::core::make_error(
                 os::core::ErrorDomain::kernel,
                 kernel_translation_domain_errors::invalid_root);
         }
-        root_physical_ = root_physical;
+        root_physical_ = builder.root_physical();
         return {};
     }
 
