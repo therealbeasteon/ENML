@@ -21,6 +21,7 @@
 #include <os/kernel/fdt.hpp>
 #include <os/kernel/gic_v3_discovery.hpp>
 #include <os/kernel/hardware_inventory.hpp>
+#include <os/kernel/kernel.hpp>
 #include <os/kernel/machine.hpp>
 #include <os/kernel/machine_aarch64.hpp>
 #include <os/kernel/process_translation.hpp>
@@ -70,7 +71,8 @@ os::kernel::MachineAddressSpace process_space_a{};
 os::kernel::MachineAddressSpace process_space_b{};
 os::kernel::AddressSpaceEpochAuthority boot_epochs{};
 os::kernel::ProcessTranslationTable boot_translations{};
-os::kernel::Scheduler boot_scheduler{};
+os::kernel::Kernel boot_kernel{};
+os::kernel::Scheduler& boot_scheduler = boot_kernel.runqueue();
 os::kernel::aarch64::PreemptionCoordinator boot_preemption{};
 
 [[noreturn]] void halt() noexcept {
@@ -508,8 +510,8 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!sealed_a || !sealed_b || !epoch_a || !epoch_b ||
         !boot_translations.bind(process_a_thread, epoch_a.value(), sealed_a.value(), boot_epochs) ||
         !boot_translations.bind(process_b_thread, epoch_b.value(), sealed_b.value(), boot_epochs) ||
-        !boot_scheduler.admit(process_a_thread, process_priority) ||
-        !boot_scheduler.admit(process_b_thread, process_priority) ||
+        !boot_kernel.create_thread(process_a_thread, process_priority) ||
+        !boot_kernel.create_thread(process_b_thread, process_priority) ||
         !boot_scheduler.update(process_b_thread, false, process_priority)) halt();
 
     os::kernel::aarch64::ExceptionFrame initial_a{};
