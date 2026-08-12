@@ -4,6 +4,7 @@ add_library(osstorage STATIC
     src/protected_format.cpp
     src/protected_crypto.cpp
     src/protected_key_record.cpp
+    src/protected_atomic_replace.cpp
 )
 
 add_library(emnl::osstorage ALIAS osstorage)
