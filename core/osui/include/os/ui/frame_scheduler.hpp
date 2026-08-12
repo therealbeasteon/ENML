@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <limits>
 
 #include <os/ui/identity.hpp>
 #include <os/ui/quality_policy.hpp>
@@ -28,6 +29,14 @@ struct FrameScheduleDecision final {
     return refresh_hz == 0U ? 0U : 1'000'000'000ULL / refresh_hz;
 }
 
+[[nodiscard]] constexpr std::uint64_t saturating_add_ns(
+    std::uint64_t a,
+    std::uint64_t b) noexcept {
+    return b > std::numeric_limits<std::uint64_t>::max() - a
+        ? std::numeric_limits<std::uint64_t>::max()
+        : a + b;
+}
+
 [[nodiscard]] constexpr bool frame_telemetry_valid(const FrameTelemetry& telemetry) noexcept {
     return telemetry.refresh_hz >= 30U && telemetry.refresh_hz <= 240U;
 }
@@ -50,7 +59,8 @@ struct FrameScheduleDecision final {
     }
 
     const auto budget = frame_budget_ns(telemetry.refresh_hz);
-    const auto work = telemetry.cpu_render_ns + telemetry.gpu_render_ns + telemetry.present_wait_ns;
+    const auto render_work = saturating_add_ns(telemetry.cpu_render_ns, telemetry.gpu_render_ns);
+    const auto work = saturating_add_ns(render_work, telemetry.present_wait_ns);
 
     // Repeated misses mean visual effects are already competing with interaction.
     // Shed optional work before allowing a hitch cluster to grow.
