@@ -7,6 +7,7 @@ add_library(oskernel STATIC
     src/kernel.cpp
     src/fdt.cpp
     src/hardware_inventory.cpp
+    src/boot_memory.cpp
     src/machine_host.cpp
 )
 
