@@ -5,6 +5,8 @@
 #include <os/ui/icon.hpp>
 #include <os/ui/identity.hpp>
 #include <os/ui/layout_policy.hpp>
+#include <os/ui/quality_policy.hpp>
+#include <os/ui/secure_surface.hpp>
 
 namespace {
 
@@ -66,6 +68,27 @@ int main() {
     require(!plane_allowed_for_application(PlaneRole::secure));
     require(plane_allowed_for_application(PlaneRole::content));
 
+    const SecureSurfacePolicy app_secure {
+        .plane = PlaneRole::secure,
+        .owner = SurfaceOwnerKind::application,
+        .trusted_attribution = true,
+        .capture = CapturePolicy::denied,
+    };
+    require(!secure_surface_policy_valid(app_secure));
+    require(!application_can_present(app_secure));
+
+    const SecureSurfacePolicy platform_secure {
+        .plane = PlaneRole::secure,
+        .owner = SurfaceOwnerKind::platform,
+        .trusted_attribution = true,
+        .capture = CapturePolicy::denied,
+    };
+    require(secure_surface_policy_valid(platform_secure));
+
+    SecureSurfacePolicy capturable_secure = platform_secure;
+    capturable_secure.capture = CapturePolicy::allowed;
+    require(!secure_surface_policy_valid(capturable_secure));
+
     HomeObject private_object {
         .id = HomeObjectId{1U},
         .kind = HomeObjectKind::conversation,
@@ -115,6 +138,38 @@ int main() {
         .opacity_percent = 100U,
     };
     require(!icon_depth_layer_valid(excessive_parallax));
+
+    const RenderPressure nominal {};
+    require(maximum_quality(nominal) == QualityTier::ambient);
+    require(quality_allowed(QualityTier::depth, nominal));
+    require(preserve_spatial_motion(nominal));
+
+    const RenderPressure constrained {
+        .thermal = PressureLevel::warm,
+        .gpu = PressureLevel::constrained,
+        .memory = PressureLevel::nominal,
+        .battery_saver = false,
+        .reduce_motion = false,
+        .reduce_transparency = false,
+    };
+    require(maximum_quality(constrained) == QualityTier::continuity);
+    require(!quality_allowed(QualityTier::material, constrained));
+    require(quality_allowed(QualityTier::continuity, constrained));
+
+    const RenderPressure critical {
+        .thermal = PressureLevel::critical,
+        .gpu = PressureLevel::nominal,
+        .memory = PressureLevel::nominal,
+        .battery_saver = false,
+        .reduce_motion = false,
+        .reduce_transparency = false,
+    };
+    require(maximum_quality(critical) == QualityTier::essential);
+    require(!quality_allowed(QualityTier::continuity, critical));
+
+    RenderPressure reduced_motion {};
+    reduced_motion.reduce_motion = true;
+    require(!preserve_spatial_motion(reduced_motion));
 
     return 0;
 }
