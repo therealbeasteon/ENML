@@ -1,3 +1,4 @@
+#include <os/kernel/aarch64_kernel_translation_domain.hpp>
 #include <os/kernel/aarch64_translation.hpp>
 
 #include <cstdlib>
@@ -24,6 +25,16 @@ int main() {
     require(kernel_stage1_virtual_address(UINT64_MAX));
     require(!kernel_stage1_virtual_address(kernel_virtual_base - 1ULL));
     require(!kernel_stage1_virtual_address(0ULL));
+
+    KernelTranslationDomain kernel_domain{};
+    require(!kernel_domain.established());
+    require(!kernel_domain.establish(0x4001ULL));
+    require(!kernel_domain.established());
+    require(kernel_domain.establish(0x0000'0000'0040'0000ULL));
+    require(kernel_domain.established());
+    require(kernel_domain.root_physical() == 0x0000'0000'0040'0000ULL);
+    require(!kernel_domain.establish(0x0000'0000'0050'0000ULL));
+    require(kernel_domain.root_physical() == 0x0000'0000'0040'0000ULL);
 
     require(page_aligned(0x4000ULL));
     require(!page_aligned(0x4001ULL));
