@@ -40,10 +40,6 @@ private:
     std::uint64_t end_ {0ULL};
 };
 
-// Page-only stage-1 table builder used before the general VM subsystem exists.
-// Intermediate table pages are monotonic in the early regime: leaf mappings can
-// be removed, but empty L2/L3 table pages are not reclaimed until the general
-// physical allocator owns page-table lifetime.
 class EarlyStage1Builder final {
 public:
     explicit EarlyStage1Builder(EarlyPageArena& arena) noexcept : arena_(&arena) {}
@@ -67,31 +63,18 @@ public:
         std::uint64_t physical_address,
         MachinePermissions permissions,
         MachineMemoryKind kind) noexcept {
-        if (root_ == 0ULL) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
-        }
-        if (!page_aligned(virtual_address) || !stage1_virtual_address(virtual_address) ||
-            !stage1_physical_address(physical_address)) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::alignment);
-        }
-        const auto leaf = page_descriptor(physical_address, permissions, kind);
-        if (leaf == 0ULL) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::invalid_range);
-        }
+        return install_leaf(
+            virtual_address,
+            page_descriptor(physical_address, permissions, kind));
+    }
 
-        auto* l1 = table_pointer(root_);
-        auto l2_pa = ensure_next_table(l1[level1_index(virtual_address)]);
-        if (!l2_pa) return l2_pa.error();
-        auto* l2 = table_pointer(l2_pa.value());
-        auto l3_pa = ensure_next_table(l2[level2_index(virtual_address)]);
-        if (!l3_pa) return l3_pa.error();
-        auto* l3 = table_pointer(l3_pa.value());
-        auto& entry = l3[level3_index(virtual_address)];
-        if ((entry & descriptor::valid) != 0ULL) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::already_mapped);
-        }
-        entry = leaf;
-        return {};
+    [[nodiscard]] os::core::Result<void> map_user_page(
+        std::uint64_t virtual_address,
+        std::uint64_t physical_address,
+        MachinePermissions permissions) noexcept {
+        return install_leaf(
+            virtual_address,
+            user_page_descriptor(physical_address, permissions));
     }
 
     [[nodiscard]] os::core::Result<bool> mapped(std::uint64_t virtual_address) const noexcept {
@@ -103,10 +86,6 @@ public:
         return ((*leaf.value()) & descriptor::valid) != 0ULL;
     }
 
-    // Clears exactly one level-3 page descriptor. This deliberately performs no
-    // TLBI: architectural invalidation belongs to the machine layer, which must
-    // order descriptor writes and TLB invalidation with DSB/ISB. Separating the
-    // table mutation from CPU invalidation makes that ordering explicit.
     [[nodiscard]] os::core::Result<void> unmap_page(std::uint64_t virtual_address) noexcept {
         auto leaf = leaf_pointer(virtual_address);
         if (!leaf) return leaf.error();
@@ -134,6 +113,34 @@ private:
     static void zero_table(std::uint64_t physical) noexcept {
         auto* table = table_pointer(physical);
         for (std::size_t i = 0U; i < table_entries; ++i) table[i] = 0ULL;
+    }
+
+    [[nodiscard]] os::core::Result<void> install_leaf(
+        std::uint64_t virtual_address,
+        std::uint64_t leaf) noexcept {
+        if (root_ == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
+        if (!page_aligned(virtual_address) || !stage1_virtual_address(virtual_address)) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::alignment);
+        }
+        if (leaf == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::invalid_range);
+        }
+
+        auto* l1 = table_pointer(root_);
+        auto l2_pa = ensure_next_table(l1[level1_index(virtual_address)]);
+        if (!l2_pa) return l2_pa.error();
+        auto* l2 = table_pointer(l2_pa.value());
+        auto l3_pa = ensure_next_table(l2[level2_index(virtual_address)]);
+        if (!l3_pa) return l3_pa.error();
+        auto* l3 = table_pointer(l3_pa.value());
+        auto& entry = l3[level3_index(virtual_address)];
+        if ((entry & descriptor::valid) != 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::already_mapped);
+        }
+        entry = leaf;
+        return {};
     }
 
     [[nodiscard]] os::core::Result<std::uint64_t*>
