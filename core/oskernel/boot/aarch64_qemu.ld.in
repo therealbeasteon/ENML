@@ -48,6 +48,7 @@ SECTIONS
     ASSERT(SIZEOF(.fini_array) == 0, "Cookie kernel cannot require global destructors")
 
     __cookie_image_end = .;
+    __cookie_image_size = __cookie_image_end - __cookie_image_start;
 
     /DISCARD/ : {
         *(.comment)
