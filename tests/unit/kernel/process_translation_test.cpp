@@ -1,4 +1,5 @@
 #include <os/kernel/aarch64_translation_root_sealer.hpp>
+#include <os/kernel/capability.hpp>
 #include <os/kernel/process_translation.hpp>
 
 #include <array>
@@ -50,6 +51,18 @@ int main() {
     require(authority_b.address_space == b.value().identity());
     require(authority_a != authority_b);
 
+    // M7.8.1: process-facing capabilities bind to the exact software execution
+    // lifetime. The compatibility ThreadId API must not authorize a bound slot.
+    CapabilityTable capabilities{};
+    auto authority_root = capabilities.mint(authority_a, 0xA001U, all_rights, true);
+    require(authority_root);
+    require(capabilities.holds(authority_a, authority_root.value()));
+    require(!capabilities.holds(authority_a.thread, authority_root.value()));
+    auto child = capabilities.grant(
+        authority_a, authority_root.value(), authority_b, 0x0FU, false);
+    require(child);
+    require(capabilities.holds(authority_b, child.value()));
+
     require(!table.bind(1U, b.value(), root_b.value(), epochs));
     require(!table.bind(3U, a.value(), root_a.value(), epochs));
 
@@ -71,9 +84,27 @@ int main() {
     require(table.bind(1U, recycled.value(), root_a.value(), epochs));
     auto rebound = table.resolve(1U, epochs);
     require(rebound);
-    require(rebound.value().authority().thread == authority_a.thread);
-    require(rebound.value().authority().address_space != authority_a.address_space);
-    require(rebound.value().authority() != authority_a);
+    const auto recycled_authority = rebound.value().authority();
+    require(recycled_authority.thread == authority_a.thread);
+    require(recycled_authority.address_space != authority_a.address_space);
+    require(recycled_authority != authority_a);
+
+    // Same ThreadId and even the same recycled ASID do not recover stale
+    // capability authority. Exact slot+generation is load-bearing here.
+    require(!capabilities.holds(recycled_authority, authority_root.value()));
+    require(!capabilities.grant(
+        recycled_authority, authority_root.value(), authority_b, 0x01U, false));
+    require(!capabilities.revoke(recycled_authority, child.value()));
+
+    auto root_info = capabilities.describe(authority_root.value());
+    require(root_info);
+    require(root_info.value().context_bound);
+    require(root_info.value().holder_authority() == authority_a);
+
+    // Administrative thread teardown remains deliberately stronger than a
+    // process claim and removes the old bound root plus its derivation subtree.
+    require(capabilities.revoke_all_held_by(1U) == 2U);
+    require(capabilities.live_capability_count() == 0U);
 
     return 0;
 }
