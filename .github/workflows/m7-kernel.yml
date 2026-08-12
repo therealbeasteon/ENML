@@ -118,12 +118,14 @@ jobs:
           image=${elf}.bin
           test -s "$elf"
           test -s "$image"
+          entry=$(readelf -h "$elf" | awk '/Entry point address:/ {print $4}')
+          test -n "$entry"
           readelf -h "$elf"
           readelf -l "$elf"
           readelf -S "$elf"
           readelf -r "$elf"
           nm -n "$elf" | grep -E '(_start|cookie_aarch64_boot_main|__cookie_image_start|__cookie_image_end|__bss_start|__bss_end|__cookie_bootstrap_stack_top)$'
-          objdump -d --start-address=0x40080000 --stop-address=0x40080120 "$elf" || true
+          objdump -d --start-address="$entry" --stop-address=$((entry + 0x120)) "$elf" || true
           stat -c 'raw-image-bytes=%s' "$image"
       - name: Boot Cookie Kernel as bare-metal ELF and prove isolated EL0 native IPC under QEMU virt GICv3
         shell: bash
