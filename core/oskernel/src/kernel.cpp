@@ -51,7 +51,9 @@ os::core::Result<void> Kernel::create_thread(ThreadId thread, Priority priority)
 }
 
 os::core::Result<Teardown> Kernel::destroy_thread(ThreadId thread) noexcept {
-    const std::size_t retired_endpoints = ipc_.retire_all_owned_by(thread, threads_);
+    // Settle both server-owned endpoints and client-side in-flight/completed IPC
+    // state while Rendezvous can still verify exact peer relationships.
+    const std::size_t retired_endpoints = ipc_.release_thread(thread, threads_);
 
     auto released = threads_.exit_thread(thread);
     if (!released) {
