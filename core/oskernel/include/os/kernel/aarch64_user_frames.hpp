@@ -20,14 +20,21 @@ inline constexpr std::uint32_t invalid_el0_frame = 114U;
 
 // Scheduler-owned architectural state for resumable EL0 threads. The live IRQ
 // frame on the guarded EL1 stack is transient; this table is the durable state
-// that survives preemption. It is fixed-size, allocation-free, and does not
-// contain an address-space pointer yet: process-private roots/ASIDs are the next
-// independently reviewed boundary.
+// that survives preemption. It is fixed-size and allocation-free.
 class UserFrameTable final {
 public:
     [[nodiscard]] os::core::Result<void> admit(
         ThreadId thread,
         const ExceptionFrame& initial) noexcept;
+
+    // Non-mutating switch preflight. Cookie validates every failure-prone frame
+    // condition before committing a scheduler/MMU transition, so an invalid live
+    // frame or corrupt saved frame cannot leave half of a context switch applied.
+    [[nodiscard]] os::core::Result<void> validate_capture(
+        ThreadId thread,
+        const ExceptionFrame& live) const noexcept;
+    [[nodiscard]] os::core::Result<void> validate_restore(ThreadId thread) const noexcept;
+
     [[nodiscard]] os::core::Result<void> capture(
         ThreadId thread,
         const ExceptionFrame& live) noexcept;
