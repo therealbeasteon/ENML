@@ -24,7 +24,7 @@ jobs:
           kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -46,7 +46,7 @@ jobs:
           kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -71,7 +71,7 @@ jobs:
           kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -102,7 +102,7 @@ jobs:
           kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
