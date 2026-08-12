@@ -9,6 +9,7 @@ add_library(oskernel STATIC
     src/process_translation.cpp
     src/aarch64_user_frames.cpp
     src/aarch64_preemption.cpp
+    src/aarch64_execution_universe.cpp
     src/kernel.cpp
     src/fdt.cpp
     src/hardware_inventory.cpp
@@ -42,6 +43,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         src/machine_aarch64.cpp
         src/aarch64_translation.cpp
         src/aarch64_asid.cpp
+        src/aarch64_execution_universe_machine.cpp
         src/aarch64_entry.cpp
         src/aarch64_gic_v3.cpp
         src/aarch64_vectors.S
@@ -75,6 +77,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/process_translation.cpp
             src/aarch64_user_frames.cpp
             src/aarch64_preemption.cpp
+            src/aarch64_execution_universe.cpp
             src/fdt.cpp
             src/hardware_inventory.cpp
             src/gic_v3_discovery.cpp
@@ -84,6 +87,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/machine_aarch64.cpp
             src/aarch64_translation.cpp
             src/aarch64_asid.cpp
+            src/aarch64_execution_universe_machine.cpp
             src/aarch64_entry.cpp
             src/aarch64_gic_v3.cpp
             src/aarch64_vectors.S
