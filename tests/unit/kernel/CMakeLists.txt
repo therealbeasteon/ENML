@@ -62,6 +62,14 @@ target_compile_options(kernel_aarch64_exception_test PRIVATE
 add_test(NAME kernel_aarch64_exception_test COMMAND kernel_aarch64_exception_test)
 set_tests_properties(kernel_aarch64_exception_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_aarch64_translation_test aarch64_translation_test.cpp)
+target_link_libraries(kernel_aarch64_translation_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_translation_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_translation_test COMMAND kernel_aarch64_translation_test)
+set_tests_properties(kernel_aarch64_translation_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_composition_test kernel_test.cpp)
 target_link_libraries(kernel_composition_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_composition_test PRIVATE
