@@ -11,22 +11,21 @@
 // The machine port owns how the image is loaded. This entry contains no QEMU
 // MMIO constants and no Linux ABI assumptions.
 _start:
-    // Cookie's first native image currently requires EL1. A future EL2 shim may
-    // deliberately drop to EL1, but silently continuing at the wrong level
-    // would make every system-register assumption unsafe.
     mrs x1, CurrentEL
     cmp x1, #0x4
     b.ne .Lhalt
 
-    // Preserve the firmware DTB handoff while establishing a known bootstrap
-    // stack. This stack is only used while the real guarded stack is mapped.
+    // Interrupt delivery is an explicit Cookie state transition. Firmware/reset
+    // DAIF state is not trusted; nothing asynchronous is admitted until GICv3,
+    // vectors and the timer are fully established and EL0 ERET clears I.
+    msr daifset, #0xf
+    isb
+
     mov x19, x0
     adrp x1, __cookie_bootstrap_stack_top
     add  x1, x1, :lo12:__cookie_bootstrap_stack_top
     mov sp, x1
 
-    // Freestanding C++ expects zero-initialized BSS. Do this before calling any
-    // C++ code, without using the stack while it is being cleared.
     adrp x1, __bss_start
     add  x1, x1, :lo12:__bss_start
     adrp x2, __bss_end
@@ -40,8 +39,6 @@ _start:
     mov x0, x19
     bl cookie_aarch64_boot_main
 
-// Returning from the kernel bootstrap is always an invariant violation. Keep
-// interrupts masked and wait forever rather than falling into image data.
 .Lhalt:
     msr daifset, #0xf
 .Lhalt_loop:
