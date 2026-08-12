@@ -5,3 +5,11 @@ target_compile_options(network_policy_test PRIVATE
 )
 add_test(NAME network_policy_test COMMAND network_policy_test)
 set_tests_properties(network_policy_test PROPERTIES LABELS "m4-shell")
+
+add_executable(network_capability_test capability_test.cpp)
+target_link_libraries(network_capability_test PRIVATE emnl::osnetwork emnl_warnings)
+target_compile_options(network_capability_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME network_capability_test COMMAND network_capability_test)
+set_tests_properties(network_capability_test PROPERTIES LABELS "m4-shell")
