@@ -79,7 +79,8 @@ void write32(std::uintptr_t base, std::uint64_t offset, std::uint32_t value) noe
 
     for (std::size_t region = 0U; region < topology.redistributor_count; ++region) {
         const auto& range = topology.redistributors[region];
-        if (!range.valid() || stride < default_redistributor_stride) continue;
+        if (!range.valid() || stride < default_redistributor_stride ||
+            range.size < default_redistributor_stride) continue;
         for (std::uint64_t offset = 0ULL;
              offset <= range.size - default_redistributor_stride;
              offset += stride) {
@@ -88,6 +89,7 @@ void write32(std::uintptr_t base, std::uint64_t offset, std::uint32_t value) noe
             const auto typer_affinity = static_cast<std::uint32_t>(typer >> 32U);
             if (typer_affinity == affinity) return base;
             if ((typer & gicr_typer_last) != 0ULL) break;
+            if (offset > UINT64_MAX - stride) break;
         }
     }
     return 0U;
@@ -129,8 +131,6 @@ os::core::Result<GicV3PrimaryCpu> initialize_gic_v3_primary_cpu(
     std::uint32_t timer_intid) noexcept {
     if (!topology.valid()) return gic_error(gic_v3_errors::invalid_topology);
     if (timer_intid < 16U || timer_intid > 31U) {
-        // First bring-up handles the architectural timer as a standard PPI. EPPIs
-        // require GICv3.1+ extended redistributor registers and get a separate review.
         return gic_error(gic_v3_errors::unsupported_interrupt);
     }
 
@@ -138,7 +138,6 @@ os::core::Result<GicV3PrimaryCpu> initialize_gic_v3_primary_cpu(
     const auto redistributor = find_redistributor(topology);
     if (redistributor == 0U) return gic_error(gic_v3_errors::redistributor_not_found);
 
-    // Disable distributor delivery while establishing a known Group-1NS state.
     write32(distributor, gicd_ctlr, 0U);
     if (!wait_distributor(distributor)) return gic_error(gic_v3_errors::distributor_timeout);
     if (!wake_redistributor(redistributor)) return gic_error(gic_v3_errors::wake_timeout);
@@ -148,15 +147,12 @@ os::core::Result<GicV3PrimaryCpu> initialize_gic_v3_primary_cpu(
     group |= bit;
     write32(redistributor, gicr_igroupr0, group);
 
-    // Architected timer PPIs are level-triggered. Force the timer field to level
-    // regardless of stale firmware state before enabling it.
     auto config = read32(redistributor, gicr_icfgr1);
     const std::uint32_t ppi_index = timer_intid - 16U;
     const std::uint32_t field_shift = ppi_index * 2U;
     config &= ~(0x3U << field_shift);
     write32(redistributor, gicr_icfgr1, config);
 
-    // Priority bytes are byte-addressable; use a direct volatile byte write.
     *reg<std::uint8_t>(redistributor, gicr_ipriorityr + timer_intid) = timer_priority;
     write32(redistributor, gicr_icpendr0, bit);
     write32(redistributor, gicr_isenabler0, bit);
