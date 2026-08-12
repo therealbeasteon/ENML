@@ -11,6 +11,8 @@ namespace {
 
 os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
     Scheduler& scheduler,
+    const ProcessTranslationTable& translations,
+    const AddressSpaceEpochAuthority& epochs,
     const Decision& decision,
     std::uint64_t now_nanoseconds,
     ExceptionFrame& live,
@@ -18,6 +20,14 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
     (void)scheduler;
     if (decision.thread == invalid_thread) {
         return preemption_error(preemption_errors::no_runnable_thread);
+    }
+
+    // Validate the target memory universe before mutating the live frame or the
+    // saved outgoing frame. A stale process identity therefore cannot cause a
+    // half-switch where registers belong to one thread and TTBR0 to another.
+    auto translation = translations.resolve(decision.thread, epochs);
+    if (!translation) {
+        return preemption_error(preemption_errors::translation_unavailable);
     }
 
     const ThreadId previous = running_;
@@ -47,6 +57,7 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
         .previous = previous,
         .next = decision.thread,
         .deadline = deadline.value(),
+        .translation = translation.value(),
         .switched = switched,
         .preempted = decision.preempted,
     };
@@ -54,17 +65,22 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
 
 os::core::Result<PreemptionResult> PreemptionCoordinator::start(
     Scheduler& scheduler,
+    const ProcessTranslationTable& translations,
+    const AddressSpaceEpochAuthority& epochs,
     std::uint64_t now_nanoseconds,
     ExceptionFrame& live) noexcept {
     if (running_ != invalid_thread) {
         return preemption_error(preemption_errors::wrong_running_thread);
     }
     const auto decision = scheduler.choose(now_nanoseconds);
-    return apply_decision(scheduler, decision, now_nanoseconds, live, false);
+    return apply_decision(
+        scheduler, translations, epochs, decision, now_nanoseconds, live, false);
 }
 
 os::core::Result<PreemptionResult> PreemptionCoordinator::on_timer(
     Scheduler& scheduler,
+    const ProcessTranslationTable& translations,
+    const AddressSpaceEpochAuthority& epochs,
     const SchedulerDeadline& delivered,
     std::uint64_t now_nanoseconds,
     ExceptionFrame& live) noexcept {
@@ -75,7 +91,8 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::on_timer(
     }
 
     const auto decision = scheduler.choose(now_nanoseconds);
-    return apply_decision(scheduler, decision, now_nanoseconds, live, true);
+    return apply_decision(
+        scheduler, translations, epochs, decision, now_nanoseconds, live, true);
 }
 
 } // namespace os::kernel::aarch64
