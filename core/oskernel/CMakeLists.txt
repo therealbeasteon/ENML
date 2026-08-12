@@ -2,6 +2,7 @@ add_library(oskernel STATIC
     src/abi.cpp
     src/rendezvous.cpp
     src/capability.cpp
+    src/ipc_endpoint.cpp
     src/interrupt.cpp
     src/scheduler.cpp
     src/scheduler_deadline.cpp
