@@ -2,6 +2,7 @@
 
 #include <os/ui/frame_scheduler.hpp>
 #include <os/ui/quality_policy.hpp>
+#include <os/ui/system_composition.hpp>
 #include <os/ui/system_layouts.hpp>
 #include <os/ui/system_render_plan.hpp>
 #include <os/ui/system_scenes.hpp>
@@ -159,6 +160,25 @@ int main() {
     require(lock_plan.trusted_attribution_required);
     require(lock_plan.capture_protected);
     require(lock_plan.wallpaper_context_visible);
+
+    const auto lock_composition = compose_lock_scene(tall_phone, smooth_frame);
+    require(system_scene_composition_valid(lock_composition, tall_phone));
+    require(lock_composition.count == 4U);
+    require(lock_composition.nodes[0].role == SystemRegionRole::trusted_status);
+    require(lock_composition.nodes[0].plane == PlaneRole::secure);
+    require(lock_composition.nodes[0].trusted);
+    require(lock_composition.nodes[0].capture_protected);
+    require(lock_composition.nodes[1].contour == ContourFamily::halo);
+    require(lock_composition.nodes[1].trusted);
+    require(lock_composition.nodes[3].role == SystemRegionRole::reachable_actions);
+    require(lock_composition.nodes[3].interactive);
+
+    auto forged_lock = lock_composition;
+    forged_lock.nodes[0].trusted = false;
+    require(!system_scene_composition_valid(forged_lock, tall_phone));
+    forged_lock = lock_composition;
+    forged_lock.nodes[1].trusted = false;
+    require(!system_scene_composition_valid(forged_lock, tall_phone));
 
     FrameTelemetry dragging = smooth_120hz;
     dragging.direct_manipulation_active = true;
