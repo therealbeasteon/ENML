@@ -40,6 +40,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     add_library(oskernel_machine_aarch64 STATIC
         src/machine_aarch64.cpp
         src/aarch64_translation.cpp
+        src/aarch64_asid.cpp
         src/aarch64_entry.cpp
         src/aarch64_gic_v3.cpp
         src/aarch64_vectors.S
@@ -80,6 +81,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/boot_memory_plan.cpp
             src/machine_aarch64.cpp
             src/aarch64_translation.cpp
+            src/aarch64_asid.cpp
             src/aarch64_entry.cpp
             src/aarch64_gic_v3.cpp
             src/aarch64_vectors.S
