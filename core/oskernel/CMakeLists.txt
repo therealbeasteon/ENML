@@ -50,6 +50,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         src/aarch64_entry.cpp
         src/aarch64_gic_v3.cpp
         src/aarch64_vectors.S
+        src/aarch64_user_access.S
         src/aarch64_context_switch.S
         src/aarch64_el0.S
     )
@@ -96,6 +97,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/aarch64_entry.cpp
             src/aarch64_gic_v3.cpp
             src/aarch64_vectors.S
+            src/aarch64_user_access.S
             src/aarch64_context_switch.S
             src/aarch64_el0.S
         )
@@ -114,7 +116,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             -Wl,-T,${CMAKE_CURRENT_BINARY_DIR}/cookie_aarch64_boot.ld)
         set_target_properties(cookie_kernel_aarch64_boot PROPERTIES
             POSITION_INDEPENDENT_CODE OFF
-            LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/cookie_kernel_aarch64_boot.ld)
+            LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/cookie_aarch64_boot.ld)
 
         if(CMAKE_OBJCOPY)
             add_custom_command(TARGET cookie_kernel_aarch64_boot POST_BUILD
