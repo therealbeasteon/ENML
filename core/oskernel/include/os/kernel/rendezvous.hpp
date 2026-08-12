@@ -69,6 +69,7 @@ public:
     [[nodiscard]] os::core::Result<void> accept_sender(
         ThreadId self,
         ThreadId caller) noexcept;
+    [[nodiscard]] os::core::Result<void> cancel_receive(ThreadId self) noexcept;
 
     // Narrow cancellation primitive used by endpoint retirement. It can only
     // release a caller that is currently blocked on the exact expected server;
