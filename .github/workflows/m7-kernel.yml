@@ -23,7 +23,7 @@ jobs:
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -44,7 +44,7 @@ jobs:
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -68,7 +68,7 @@ jobs:
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -98,7 +98,7 @@ jobs:
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
