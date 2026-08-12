@@ -105,8 +105,28 @@ int main() {
     require(cookie_ips(0U) == 0U);
     require(cookie_ips(5U) == 5U);
     require(cookie_ips(6U) == 5U);
-    require(tcr_el1_for_ips(5U) != 0ULL);
+
+    const auto bringup_tcr = tcr_el1_for_ips(5U);
+    require(bringup_tcr != 0ULL);
+    require((bringup_tcr & 0x3FULL) == stage1_t0sz);
+    require((bringup_tcr & (1ULL << 23U)) != 0ULL);
     require(tcr_el1_for_ips(6U) == 0ULL);
+
+    const auto split_tcr = split_tcr_el1_for_ips(5U);
+    require(split_tcr != 0ULL);
+    require((split_tcr & 0x3FULL) == stage1_t0sz);
+    require(((split_tcr >> 16U) & 0x3FULL) == stage1_t1sz);
+    require(((split_tcr >> 8U) & 0x3ULL) == 1ULL);   // IRGN0 WBWA
+    require(((split_tcr >> 10U) & 0x3ULL) == 1ULL);  // ORGN0 WBWA
+    require(((split_tcr >> 12U) & 0x3ULL) == 3ULL);  // SH0 inner
+    require((split_tcr & (1ULL << 22U)) == 0ULL);    // A1: ASID from TTBR0
+    require((split_tcr & (1ULL << 23U)) == 0ULL);    // EPD1: TTBR1 walks enabled
+    require(((split_tcr >> 24U) & 0x3ULL) == 1ULL);  // IRGN1 WBWA
+    require(((split_tcr >> 26U) & 0x3ULL) == 1ULL);  // ORGN1 WBWA
+    require(((split_tcr >> 28U) & 0x3ULL) == 3ULL);  // SH1 inner
+    require(((split_tcr >> 30U) & 0x3ULL) == 2ULL);  // TG1 4 KiB
+    require(((split_tcr >> 32U) & 0x7ULL) == 5ULL);  // IPS capped at 48-bit
+    require(split_tcr_el1_for_ips(6U) == 0ULL);
 
     return 0;
 }
