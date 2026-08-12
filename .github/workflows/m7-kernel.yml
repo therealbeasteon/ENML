@@ -49,8 +49,7 @@ jobs:
           kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
-          kernel_arch_timer_discovery_test kernel_boot_memory_test
-          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
+          kernel_arch_timer_discovery_test kernel_boot_memory_test kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates with sanitizers
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-sanitizers' --preset host-asan
@@ -119,13 +118,18 @@ jobs:
           test -s "$elf"
           test -s "$image"
           entry=$(readelf -h "$elf" | awk '/Entry point address:/ {print $4}')
+          boot_main=$(nm -n "$elf" | awk '$3 == "cookie_aarch64_boot_main" {print "0x"$1}')
           test -n "$entry"
+          test -n "$boot_main"
           readelf -h "$elf"
           readelf -l "$elf"
           readelf -S "$elf"
           readelf -r "$elf"
           nm -n "$elf" | grep -E '(_start|cookie_aarch64_boot_main|__cookie_image_start|__cookie_image_end|__bss_start|__bss_end|__cookie_bootstrap_stack_top)$'
+          echo '--- _start ---'
           objdump -d --start-address="$entry" --stop-address=$((entry + 0x120)) "$elf" || true
+          echo '--- cookie_aarch64_boot_main prologue ---'
+          objdump -d --start-address="$boot_main" --stop-address=$((boot_main + 0x100)) "$elf" || true
           stat -c 'raw-image-bytes=%s' "$image"
       - name: Boot Cookie Kernel as bare-metal ELF and prove isolated EL0 native IPC under QEMU virt GICv3
         shell: bash
@@ -141,12 +145,14 @@ jobs:
             -nographic \
             -monitor none \
             -no-reboot \
-            -d cpu_reset,guest_errors,int \
+            -d cpu_reset,guest_errors,int,in_asm \
             -D cookie-qemu-debug.log \
             -device loader,file="$elf",cpu-num=0 >cookie-qemu.log 2>&1
           status=$?
           set -e
           cat cookie-qemu.log
+          echo '--- QEMU diagnostic head ---'
+          head -n 180 cookie-qemu-debug.log || true
           echo '--- QEMU diagnostic tail ---'
           tail -n 250 cookie-qemu-debug.log || true
           if [[ $status -ne 0 && $status -ne 124 ]]; then
