@@ -7,6 +7,7 @@ add_library(oskernel STATIC
     src/kernel.cpp
     src/fdt.cpp
     src/hardware_inventory.cpp
+    src/gic_v3_discovery.cpp
     src/boot_memory.cpp
     src/boot_memory_plan.cpp
     src/machine_host.cpp
@@ -62,6 +63,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/abi.cpp
             src/fdt.cpp
             src/hardware_inventory.cpp
+            src/gic_v3_discovery.cpp
             src/boot_memory.cpp
             src/boot_memory_plan.cpp
             src/machine_aarch64.cpp
