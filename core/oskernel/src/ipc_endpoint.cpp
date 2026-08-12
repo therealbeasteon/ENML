@@ -157,7 +157,41 @@ std::size_t IpcEndpointTable::retire_all_owned_by(
         };
         if (retire(server, endpoint, rendezvous)) ++retired;
     }
-    discard_completed_for(server);
+    return retired;
+}
+
+std::size_t IpcEndpointTable::release_thread(
+    ThreadId thread,
+    Rendezvous& rendezvous) noexcept {
+    if (thread == invalid_thread) return 0U;
+
+    const std::size_t retired = retire_all_owned_by(thread, rendezvous);
+
+    // A dying caller cannot leave bounded IPC state behind. Do not attempt to
+    // wake it: Rendezvous::exit_thread() runs immediately after this operation.
+    for (auto& pending : pending_) {
+        if (!pending.active || pending.caller != thread) continue;
+        const IpcEndpoint endpoint = pending.endpoint;
+        pending = PendingSlot{};
+        --pending_calls_;
+        for (auto& reply : replies_) {
+            if (!reply.active || reply.seal.caller != thread ||
+                !(reply.seal.endpoint == endpoint)) continue;
+            reply = ReplySlot{};
+            --reply_seals_;
+        }
+    }
+
+    // A server may have a Reply Seal whose caller died after receive but before
+    // reply. That authority becomes meaningless at the caller's death.
+    for (auto& reply : replies_) {
+        if (!reply.active) continue;
+        if (reply.seal.caller != thread && reply.seal.server != thread) continue;
+        reply = ReplySlot{};
+        --reply_seals_;
+    }
+
+    discard_completed_for(thread);
     return retired;
 }
 
@@ -188,9 +222,6 @@ os::core::Result<void> IpcEndpointTable::send(
     Rendezvous& rendezvous,
     IpcEnvelope request) noexcept {
     if (!request.valid()) return ipc_error(ipc_errors::payload_too_large);
-    // A caller must consume its previous response before beginning another
-    // synchronous transaction. This keeps exactly one response slot per thread
-    // and prevents a caller from turning completed replies into a kernel queue.
     if (completed_slot(caller) != nullptr) return ipc_error(ipc_errors::reply_unavailable);
 
     auto endpoint = endpoint_for_capability(
@@ -280,9 +311,6 @@ os::core::Result<void> IpcEndpointTable::reply(
     auto* completed = free_completed_slot();
     if (completed == nullptr) return ipc_error(ipc_errors::reply_unavailable);
 
-    // Reserve the response before consuming the one-shot reply authority. If
-    // rendezvous rejects the reply, roll the reservation back; the seal/pending
-    // call remain intact and no partial completion becomes visible.
     *completed = CompletedSlot{
         .caller = seal.caller,
         .response = response,
