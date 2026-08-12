@@ -11,8 +11,29 @@ namespace os::kernel::aarch64 {
 
 class EarlyPageArena final {
 public:
-    EarlyPageArena(std::uint64_t begin, std::uint64_t end) noexcept
+    constexpr EarlyPageArena() noexcept = default;
+    constexpr EarlyPageArena(std::uint64_t begin, std::uint64_t end) noexcept
         : next_(begin), end_(end) {}
+
+    [[nodiscard]] os::core::Result<void> bind(
+        std::uint64_t begin,
+        std::uint64_t end) noexcept {
+        if (next_ != 0ULL || end_ != 0ULL) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                machine_errors::already_mapped);
+        }
+        next_ = begin;
+        end_ = end;
+        if (!valid()) {
+            next_ = 0ULL;
+            end_ = 0ULL;
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                machine_errors::invalid_range);
+        }
+        return {};
+    }
 
     [[nodiscard]] bool valid() const noexcept {
         return page_aligned(next_) && page_aligned(end_) && next_ < end_ &&
@@ -55,7 +76,23 @@ public:
         retiring = 3U,
     };
 
-    explicit EarlyStage1Builder(EarlyPageArena& arena) noexcept : arena_(&arena) {}
+    constexpr EarlyStage1Builder() noexcept = default;
+    explicit constexpr EarlyStage1Builder(EarlyPageArena& arena) noexcept : arena_(&arena) {}
+
+    [[nodiscard]] os::core::Result<void> attach_arena(EarlyPageArena& arena) noexcept {
+        if (arena_ != nullptr || root_ != 0ULL || lifecycle_ != Lifecycle::uninitialized) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                machine_errors::already_mapped);
+        }
+        if (!arena.valid()) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                machine_errors::invalid_range);
+        }
+        arena_ = &arena;
+        return {};
+    }
 
     [[nodiscard]] os::core::Result<std::uint64_t> initialize() noexcept {
         if (arena_ == nullptr || !arena_->valid()) {
@@ -72,10 +109,6 @@ public:
         return root_;
     }
 
-    // Sealing is one-way for normal execution. A sealed root may be installed
-    // for a process but cannot be mutated through this builder. Teardown must
-    // explicitly enter retiring state first, separating scheduling authority
-    // from page-table mutation authority.
     [[nodiscard]] os::core::Result<void> seal() noexcept {
         if (lifecycle_ == Lifecycle::sealed) {
             return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::sealed);
@@ -258,25 +291,25 @@ private:
         return leaf;
     }
 
-    [[nodiscard]] os::core::Result<std::uint64_t>
-    ensure_next_table(std::uint64_t& entry) noexcept {
+    [[nodiscard]] os::core::Result<std::uint64_t> ensure_next_table(
+        std::uint64_t& entry) noexcept {
         if ((entry & descriptor::valid) != 0ULL) {
             if ((entry & descriptor::table_or_page) == 0ULL) {
                 return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
             }
-            const auto physical = entry & page_address_mask;
-            if (!stage1_physical_address(physical)) {
+            const auto existing = entry & page_address_mask;
+            if (!stage1_physical_address(existing)) {
                 return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
             }
-            return physical;
+            return existing;
+        }
+        if (arena_ == nullptr) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
         }
         auto page = arena_->allocate_page();
         if (!page) return page.error();
         zero_table(page.value());
-        entry = table_descriptor(page.value());
-        if (entry == 0ULL) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::invalid_range);
-        }
+        entry = page.value() | descriptor::valid | descriptor::table_or_page;
         return page.value();
     }
 };
