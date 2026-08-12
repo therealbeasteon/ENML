@@ -38,6 +38,14 @@ target_compile_options(kernel_ipc_composition_test PRIVATE
 add_test(NAME kernel_ipc_composition_test COMMAND kernel_ipc_composition_test)
 set_tests_properties(kernel_ipc_composition_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_ipc_continuation_test ipc_continuation_test.cpp)
+target_link_libraries(kernel_ipc_continuation_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_ipc_continuation_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_ipc_continuation_test COMMAND kernel_ipc_continuation_test)
+set_tests_properties(kernel_ipc_continuation_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_interrupt_test interrupt_test.cpp)
 target_link_libraries(kernel_interrupt_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_interrupt_test PRIVATE
