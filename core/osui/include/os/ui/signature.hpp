@@ -24,15 +24,13 @@ enum class SurfaceRhythm : std::uint8_t {
 };
 
 enum class MotionCharacter : std::uint8_t {
-    settle = 0U,      // short positional settling after direct manipulation
-    reveal = 1U,      // content emerges from an existing spatial relationship
-    handoff = 2U,     // continuity between surfaces/objects
-    confirm = 3U,     // restrained completion acknowledgement
-    secure = 4U,      // deterministic, low-amplitude trusted transition
+    settle = 0U,
+    reveal = 1U,
+    handoff = 2U,
+    confirm = 3U,
+    secure = 4U,
 };
 
-// SignatureProfile is a renderer/layout policy contract, not app styling ABI.
-// It defines how Cookie combines its semantic planes and contours.
 struct SignatureProfile final {
     SpatialBias bias {SpatialBias::asymmetric_balanced};
     SurfaceRhythm rhythm {SurfaceRhythm::quiet};
@@ -52,9 +50,14 @@ inline constexpr std::uint8_t max_signature_accent_surfaces = 4U;
 
 [[nodiscard]] constexpr bool contour_pair_is_cookie(
     ContourFamily primary,
-    ContourFamily accent) noexcept {
+    ContourFamily accent,
+    SurfaceRhythm rhythm) noexcept {
     if (primary == accent) return false;
-    if (primary == ContourFamily::halo) return false; // Halo is reserved for trust/focus emphasis.
+    if (primary == ContourFamily::halo) return false;
+    if (accent == ContourFamily::halo) {
+        return rhythm == SurfaceRhythm::focused &&
+            primary == ContourFamily::frame;
+    }
     return accent == ContourFamily::sweep ||
            accent == ContourFamily::pebble ||
            accent == ContourFamily::frame;
@@ -67,7 +70,12 @@ inline constexpr std::uint8_t max_signature_accent_surfaces = 4U;
         return false;
     }
     if (profile.accent_surface_count > max_signature_accent_surfaces) return false;
-    if (!contour_pair_is_cookie(profile.primary_contour, profile.accent_contour)) return false;
+    if (!contour_pair_is_cookie(
+            profile.primary_contour,
+            profile.accent_contour,
+            profile.rhythm)) {
+        return false;
+    }
 
     // Cookie must not devolve into a wall of interchangeable rounded cards,
     // a full-screen glass sheet, or a launcher whose identity comes from one
@@ -77,10 +85,11 @@ inline constexpr std::uint8_t max_signature_accent_surfaces = 4U;
     if (profile.full_screen_glass_sheet) return false;
     if (profile.icon_mask_uniformity_required) return false;
 
-    // Quiet Depth requires visible breathing room. Dense focused surfaces can
-    // temporarily fill space, but the default system composition preserves an
-    // open field around the dominant object hierarchy.
     if (profile.rhythm == SurfaceRhythm::quiet && !profile.preserve_open_field) {
+        return false;
+    }
+    if (profile.motion == MotionCharacter::secure &&
+        profile.rhythm != SurfaceRhythm::focused) {
         return false;
     }
     return true;
