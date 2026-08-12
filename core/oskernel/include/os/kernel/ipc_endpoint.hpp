@@ -179,6 +179,7 @@ private:
     [[nodiscard]] EndpointSlot* slot_for(IpcEndpoint endpoint) noexcept;
     [[nodiscard]] const EndpointSlot* slot_for(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] ReplySlot* reply_slot(const IpcReplySeal& seal) noexcept;
+    [[nodiscard]] ReplySlot* reply_slot(ThreadId server, IpcTransactionId transaction) noexcept;
     [[nodiscard]] PendingSlot* pending_slot(ThreadId caller, IpcEndpoint endpoint) noexcept;
     [[nodiscard]] PendingSlot* free_pending_slot() noexcept;
     [[nodiscard]] CompletedSlot* completed_slot(ThreadId caller) noexcept;
