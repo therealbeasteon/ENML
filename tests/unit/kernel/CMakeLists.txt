@@ -78,6 +78,14 @@ target_compile_options(kernel_aarch64_page_tables_test PRIVATE
 add_test(NAME kernel_aarch64_page_tables_test COMMAND kernel_aarch64_page_tables_test)
 set_tests_properties(kernel_aarch64_page_tables_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_aarch64_mapping_state_test aarch64_mapping_state_test.cpp)
+target_link_libraries(kernel_aarch64_mapping_state_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_mapping_state_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_mapping_state_test COMMAND kernel_aarch64_mapping_state_test)
+set_tests_properties(kernel_aarch64_mapping_state_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_fdt_test fdt_test.cpp)
 target_link_libraries(kernel_fdt_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_fdt_test PRIVATE
