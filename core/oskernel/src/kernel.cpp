@@ -51,6 +51,7 @@ os::core::Result<void> Kernel::create_thread(ThreadId thread, Priority priority)
 }
 
 os::core::Result<Teardown> Kernel::destroy_thread(ThreadId thread) noexcept {
+    ipc_continuations_.release_thread(thread);
     const std::size_t retired_endpoints = ipc_.release_thread(thread, threads_);
 
     auto released = threads_.exit_thread(thread);
@@ -163,6 +164,38 @@ os::core::Result<IpcEnvelope> Kernel::ipc_take_reply(ThreadId caller) noexcept {
                                  rendezvous_errors::unknown_thread)};
     }
     return ipc_.take_reply(caller);
+}
+
+os::core::Result<void> Kernel::ipc_arm_send_continuation(
+    ThreadId caller,
+    AddressSpaceEpoch epoch,
+    std::uint64_t exchange_address,
+    const AddressSpaceEpochAuthority& epochs) noexcept {
+    if (!tracks(caller)) {
+        return os::core::make_error(os::core::ErrorDomain::kernel,
+                                    rendezvous_errors::unknown_thread);
+    }
+    return ipc_continuations_.arm(caller, epoch, exchange_address, epochs);
+}
+
+os::core::Result<IpcSendContinuation> Kernel::ipc_take_send_continuation(
+    ThreadId caller,
+    AddressSpaceEpoch expected,
+    const AddressSpaceEpochAuthority& epochs) noexcept {
+    if (!tracks(caller)) {
+        return os::core::Result<IpcSendContinuation>{
+            os::core::make_error(os::core::ErrorDomain::kernel,
+                                 rendezvous_errors::unknown_thread)};
+    }
+    return ipc_continuations_.take(caller, expected, epochs);
+}
+
+os::core::Result<void> Kernel::ipc_cancel_send_continuation(ThreadId caller) noexcept {
+    if (!tracks(caller)) {
+        return os::core::make_error(os::core::ErrorDomain::kernel,
+                                    rendezvous_errors::unknown_thread);
+    }
+    return ipc_continuations_.cancel(caller);
 }
 
 os::core::Result<Dispatch> Kernel::dispatch_interrupt(InterruptSource source) noexcept {
