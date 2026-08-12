@@ -159,7 +159,8 @@ os::core::Result<void> IpcEndpointTable::retire(
     }
 
     if (slot->receive_waiting) {
-        (void)rendezvous.cancel_receive(server);
+        auto cancelled = rendezvous.cancel_receive(server);
+        if (!cancelled) return cancelled.error();
         slot->receive_waiting = false;
     }
     slot->server = invalid_thread;
