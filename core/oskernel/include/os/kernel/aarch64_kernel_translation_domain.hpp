@@ -6,6 +6,7 @@
 #include <os/core/result.hpp>
 #include <os/kernel/aarch64_kernel_mapping_manifest.hpp>
 #include <os/kernel/aarch64_page_tables.hpp>
+#include <os/kernel/translation_root.hpp>
 
 namespace os::kernel::aarch64 {
 
@@ -13,6 +14,7 @@ namespace kernel_translation_domain_errors {
 inline constexpr std::uint32_t invalid_root = 210U;
 inline constexpr std::uint32_t already_established = 211U;
 inline constexpr std::uint32_t wrong_builder = 212U;
+inline constexpr std::uint32_t invalid_plan = 213U;
 } // namespace kernel_translation_domain_errors
 
 // Populate one upper-region builder from the single reviewed kernel manifest.
@@ -80,5 +82,45 @@ public:
 private:
     std::uint64_t root_physical_ {0ULL};
 };
+
+// Immutable input to the future no-stack machine transition. Preparing this
+// object proves both roots are sealed/established and that one reviewed split
+// TCR value is available before any system register is modified.
+struct SplitTranslationPlan final {
+    std::uint64_t user_root_physical {0ULL};
+    std::uint64_t kernel_root_physical {0ULL};
+    std::uint64_t tcr_el1 {0ULL};
+
+    [[nodiscard]] constexpr bool valid() const noexcept {
+        return stage1_physical_address(user_root_physical) &&
+               stage1_physical_address(kernel_root_physical) &&
+               user_root_physical != kernel_root_physical &&
+               tcr_el1 != 0ULL;
+    }
+};
+
+[[nodiscard]] inline os::core::Result<SplitTranslationPlan>
+prepare_split_translation_plan(
+    const SealedTranslationRoot& user_root,
+    const KernelTranslationDomain& kernel_domain,
+    std::uint8_t hardware_parange) noexcept {
+    if (!user_root.valid() || !kernel_domain.established() || hardware_parange > 6U) {
+        return os::core::make_error(
+            os::core::ErrorDomain::kernel,
+            kernel_translation_domain_errors::invalid_plan);
+    }
+    const auto tcr = split_tcr_el1_for_ips(cookie_ips(hardware_parange));
+    SplitTranslationPlan plan{
+        .user_root_physical = user_root.root_physical(),
+        .kernel_root_physical = kernel_domain.root_physical(),
+        .tcr_el1 = tcr,
+    };
+    if (!plan.valid()) {
+        return os::core::make_error(
+            os::core::ErrorDomain::kernel,
+            kernel_translation_domain_errors::invalid_plan);
+    }
+    return plan;
+}
 
 } // namespace os::kernel::aarch64
