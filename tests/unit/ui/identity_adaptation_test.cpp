@@ -6,6 +6,7 @@
 #include <os/ui/icon.hpp>
 #include <os/ui/identity.hpp>
 #include <os/ui/layout_policy.hpp>
+#include <os/ui/motion_stability.hpp>
 #include <os/ui/quality_policy.hpp>
 #include <os/ui/secure_surface.hpp>
 
@@ -219,6 +220,40 @@ int main() {
     require(invalid_decision.maximum_quality == QualityTier::essential);
     require(!invalid_decision.preserve_spatial_motion);
     require(invalid_decision.hitch_recovery);
+
+    MotionContinuity gesture {
+        .progress_q16 = 40'000U,
+        .target_q16 = motion_one_q16,
+        .direction = MotionDirection::forward,
+        .active = true,
+    };
+    require(motion_continuity_valid(gesture));
+    const auto reversed = retarget_motion(gesture, 0U);
+    require(reversed.progress_q16 == 40'000U);
+    require(reversed.target_q16 == 0U);
+    require(reversed.direction == MotionDirection::reverse);
+    require(reversed.active);
+
+    const auto resumed = retarget_motion(reversed, motion_one_q16);
+    require(resumed.progress_q16 == 40'000U);
+    require(resumed.direction == MotionDirection::forward);
+
+    FrameStabilityState stability {
+        .admitted_quality = QualityTier::ambient,
+        .stable_frames = 0U,
+        .miss_streak = 0U,
+    };
+    stability = update_frame_stability(stability, QualityTier::ambient, true);
+    require(stability.admitted_quality == QualityTier::continuity);
+    require(stability.miss_streak == 1U);
+
+    for (std::uint8_t i = 0U; i < quality_restore_stable_frames - 1U; ++i) {
+        stability = update_frame_stability(stability, QualityTier::ambient, false);
+    }
+    require(stability.admitted_quality == QualityTier::continuity);
+    stability = update_frame_stability(stability, QualityTier::ambient, false);
+    require(stability.admitted_quality == QualityTier::material);
+    require(stability.stable_frames == 0U);
 
     return 0;
 }
