@@ -15,6 +15,7 @@ inline constexpr std::uint32_t wrong_intent = 220U;
 inline constexpr std::uint32_t size_mismatch = 221U;
 inline constexpr std::uint32_t inactive_translation = 222U;
 inline constexpr std::uint32_t wrong_current_translation = 223U;
+inline constexpr std::uint32_t copy_fault = 224U;
 } // namespace user_copy_errors
 
 // Cookie does not temporarily make ordinary EL1 loads/stores capable of
@@ -22,9 +23,9 @@ inline constexpr std::uint32_t wrong_current_translation = 223U;
 // accesses are checked with unprivileged permissions, while the software ticket
 // binds the operation to one live process-memory incarnation.
 //
-// These routines are deliberately limited to one already-prepared page-contained
-// ticket. Fault recovery is added by the exception-fixup layer before these are
-// exposed through EL0 syscalls; until then they are machine primitives only.
+// Each byte access is wrapped by a same-EL data-abort guard that accepts a fault
+// only when both FAR_EL1 and the saved faulting PC match the exact armed access.
+// An unrelated privileged fault remains fatal even while a user copy exists.
 [[nodiscard]] os::core::Result<void> copy_from_user_current(
     const UserAccessTicket& ticket,
     std::span<std::byte> destination,
