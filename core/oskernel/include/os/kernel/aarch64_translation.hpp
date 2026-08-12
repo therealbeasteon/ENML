@@ -12,6 +12,10 @@ inline constexpr std::uint64_t page_mask = architectural_page_size - 1ULL;
 inline constexpr std::uint64_t page_address_mask = 0x0000'FFFF'FFFF'F000ULL;
 inline constexpr std::uint8_t stage1_va_bits = 39U;
 inline constexpr std::uint8_t stage1_t0sz = 64U - stage1_va_bits;
+inline constexpr std::uint8_t stage1_t1sz = 64U - stage1_va_bits;
+inline constexpr std::uint64_t user_virtual_limit = 1ULL << stage1_va_bits;
+inline constexpr std::uint64_t kernel_virtual_base =
+    UINT64_MAX - (user_virtual_limit - 1ULL);
 inline constexpr std::uint16_t table_entries = 512U;
 
 inline constexpr std::uint8_t mair_normal_index = 0U;
@@ -42,8 +46,25 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
     return (value & page_mask) == 0ULL;
 }
 
+// TTBR0_EL1 owns Cookie's lower canonical region. This remains the process
+// universe: it is disposable, generation-bound and carries the process ASID.
 [[nodiscard]] constexpr bool stage1_virtual_address(std::uint64_t value) noexcept {
-    return value < (1ULL << stage1_va_bits);
+    return value < user_virtual_limit;
+}
+
+[[nodiscard]] constexpr bool user_stage1_virtual_address(std::uint64_t value) noexcept {
+    return stage1_virtual_address(value);
+}
+
+// TTBR1_EL1 will own Cookie's upper canonical region. Kernel mappings are kept
+// out of per-process TTBR0 roots so switching a process cannot replace EL1's
+// translation authority.
+[[nodiscard]] constexpr bool kernel_stage1_virtual_address(std::uint64_t value) noexcept {
+    return value >= kernel_virtual_base;
+}
+
+[[nodiscard]] constexpr bool stage1_regions_disjoint() noexcept {
+    return user_virtual_limit <= kernel_virtual_base;
 }
 
 [[nodiscard]] constexpr bool stage1_physical_address(std::uint64_t value) noexcept {
@@ -164,4 +185,4 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
 [[nodiscard]] os::core::Result<void>
 activate_stage1_translation(std::uint64_t level1_root_physical) noexcept;
 
-} // namespace os::kernel::aarch64
+} // namespace os::kernel::aarch64;
