@@ -75,10 +75,6 @@ struct ConnectionGrant final {
     return ConnectionRisk::privileged_data;
 }
 
-// External data authority must also keep exactly one attack-surface domain
-// alive. Charging is intentionally absent: accepting power never acquires a USB
-// data lease. NFC gets its own future controller domain rather than being
-// mislabeled as sensors, so it currently cannot mint a data grant below.
 [[nodiscard]] constexpr std::optional<SubsystemDomain>
 connection_subsystem_domain(ConnectionTransport transport) noexcept {
     switch (transport) {
@@ -96,10 +92,6 @@ connection_subsystem_domain(ConnectionTransport transport) noexcept {
     return std::nullopt;
 }
 
-// Power is not data authority. Cookie may accept electrical power without any
-// authenticated grant, but every data-capable role requires a fresh knowledge-
-// factor proof tied to the current lock generation. Re-locking advances the
-// generation and makes all prior grants stale even if the cable/peer remains.
 [[nodiscard]] constexpr bool requires_user_authentication(
     ConnectionPurpose purpose) noexcept {
     return connection_risk(purpose) != ConnectionRisk::no_data;
@@ -129,9 +121,8 @@ public:
         if (current_lock_generation == 0ULL) return {};
 
         if (purpose == ConnectionPurpose::charge_only) {
-            // Charging never needs to mint a data-capable authority.
             return ConnectionGrant{
-                .id = ++next_id_,
+                .id = next_nonzero_id(),
                 .generation = generation_,
                 .lock_generation = current_lock_generation,
                 .transport = transport,
@@ -140,27 +131,47 @@ public:
             };
         }
 
-        // First Cookie regime deliberately requires a PIN/password for every
-        // *new external data relationship*. Bluetooth bonds and physical
-        // attachment are identity/proximity facts, not current user consent.
         if (!proof.valid() || proof.lock_generation != current_lock_generation) return {};
         if (!connection_subsystem_domain(transport).has_value()) return {};
-        if (active_ >= max_active_grants) return {};
 
-        ++active_;
-        return ConnectionGrant{
-            .id = ++next_id_,
-            .generation = generation_,
-            .lock_generation = current_lock_generation,
-            .transport = transport,
-            .purpose = purpose,
-            .data_signaling = true,
-        };
+        for (auto& slot : slots_) {
+            if (slot.in_use) continue;
+            const ConnectionGrant grant{
+                .id = next_nonzero_id(),
+                .generation = generation_,
+                .lock_generation = current_lock_generation,
+                .transport = transport,
+                .purpose = purpose,
+                .data_signaling = true,
+            };
+            if (!grant.valid()) return {};
+            slot = Slot{.in_use = true, .grant = grant};
+            ++active_;
+            return grant;
+        }
+        return {};
     }
 
-    // Locking, duress, or explicit "disconnect external data" revokes every
-    // outstanding grant in O(1): consumers validate the generation before use.
+    // Roll back or close one data relationship without disturbing unrelated
+    // sessions. Charge-only grants are deliberately not table entries because
+    // accepting power never creates data attack surface.
+    [[nodiscard]] constexpr bool release(ConnectionGrant grant) noexcept {
+        if (!grant.valid() || !grant.data_signaling || grant.generation != generation_) return false;
+        for (auto& slot : slots_) {
+            if (!slot.in_use || slot.grant.id != grant.id) continue;
+            if (slot.grant.generation != grant.generation ||
+                slot.grant.lock_generation != grant.lock_generation ||
+                slot.grant.transport != grant.transport ||
+                slot.grant.purpose != grant.purpose) return false;
+            slot = {};
+            --active_;
+            return true;
+        }
+        return false;
+    }
+
     constexpr void revoke_all() noexcept {
+        for (auto& slot : slots_) slot = {};
         ++generation_;
         if (generation_ == 0ULL) generation_ = 1ULL;
         active_ = 0U;
@@ -169,8 +180,15 @@ public:
     [[nodiscard]] constexpr bool active(
         const ConnectionGrant& grant,
         std::uint64_t current_lock_generation) const noexcept {
-        return grant.valid() && grant.generation == generation_ &&
-               grant.lock_generation == current_lock_generation;
+        if (!grant.valid() || grant.generation != generation_ ||
+            grant.lock_generation != current_lock_generation) return false;
+        if (!grant.data_signaling) return grant.purpose == ConnectionPurpose::charge_only;
+        for (const auto& slot : slots_) {
+            if (slot.in_use && slot.grant.id == grant.id && slot.grant.generation == grant.generation) {
+                return true;
+            }
+        }
+        return false;
     }
 
     [[nodiscard]] constexpr std::optional<SubsystemDomain>
@@ -186,8 +204,20 @@ public:
     [[nodiscard]] constexpr std::uint64_t generation() const noexcept { return generation_; }
 
 private:
+    struct Slot final {
+        bool in_use {false};
+        ConnectionGrant grant {};
+    };
+
+    [[nodiscard]] constexpr std::uint64_t next_nonzero_id() noexcept {
+        ++next_id_;
+        if (next_id_ == 0ULL) ++next_id_;
+        return next_id_;
+    }
+
     std::uint64_t next_id_ {0ULL};
     std::uint64_t generation_ {1ULL};
+    std::array<Slot, max_active_grants> slots_ {};
     std::size_t active_ {0U};
 };
 
