@@ -19,6 +19,13 @@ target_compile_options(storage_protected_publication_test PRIVATE
 )
 add_test(NAME storage_protected_publication_test COMMAND storage_protected_publication_test)
 
+add_executable(storage_protected_atomic_replace_test protected_atomic_replace_test.cpp)
+target_link_libraries(storage_protected_atomic_replace_test PRIVATE emnl::osstorage emnl_warnings)
+target_compile_options(storage_protected_atomic_replace_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME storage_protected_atomic_replace_test COMMAND storage_protected_atomic_replace_test)
+
 if(EMNL_BUILD_OPENSSL_TEST_PROVIDER)
     add_executable(storage_protected_crypto_test protected_crypto_test.cpp)
     target_link_libraries(storage_protected_crypto_test PRIVATE
