@@ -17,10 +17,15 @@ void put_be32(std::byte* p, std::uint32_t value) {
     p[3] = static_cast<std::byte>(value & 0xFFU);
 }
 
+void put_be64(std::byte* p, std::uint64_t value) {
+    put_be32(p, static_cast<std::uint32_t>(value >> 32U));
+    put_be32(p + 4U, static_cast<std::uint32_t>(value & 0xFFFF'FFFFULL));
+}
+
 struct Builder final {
     std::array<std::byte, 512U> blob{};
-    // Header [0,40), zero reservation terminator [40,56), structure follows.
-    std::size_t cursor {56U};
+    // Header [0,40), one reservation [40,56), terminator [56,72), structure follows.
+    std::size_t cursor {72U};
 
     void u32(std::uint32_t value) {
         put_be32(blob.data() + cursor, value);
@@ -57,7 +62,11 @@ int main() {
         "compatible\0";
 
     Builder b{};
-    constexpr std::uint32_t structure_offset = 56U;
+    put_be64(b.blob.data() + 40U, 0x40010000ULL);
+    put_be64(b.blob.data() + 48U, 0x00010000ULL);
+    // [56,72) remains the required zero reservation terminator.
+
+    constexpr std::uint32_t structure_offset = 72U;
     b.u32(FdtView::token_begin_node);
     b.padded_string("");
 
@@ -126,6 +135,9 @@ int main() {
     require(inventory.value().memory_count == 1U);
     require(inventory.value().memory[0].base == 0x40000000ULL);
     require(inventory.value().memory[0].size == 0x08000000ULL);
+    require(inventory.value().reserved_count == 1U);
+    require(inventory.value().reserved[0].base == 0x40010000ULL);
+    require(inventory.value().reserved[0].size == 0x00010000ULL);
     require(inventory.value().device_count == 1U);
     require(inventory.value().devices[0].compatible_view() == "arm,pl011");
     require(inventory.value().devices[0].registers.base == 0x09000000ULL);
