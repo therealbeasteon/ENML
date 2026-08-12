@@ -59,6 +59,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             boot/aarch64_start.S
             boot/aarch64_boot.cpp
             boot/freestanding_memory.cpp
+            src/abi.cpp
             src/fdt.cpp
             src/hardware_inventory.cpp
             src/boot_memory.cpp
