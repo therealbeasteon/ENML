@@ -36,6 +36,26 @@ int main() {
         attacker, object, ipc_right_receive, false);
     require(server_cap && client_cap && wrong_rights);
 
+    // M7.8 migration is fail-closed. A context-bound capability may have the
+    // same numeric holder as this legacy IPC call, but the ThreadId-only path
+    // must not accept it. M7.8.2 introduces the explicit ExecutionAuthority IPC
+    // path; until then bound endpoint capabilities are deliberately unusable
+    // here rather than silently losing their generation binding.
+    constexpr ExecutionAuthority client_authority{
+        client, AddressSpaceIdentity{1U, 9U}};
+    constexpr ExecutionAuthority server_authority{
+        server, AddressSpaceIdentity{2U, 4U}};
+    auto bound_client_cap = capabilities.mint(
+        client_authority, object, ipc_right_send, false);
+    auto bound_server_cap = capabilities.mint(
+        server_authority, object, ipc_right_receive, false);
+    require(bound_client_cap && bound_server_cap);
+    require(!ipc.send(client, bound_client_cap.value(), capabilities, rendezvous));
+    require(!ipc.receive(server, bound_server_cap.value(), capabilities, rendezvous));
+    require(ipc.pending_call_count() == 0U);
+    auto server_before = rendezvous.state_of(server);
+    require(server_before && server_before.value() == ThreadState::ready);
+
     require(ipc.send(client, client_cap.value(), capabilities, rendezvous));
     require(ipc.pending_call_count() == 1U);
     auto received = ipc.receive(
