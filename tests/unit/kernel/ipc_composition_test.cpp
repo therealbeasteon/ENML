@@ -51,7 +51,15 @@ int main() {
     const std::array<std::byte, 2U> reply_bytes{std::byte{0x4F}, std::byte{0x4B}};
     auto response = os::kernel::IpcEnvelope::from(std::span<const std::byte>{reply_bytes});
     require(response);
-    require(kernel.ipc_reply(server, received.value().reply, response.value()));
+
+    // Syscall-facing path sees only the opaque transaction number. A wrong
+    // transaction cannot reply, and the correct transaction is one-shot.
+    require(!kernel.ipc_reply_transaction(
+        server, received.value().reply.transaction + 1U, response.value()));
+    require(kernel.ipc_reply_transaction(
+        server, received.value().reply.transaction, response.value()));
+    require(!kernel.ipc_reply_transaction(
+        server, received.value().reply.transaction, response.value()));
     client_runnable = kernel.runqueue().is_runnable(client);
     require(client_runnable && client_runnable.value());
 
@@ -93,9 +101,6 @@ int main() {
     require(wake && wake.value() == os::kernel::WakeReason::endpoint_retired);
     require(kernel.live_thread_count() == 1U);
 
-    // A dying caller after receive must release the pending request and the
-    // server's one-shot Reply Seal. The server survives; bounded IPC state does
-    // not depend on a dead client ever running cleanup code.
     {
         os::kernel::Kernel death_kernel{};
         constexpr os::kernel::ThreadId dying_client = 31U;
@@ -130,7 +135,8 @@ int main() {
         require(death_kernel.live_thread_count() == 1U);
         auto server_state = death_kernel.threads().state_of(live_server);
         require(server_state && server_state.value() == os::kernel::ThreadState::ready);
-        require(!death_kernel.ipc_reply(live_server, in_flight.value().reply));
+        require(!death_kernel.ipc_reply_transaction(
+            live_server, in_flight.value().reply.transaction));
     }
 
     const std::array<std::byte, os::kernel::max_ipc_inline_bytes + 1U> oversized{};
