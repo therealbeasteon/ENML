@@ -97,6 +97,44 @@ No single mitigation is considered sufficient against these classes.
 - recovery environment has a narrower authority set than normal OS and cannot silently extract protected user data;
 - production debug/unlock state is explicit, user-visible and measured into security state where hardware supports it.
 
+### P13.4a Cookie Merkle integrity and transparency
+
+Merkle trees are approved as a Cookie security primitive for **integrity proofs and append-only consistency**, not as a replacement for signatures, encryption, rollback protection, or capability authorization.
+
+Cookie should eventually use two separate constructions:
+
+1. **Immutable image tree.** Fixed-size blocks from a system/update image become leaves. Internal nodes commit their children until one root remains. The root, tree geometry, image length, algorithm identifier, format version, product/domain identifier and release epoch are authenticated by signed boot/update metadata. Blocks can then be verified on demand before executable or security-critical bytes are consumed.
+2. **Release provenance tree.** Package manifests, release manifests, policy releases and update metadata can be ordered leaves in an append-only tree. Signed tree heads plus inclusion and consistency proofs allow devices/auditors to prove that a release was included and that newer history extends older history rather than rewriting it.
+
+Cookie-specific rules:
+
+- define Cookie-owned metadata/proof formats instead of copying Android AVB/dm-verity or Certificate Transparency wire formats;
+- use explicit leaf-versus-node domain separation so encoded leaves cannot be reinterpreted as internal nodes;
+- authenticate tree geometry and root metadata, not only the root digest;
+- bind accepted release epoch/version to rollback-resistant state; Merkle integrity alone does not prove freshness;
+- bound proof depth, byte length, indexes and arithmetic before hashing or allocation;
+- cache a verified block only under an immutable object/root identity plus block index so cached trust cannot cross an update;
+- fail closed on corruption of executable, policy or security-critical blocks; recovery may select only another independently authenticated known-good image;
+- use standardized reviewed hash implementations behind the project crypto-provider boundary rather than inventing a Cookie hash;
+- keep Merkle verification out of the M7 scheduling/capability kernel unless a later threat analysis proves that placement is required. The expected home is P9 storage/update and tightly scoped verified-read services.
+
+Merkle trees do **not** provide confidentiality, access control, freshness, signer authenticity, or hidden access patterns on their own. Those properties continue to come from encryption/key release, capabilities, rollback-resistant state, signatures/trust anchors, and privacy design.
+
+Required adversarial coverage before production use:
+
+- single-bit data corruption and internal-node corruption;
+- forged or mismatched root;
+- wrong leaf index/tree size;
+- truncated, overlong or cyclic/malformed proof encoding;
+- leaf/node domain-confusion attempts;
+- image-length/block-size integer overflow;
+- proof from another product/domain/tree;
+- old signed root paired with newer rollback state;
+- cached verification reused after a root/update change;
+- append-only fork where signed tree heads cannot produce a valid consistency proof.
+
+Roadmap placement: P9 owns immutable image/update verification; P12/P13 may consume provenance inclusion proofs for packages; P13/P15 may use append-only release transparency for external auditability and reproducible release evidence.
+
 ### P13.5 Cryptography and key hierarchy
 
 - do not invent cryptographic primitives;
@@ -152,7 +190,8 @@ P13 exit requires all of the following categories, with reproducible test eviden
 9. **Driver teardown:** device/service failure removes mappings/DMA authority and cannot be inherited by restart.
 10. **Privacy audit:** enumerate every persistent identifier/log/telemetry channel and justify necessity, consumer and retention.
 11. **Production configuration:** debug keys/interfaces and development bypasses are absent or cryptographically gated.
-12. **External review readiness:** architecture, threat model, cryptographic constructions and update/boot chain are documented sufficiently for independent review.
+12. **Merkle integrity/transparency:** corrupted blocks and malformed proofs fail closed; roots are authenticated and rollback-bound; append-only release history supports inclusion/consistency verification.
+13. **External review readiness:** architecture, threat model, cryptographic constructions and update/boot chain are documented sufficiently for independent review.
 
 ## Design prohibitions
 
@@ -163,7 +202,8 @@ P13 exit requires all of the following categories, with reproducible test eviden
 - No silent downgrade from hardware-backed security to software-only behavior in production.
 - No mandatory cloud account/telemetry dependency for local device security.
 - No recovery path that bypasses the normal key-release threat model merely for convenience.
+- No treating a Merkle root as authenticity, freshness or confidentiality unless those properties are established separately.
 
 ## Research references to keep evaluating
 
-The roadmap research set should continue comparing NIST mobile/security guidance, Android/AOSP verified boot and sandboxing, GrapheneOS exploit resistance/anti-persistence, Apple hardware-rooted boot/data protection, QNX-style service isolation, BlackBerry/Symbian/Tizen lifecycle lessons, UNIX/Linux mechanisms and modern hardware security. Each adopted concept must be rewritten in Cookie terms and reviewed against the capability/context architecture before implementation.
+The roadmap research set should continue comparing NIST mobile/security guidance, Android/AOSP verified boot and sandboxing, GrapheneOS exploit resistance/anti-persistence, Apple hardware-rooted boot/data protection, QNX-style service isolation, BlackBerry/Symbian/Tizen lifecycle lessons, UNIX/Linux mechanisms and modern hardware security. Merkle-tree work should continue comparing Android dm-verity/AVB for block-integrity properties and IETF transparency trees for inclusion/consistency properties while keeping Cookie-owned formats and trust semantics. Each adopted concept must be rewritten in Cookie terms and reviewed against the capability/context architecture before implementation.
