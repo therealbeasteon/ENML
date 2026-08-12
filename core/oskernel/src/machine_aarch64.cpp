@@ -4,6 +4,7 @@
 #include <limits>
 
 #include <os/core/error.hpp>
+#include <os/core/panic.hpp>
 #include <os/kernel/aarch64.hpp>
 #include <os/kernel/aarch64_translation.hpp>
 #include <os/kernel/machine_aarch64.hpp>
@@ -29,6 +30,21 @@ namespace {
     std::uint64_t value = 0ULL;
     asm volatile("mrs %0, cntpct_el0" : "=r"(value));
     return value;
+}
+
+void invalidate_stage1_pages(std::uint64_t virtual_base, std::uint64_t page_count) noexcept {
+    // Break-before-make / teardown ordering for the current TTBR0_EL1 regime:
+    // make descriptor clears visible first, invalidate each VA for all ASIDs in
+    // the inner-shareable domain, then synchronize completion before execution
+    // can continue using the retired authority.
+    asm volatile("dsb ishst" ::: "memory");
+    for (std::uint64_t page = 0ULL; page < page_count; ++page) {
+        const std::uint64_t operand =
+            (virtual_base + page * aarch64::architectural_page_size) >> 12U;
+        asm volatile("tlbi vaae1is, %0" :: "r"(operand) : "memory");
+    }
+    asm volatile("dsb ish" ::: "memory");
+    asm volatile("isb" ::: "memory");
 }
 
 } // namespace
@@ -63,18 +79,15 @@ os::core::Result<void> aarch64_attach_early_stage1(
 }
 
 os::core::Result<void> machine_release_address_space(MachineAddressSpace& space) noexcept {
-    // Early page tables are monotonic and currently cannot be safely torn down;
-    // pretending release succeeded would leave physical W^X records alive or
-    // stale hardware descriptors behind. General VM teardown replaces this once
-    // the native allocator and TLBI-backed unmap path exist.
+    // Bulk release waits until the scheduler/process lifetime layer can prove no
+    // CPU is executing in this space. Individual mappings now have real TLBI-
+    // backed teardown through machine_unmap().
     (void)space;
     return machine_error(machine_errors::unsupported);
 }
 
 void machine_switch_context(MachineContext& from, MachineContext& to) noexcept {
-    if (!to.prepared) {
-        __builtin_trap();
-    }
+    if (!to.prepared) __builtin_trap();
     cookie_aarch64_switch_context(&from, &to);
 }
 
@@ -110,9 +123,6 @@ os::core::Result<void> machine_prepare_context(
     }
 
     context = MachineContext{};
-    // The switch routine restores x30 and executes `ret`, so a fresh context's
-    // first link register is the entry point itself. No fabricated exception
-    // frame is involved for an EL1 kernel thread.
     context.x30 = static_cast<std::uint64_t>(entry);
     context.sp = static_cast<std::uint64_t>(stack);
     context.prepared = true;
@@ -141,13 +151,47 @@ os::core::Result<void> machine_unmap(
     MachineAddressSpace& space,
     std::uintptr_t virtual_base,
     std::size_t length) noexcept {
-    (void)space;
-    (void)virtual_base;
-    (void)length;
-    // EarlyStage1Builder is intentionally monotonic. Unmapping requires a real
-    // descriptor-clear + DSB/TLBI/ISB sequence and synchronized ledger removal;
-    // until that exists, refuse rather than report a false teardown.
-    return machine_error(machine_errors::unsupported);
+    if (space.early_builder == nullptr || space.physical_ledger == nullptr) {
+        return machine_error(machine_errors::address_space_unbound);
+    }
+    if (length == 0U ||
+        !aarch64::page_aligned(static_cast<std::uint64_t>(virtual_base)) ||
+        !aarch64::page_aligned(static_cast<std::uint64_t>(length))) {
+        return machine_error(machine_errors::invalid_range);
+    }
+
+    const auto exact = space.mappings.exact_mapping(
+        static_cast<std::uint64_t>(virtual_base),
+        static_cast<std::uint64_t>(length));
+    if (!exact) return exact.error();
+
+    const std::uint64_t page_count =
+        static_cast<std::uint64_t>(length) / aarch64::architectural_page_size;
+    for (std::uint64_t page = 0ULL; page < page_count; ++page) {
+        auto state = space.early_builder->mapped(
+            static_cast<std::uint64_t>(virtual_base) +
+            page * aarch64::architectural_page_size);
+        if (!state) return state.error();
+        if (!state.value()) return machine_error(machine_errors::mapping_ledger_inconsistent);
+    }
+
+    // No recoverable failures remain after this boundary. A failed clear now
+    // means the single-threaded table state changed underneath its own verified
+    // ledger; returning would expose a partially retired mapping.
+    for (std::uint64_t page = 0ULL; page < page_count; ++page) {
+        auto cleared = space.early_builder->unmap_page(
+            static_cast<std::uint64_t>(virtual_base) +
+            page * aarch64::architectural_page_size);
+        if (!cleared) os::core::invariant_violated();
+    }
+
+    invalidate_stage1_pages(static_cast<std::uint64_t>(virtual_base), page_count);
+
+    auto retired = space.mappings.retire_unmapped(
+        static_cast<std::uint64_t>(virtual_base),
+        static_cast<std::uint64_t>(length));
+    if (!retired) os::core::invariant_violated();
+    return {};
 }
 
 os::core::Result<void> machine_mask_interrupt(std::uint32_t source) noexcept {
