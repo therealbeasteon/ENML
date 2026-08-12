@@ -6,6 +6,7 @@
 
 #include <os/core/result.hpp>
 #include <os/kernel/address_space_epoch.hpp>
+#include <os/kernel/capability.hpp>
 #include <os/kernel/rendezvous.hpp>
 
 namespace os::kernel {
@@ -18,6 +19,7 @@ inline constexpr std::uint32_t already_armed = 253U;
 inline constexpr std::uint32_t exhausted = 254U;
 inline constexpr std::uint32_t not_armed = 255U;
 inline constexpr std::uint32_t stale = 256U;
+inline constexpr std::uint32_t invalid_capability = 257U;
 }
 
 struct IpcSendContinuation final {
@@ -30,6 +32,22 @@ struct IpcSendContinuation final {
     }
 };
 
+struct IpcReceiveContinuation final {
+    ThreadId server {invalid_thread};
+    AddressSpaceEpoch epoch {};
+    CapabilityId endpoint_capability {invalid_capability};
+    std::uint64_t exchange_address {0ULL};
+
+    [[nodiscard]] constexpr bool valid() const noexcept {
+        return server != invalid_thread && epoch.valid() &&
+            endpoint_capability != invalid_capability && exchange_address != 0ULL;
+    }
+};
+
+// Blocked IPC syscalls preserve only the minimum state needed to finish the
+// original call after a scheduler transition. Both directions are tied to the
+// exact address-space epoch that issued the SVC, so restart at the same virtual
+// address cannot inherit an old completion.
 class IpcContinuationTable final {
 public:
     [[nodiscard]] os::core::Result<void> arm(
@@ -44,19 +62,40 @@ public:
         const AddressSpaceEpochAuthority& epochs) noexcept;
 
     [[nodiscard]] os::core::Result<void> cancel(ThreadId caller) noexcept;
-    void release_thread(ThreadId caller) noexcept;
+
+    [[nodiscard]] os::core::Result<void> arm_receive(
+        ThreadId server,
+        AddressSpaceEpoch epoch,
+        CapabilityId endpoint_capability,
+        std::uint64_t exchange_address,
+        const AddressSpaceEpochAuthority& epochs) noexcept;
+
+    [[nodiscard]] os::core::Result<IpcReceiveContinuation> take_receive(
+        ThreadId server,
+        AddressSpaceEpoch expected,
+        const AddressSpaceEpochAuthority& epochs) noexcept;
+
+    [[nodiscard]] os::core::Result<void> cancel_receive(ThreadId server) noexcept;
+
+    void release_thread(ThreadId thread) noexcept;
 
     [[nodiscard]] std::size_t count() const noexcept { return occupied_; }
 
 private:
-    struct Slot final {
+    struct SendSlot final {
         bool occupied {false};
         IpcSendContinuation continuation {};
     };
+    struct ReceiveSlot final {
+        bool occupied {false};
+        IpcReceiveContinuation continuation {};
+    };
 
-    [[nodiscard]] Slot* slot_for(ThreadId caller) noexcept;
+    [[nodiscard]] SendSlot* send_slot_for(ThreadId caller) noexcept;
+    [[nodiscard]] ReceiveSlot* receive_slot_for(ThreadId server) noexcept;
 
-    std::array<Slot, max_threads> slots_ {};
+    std::array<SendSlot, max_threads> send_slots_ {};
+    std::array<ReceiveSlot, max_threads> receive_slots_ {};
     std::size_t occupied_ {0U};
 };
 
