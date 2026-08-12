@@ -5,6 +5,7 @@ add_library(oskernel STATIC
     src/interrupt.cpp
     src/scheduler.cpp
     src/scheduler_deadline.cpp
+    src/address_space_epoch.cpp
     src/aarch64_user_frames.cpp
     src/aarch64_preemption.cpp
     src/kernel.cpp
@@ -68,6 +69,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/abi.cpp
             src/scheduler.cpp
             src/scheduler_deadline.cpp
+            src/address_space_epoch.cpp
             src/aarch64_user_frames.cpp
             src/aarch64_preemption.cpp
             src/fdt.cpp
