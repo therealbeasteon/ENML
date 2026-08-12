@@ -35,12 +35,16 @@ struct IpcEndpoint final {
     [[nodiscard]] friend constexpr bool operator==(const IpcEndpoint&, const IpcEndpoint&) = default;
 };
 
-// Kernel object id used by CapabilityTable. The high tag prevents an IPC object
-// from being confused with an untyped service-defined object id by this layer.
-inline constexpr ObjectId ipc_object_tag = 0x4950'4300'0000'0000ULL; // "IPC"
+// Kernel object id used by CapabilityTable. Layout is deliberately explicit:
+//   [63:48] type tag | [47:16] endpoint generation | [15:0] slot+1
+// so object kind, incarnation and slot cannot overlap or be confused.
+inline constexpr ObjectId ipc_object_tag = 0xC1C0'0000'0000'0000ULL;
+inline constexpr ObjectId ipc_object_tag_mask = 0xFFFF'0000'0000'0000ULL;
+inline constexpr ObjectId ipc_object_generation_mask = 0x0000'FFFF'FFFF'0000ULL;
+inline constexpr ObjectId ipc_object_slot_mask = 0x0000'0000'0000'FFFFULL;
 
 [[nodiscard]] constexpr ObjectId ipc_object_id(IpcEndpoint endpoint) noexcept {
-    if (!endpoint.valid()) return invalid_object;
+    if (!endpoint.valid() || endpoint.slot >= max_ipc_endpoints) return invalid_object;
     return ipc_object_tag |
         (static_cast<ObjectId>(endpoint.generation) << 16U) |
         static_cast<ObjectId>(endpoint.slot + 1U);
