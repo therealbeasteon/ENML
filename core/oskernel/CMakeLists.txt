@@ -4,6 +4,7 @@ add_library(oskernel STATIC
     src/capability.cpp
     src/ipc_endpoint.cpp
     src/ipc_syscall.cpp
+    src/ipc_continuation.cpp
     src/interrupt.cpp
     src/scheduler.cpp
     src/scheduler_deadline.cpp
@@ -78,6 +79,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             boot/freestanding_memory.cpp
             src/abi.cpp
             src/ipc_syscall.cpp
+            src/ipc_continuation.cpp
             src/scheduler.cpp
             src/scheduler_deadline.cpp
             src/address_space_epoch.cpp
