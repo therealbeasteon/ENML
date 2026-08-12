@@ -101,6 +101,8 @@ public:
     [[nodiscard]] std::size_t live_thread_count() const noexcept;
 
 private:
+    void synchronise_thread(ThreadId thread) noexcept;
+    void synchronise_pair(ThreadId first, ThreadId second) noexcept;
     void synchronise() noexcept;
     [[nodiscard]] bool tracks(ThreadId thread) const noexcept;
     void untrack(ThreadId thread) noexcept;
