@@ -6,6 +6,7 @@ add_library(oskernel STATIC
     src/scheduler.cpp
     src/kernel.cpp
     src/fdt.cpp
+    src/hardware_inventory.cpp
     src/machine_host.cpp
 )
 
