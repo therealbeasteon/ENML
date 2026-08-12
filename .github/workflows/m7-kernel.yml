@@ -111,7 +111,7 @@ jobs:
           oskernel_machine_aarch64 cookie_kernel_aarch64_boot --parallel 2
       - name: Test kernel gates natively
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --test-dir build/m7-arm64-native
-      - name: Boot Cookie Kernel and prove isolated EL0 A-B-A preemption under QEMU virt GICv3
+      - name: Boot Cookie Kernel and prove isolated EL0 native IPC under QEMU virt GICv3
         shell: bash
         run: |
           set -euo pipefail
@@ -142,3 +142,6 @@ jobs:
           grep -F 'COOKIE:M7.5i:A_TO_B' cookie-qemu.log
           grep -F 'COOKIE:M7.5i:B_TO_A' cookie-qemu.log
           grep -F 'COOKIE:M7.5i:ISOLATED_A_B_A' cookie-qemu.log
+          grep -F 'COOKIE:M7.6:IPC_RECEIVER_FIRST' cookie-qemu.log
+          grep -F 'COOKIE:M7.6:IPC_REQUEST_B' cookie-qemu.log
+          grep -F 'COOKIE:M7.6:IPC_A_B_REPLY' cookie-qemu.log
