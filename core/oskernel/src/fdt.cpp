@@ -25,6 +25,17 @@ namespace {
     return true;
 }
 
+[[nodiscard]] bool read_be64(
+    os::core::ByteSpan bytes,
+    std::size_t offset,
+    std::uint64_t& out) noexcept {
+    std::uint32_t high = 0U;
+    std::uint32_t low = 0U;
+    if (!read_be32(bytes, offset, high) || !read_be32(bytes, offset + 4U, low)) return false;
+    out = (static_cast<std::uint64_t>(high) << 32U) | static_cast<std::uint64_t>(low);
+    return true;
+}
+
 [[nodiscard]] constexpr std::size_t align4(std::size_t value) noexcept {
     return (value + 3U) & ~static_cast<std::size_t>(3U);
 }
@@ -60,6 +71,7 @@ FdtView::parse(os::core::ByteSpan blob) noexcept {
     std::uint32_t total_size = 0U;
     std::uint32_t structure_offset = 0U;
     std::uint32_t strings_offset = 0U;
+    std::uint32_t reservation_offset = 0U;
     std::uint32_t version = 0U;
     std::uint32_t last_compatible = 0U;
     std::uint32_t strings_size = 0U;
@@ -69,6 +81,7 @@ FdtView::parse(os::core::ByteSpan blob) noexcept {
         !read_be32(blob, 4U, total_size) ||
         !read_be32(blob, 8U, structure_offset) ||
         !read_be32(blob, 12U, strings_offset) ||
+        !read_be32(blob, 16U, reservation_offset) ||
         !read_be32(blob, 20U, version) ||
         !read_be32(blob, 24U, last_compatible) ||
         !read_be32(blob, 32U, strings_size) ||
@@ -79,22 +92,71 @@ FdtView::parse(os::core::ByteSpan blob) noexcept {
     if (total_size < header_bytes || total_size > blob.size()) {
         return fdt_error(fdt_errors::invalid_bounds);
     }
-    // Version 17 is the stable modern header layout containing explicit
-    // structure/string sizes. Newer versions remain backwards compatible only
-    // if they advertise compatibility with <=17.
     if (version < 17U || last_compatible > 17U) {
         return fdt_error(fdt_errors::unsupported_version);
     }
     if (!bounded_range(structure_offset, structure_size, total_size) ||
         !bounded_range(strings_offset, strings_size, total_size) ||
-        (structure_offset & 3U) != 0U) {
+        (structure_offset & 3U) != 0U ||
+        reservation_offset < header_bytes || (reservation_offset & 7U) != 0U ||
+        reservation_offset >= structure_offset ||
+        structure_offset + structure_size > strings_offset) {
         return fdt_error(fdt_errors::invalid_bounds);
     }
 
+    // The reservation block has no size field. Validate its terminating zero
+    // pair before constructing a view so later walkers cannot scan into the
+    // structure block on malformed firmware input.
+    std::size_t reservation_cursor = reservation_offset;
+    bool reservation_terminated = false;
+    while (reservation_cursor < structure_offset) {
+        if (structure_offset - reservation_cursor < 16U) {
+            return fdt_error(fdt_errors::malformed_reservation);
+        }
+        std::uint64_t address = 0ULL;
+        std::uint64_t size = 0ULL;
+        if (!read_be64(blob, reservation_cursor, address) ||
+            !read_be64(blob, reservation_cursor + 8U, size)) {
+            return fdt_error(fdt_errors::malformed_reservation);
+        }
+        reservation_cursor += 16U;
+        if (address == 0ULL && size == 0ULL) {
+            reservation_terminated = true;
+            break;
+        }
+        if (size == 0ULL || address > UINT64_MAX - (size - 1ULL)) {
+            return fdt_error(fdt_errors::malformed_reservation);
+        }
+    }
+    if (!reservation_terminated) return fdt_error(fdt_errors::malformed_reservation);
+
     return FdtView{
-        blob.first(total_size), total_size,
+        blob.first(total_size), total_size, reservation_offset,
         structure_offset, structure_size,
         strings_offset, strings_size, version};
+}
+
+os::core::Result<void>
+FdtView::walk_reservations(const FdtReservationCallbacks& callbacks) const noexcept {
+    std::size_t cursor = reservation_offset_;
+    while (cursor < structure_offset_) {
+        if (structure_offset_ - cursor < 16U) {
+            return fdt_error(fdt_errors::malformed_reservation);
+        }
+        std::uint64_t address = 0ULL;
+        std::uint64_t size = 0ULL;
+        if (!read_be64(blob_, cursor, address) || !read_be64(blob_, cursor + 8U, size)) {
+            return fdt_error(fdt_errors::malformed_reservation);
+        }
+        cursor += 16U;
+        if (address == 0ULL && size == 0ULL) return {};
+        if (size == 0ULL || address > UINT64_MAX - (size - 1ULL)) {
+            return fdt_error(fdt_errors::malformed_reservation);
+        }
+        if (callbacks.reservation != nullptr &&
+            !callbacks.reservation(callbacks.context, address, size)) return {};
+    }
+    return fdt_error(fdt_errors::malformed_reservation);
 }
 
 os::core::Result<void>
