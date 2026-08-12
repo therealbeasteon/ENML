@@ -127,19 +127,9 @@ os::core::Result<void> Kernel::ipc_send(
     ThreadId caller,
     CapabilityId endpoint_capability,
     IpcEnvelope request) noexcept {
-    auto endpoint = ipc_.endpoint_for_capability(
-        caller, endpoint_capability, ipc_right_send, capabilities_);
-    if (!endpoint) return endpoint.error();
-    const auto* owner = ipc_.slot_for(endpoint.value());
-    if (owner == nullptr) {
-        return os::core::make_error(os::core::ErrorDomain::kernel,
-                                    ipc_errors::stale_endpoint);
-    }
-    const ThreadId server = owner->server;
-
     auto sent = ipc_.send(caller, endpoint_capability, capabilities_, threads_, request);
     if (!sent) return sent;
-    synchronise_pair(caller, server);
+    synchronise();
     return {};
 }
 
