@@ -29,3 +29,11 @@ target_compile_options(subsystem_lease_test PRIVATE
 )
 add_test(NAME subsystem_lease_test COMMAND subsystem_lease_test)
 set_tests_properties(subsystem_lease_test PROPERTIES LABELS "m4-shell")
+
+add_executable(subsystem_lease_authority_test subsystem_lease_authority_test.cpp)
+target_link_libraries(subsystem_lease_authority_test PRIVATE emnl::supervisor emnl_warnings)
+target_compile_options(subsystem_lease_authority_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME subsystem_lease_authority_test COMMAND subsystem_lease_authority_test)
+set_tests_properties(subsystem_lease_authority_test PROPERTIES LABELS "m4-shell")
