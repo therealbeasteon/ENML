@@ -90,7 +90,7 @@ os::core::Result<std::size_t> Rendezvous::exit_thread(ThreadId thread) noexcept 
     return released;
 }
 
-os::core::Result<void> Rendezvous::send(ThreadId from, ThreadId to) noexcept {
+os::core::Result<void> Rendezvous::block_send(ThreadId from, ThreadId to) noexcept {
     if (from == invalid_thread || to == invalid_thread) {
         return rendezvous_error(rendezvous_errors::invalid_thread_id);
     }
@@ -101,16 +101,73 @@ os::core::Result<void> Rendezvous::send(ThreadId from, ThreadId to) noexcept {
     if (sender->state != ThreadState::ready) return rendezvous_error(rendezvous_errors::not_runnable);
 
     sender->wake = WakeReason::none;
-    if (target->state == ThreadState::receive_blocked && target->partner == invalid_thread) {
-        target->state = ThreadState::ready;
-        target->partner = from;
-        sender->state = ThreadState::reply_blocked;
-        sender->partner = to;
-        return {};
-    }
     sender->state = ThreadState::send_blocked;
     sender->partner = to;
     return {};
+}
+
+os::core::Result<void> Rendezvous::wait_receive(ThreadId self) noexcept {
+    if (self == invalid_thread) return rendezvous_error(rendezvous_errors::invalid_thread_id);
+    Slot* receiver = find(self);
+    if (receiver == nullptr) return rendezvous_error(rendezvous_errors::unknown_thread);
+    if (receiver->state != ThreadState::ready || receiver->partner != invalid_thread) {
+        return rendezvous_error(rendezvous_errors::not_runnable);
+    }
+    receiver->wake = WakeReason::none;
+    receiver->state = ThreadState::receive_blocked;
+    return {};
+}
+
+os::core::Result<void> Rendezvous::deliver_waiting_receiver(
+    ThreadId from,
+    ThreadId to) noexcept {
+    if (from == invalid_thread || to == invalid_thread) {
+        return rendezvous_error(rendezvous_errors::invalid_thread_id);
+    }
+    if (from == to) return rendezvous_error(rendezvous_errors::self_addressed);
+    Slot* sender = find(from);
+    Slot* receiver = find(to);
+    if (sender == nullptr || receiver == nullptr) return rendezvous_error(rendezvous_errors::unknown_thread);
+    if (sender->state != ThreadState::ready) return rendezvous_error(rendezvous_errors::not_runnable);
+    if (receiver->state != ThreadState::receive_blocked || receiver->partner != invalid_thread) {
+        return rendezvous_error(rendezvous_errors::not_waiting_on_peer);
+    }
+
+    sender->wake = WakeReason::none;
+    sender->state = ThreadState::reply_blocked;
+    sender->partner = to;
+    receiver->state = ThreadState::ready;
+    receiver->partner = from;
+    return {};
+}
+
+os::core::Result<void> Rendezvous::accept_sender(
+    ThreadId self,
+    ThreadId caller) noexcept {
+    if (self == invalid_thread || caller == invalid_thread) {
+        return rendezvous_error(rendezvous_errors::invalid_thread_id);
+    }
+    if (self == caller) return rendezvous_error(rendezvous_errors::self_addressed);
+    Slot* receiver = find(self);
+    Slot* sender = find(caller);
+    if (receiver == nullptr || sender == nullptr) return rendezvous_error(rendezvous_errors::unknown_thread);
+    if (receiver->state != ThreadState::ready) return rendezvous_error(rendezvous_errors::not_runnable);
+    if (sender->state != ThreadState::send_blocked || sender->partner != self) {
+        return rendezvous_error(rendezvous_errors::not_waiting_on_peer);
+    }
+
+    receiver->wake = WakeReason::none;
+    sender->state = ThreadState::reply_blocked;
+    return {};
+}
+
+os::core::Result<void> Rendezvous::send(ThreadId from, ThreadId to) noexcept {
+    Slot* target = find(to);
+    if (target != nullptr && target->state == ThreadState::receive_blocked &&
+        target->partner == invalid_thread) {
+        return deliver_waiting_receiver(from, to);
+    }
+    return block_send(from, to);
 }
 
 os::core::Result<ThreadId> Rendezvous::receive(ThreadId self) noexcept {
@@ -128,12 +185,13 @@ os::core::Result<ThreadId> Rendezvous::receive(ThreadId self) noexcept {
 
     for (auto& slot : slots_) {
         if (!slot.occupied || slot.state != ThreadState::send_blocked || slot.partner != self) continue;
-        slot.state = ThreadState::reply_blocked;
+        auto accepted = accept_sender(self, slot.thread);
+        if (!accepted) return accepted.error();
         return slot.thread;
     }
 
-    receiver->state = ThreadState::receive_blocked;
-    receiver->partner = invalid_thread;
+    auto waiting = wait_receive(self);
+    if (!waiting) return waiting.error();
     return invalid_thread;
 }
 
@@ -173,8 +231,6 @@ os::core::Result<void> Rendezvous::cancel_call(
     client->partner = invalid_thread;
     client->wake = WakeReason::endpoint_retired;
 
-    // If this caller had already completed a blocked receive but the server had
-    // not resumed to collect the result yet, cancel that one-shot delivery too.
     if (server->state == ThreadState::ready && server->partner == caller) {
         server->partner = invalid_thread;
     }
