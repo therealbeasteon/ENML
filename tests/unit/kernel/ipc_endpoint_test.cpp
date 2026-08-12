@@ -101,5 +101,46 @@ int main() {
     require(ipc.reply(server, replacement_request.value().reply, rendezvous));
     require(ipc.take_reply(client));
 
+    // One server may own multiple endpoints, but a blocked receive is bound to
+    // exactly one endpoint generation. Traffic to B must not satisfy a receive
+    // waiting on A, even though both endpoints share the same server thread.
+    auto endpoint_b = ipc.create(server);
+    require(endpoint_b);
+    const auto object_b = ipc_object_id(endpoint_b.value());
+    auto server_cap_b = capabilities.mint(
+        server, object_b, ipc_right_receive, false);
+    auto attacker_cap_b = capabilities.mint(
+        attacker, object_b, ipc_right_send, false);
+    require(server_cap_b && attacker_cap_b);
+
+    auto wait_a = ipc.receive(
+        server, replacement_server_cap.value(), capabilities, rendezvous);
+    require(wait_a && !wait_a.value().valid());
+    server_state = rendezvous.state_of(server);
+    require(server_state && server_state.value() == ThreadState::receive_blocked);
+
+    require(ipc.send(attacker, attacker_cap_b.value(), capabilities, rendezvous));
+    server_state = rendezvous.state_of(server);
+    require(server_state && server_state.value() == ThreadState::receive_blocked);
+    auto attacker_state = rendezvous.state_of(attacker);
+    require(attacker_state && attacker_state.value() == ThreadState::send_blocked);
+
+    require(ipc.send(client, replacement_client_cap.value(), capabilities, rendezvous));
+    server_state = rendezvous.state_of(server);
+    require(server_state && server_state.value() == ThreadState::ready);
+
+    auto only_a = ipc.receive(
+        server, replacement_server_cap.value(), capabilities, rendezvous);
+    require(only_a && only_a.value().valid());
+    require(only_a.value().caller == client);
+    require(ipc.reply(server, only_a.value().reply, rendezvous));
+    require(ipc.take_reply(client));
+
+    auto then_b = ipc.receive(server, server_cap_b.value(), capabilities, rendezvous);
+    require(then_b && then_b.value().valid());
+    require(then_b.value().caller == attacker);
+    require(ipc.reply(server, then_b.value().reply, rendezvous));
+    require(ipc.take_reply(attacker));
+
     return 0;
 }
