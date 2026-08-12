@@ -79,7 +79,8 @@ public:
             return false;
         }
         for (const auto& slot : slots_) {
-            if (slot.occupied && slot.tunnel == tunnel && slot.flow == flow) return true;
+            if (!slot.occupied || !same_tunnel(slot.tunnel, tunnel)) continue;
+            if (same_flow(slot.flow, flow)) return true;
         }
         return false;
     }
@@ -89,7 +90,7 @@ public:
             return TunnelAuthorityResult::stale_generation;
         }
         for (auto& slot : slots_) {
-            if (slot.occupied && slot.tunnel == tunnel) {
+            if (slot.occupied && same_tunnel(slot.tunnel, tunnel)) {
                 slot = {};
                 return TunnelAuthorityResult::ok;
             }
@@ -117,6 +118,19 @@ private:
     std::array<Entry, max_tunnels> slots_ {};
     std::uint64_t generation_ {1U};
     std::uint64_t next_tunnel_id_ {1U};
+
+    [[nodiscard]] static constexpr bool same_tunnel(
+        TunnelCapability lhs,
+        TunnelCapability rhs) noexcept {
+        return lhs.id == rhs.id && lhs.generation == rhs.generation;
+    }
+
+    [[nodiscard]] static constexpr bool same_flow(
+        const FlowCapability& lhs,
+        const FlowCapability& rhs) noexcept {
+        return lhs.id == rhs.id && lhs.generation == rhs.generation &&
+               lhs.principal == rhs.principal;
+    }
 };
 
 } // namespace os::network
