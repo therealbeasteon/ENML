@@ -1,0 +1,140 @@
+{
+  "schema_version": 1,
+  "purpose": "Ratchet the production Linux-coupling ceiling downward during P8 without allowing new Linux-shaped Cookie ABI.",
+  "source_gate": ".github/scripts/check-linux-coupling.sh",
+  "entry_gate": "M7.11",
+  "target": {
+    "production_linux_coupled_files": 0,
+    "host_tooling_linux_allowed": true,
+    "cookie_public_abi_linux_identifiers_allowed": false
+  },
+  "rules": [
+    "A file may leave the permitted Linux-coupling set; no new file may join without an explicit reviewed trade.",
+    "Production Cookie APIs must not expose PID, UID, GID, Linux file descriptor, Unix socket pathname or SCM_RIGHTS as authority.",
+    "Host-only test and development adapters are not production trust boundaries.",
+    "Every removed Linux dependency must have a named Cookie-native replacement and an executable acceptance test."
+  ],
+  "inventory": [
+    {
+      "path": "core/osaccessibility/include/os/accessibility/broker.hpp",
+      "workstream": "ipc",
+      "cookie_replacement": "capability-mediated native accessibility broker endpoint",
+      "planned_stage": "P8.1"
+    },
+    {
+      "path": "core/osapp/include/os/app/bootstrap.hpp",
+      "workstream": "process_bootstrap",
+      "cookie_replacement": "kernel-owned process creation plus explicit bootstrap capability set",
+      "planned_stage": "P8.2"
+    },
+    {
+      "path": "core/osapp/include/os/app/service_session.hpp",
+      "workstream": "ipc",
+      "cookie_replacement": "Cookie endpoint/session capability",
+      "planned_stage": "P8.1"
+    },
+    {
+      "path": "core/osdisplay/src/buffer_linux.cpp",
+      "workstream": "shared_memory_display",
+      "cookie_replacement": "Cookie memory/buffer object capability",
+      "planned_stage": "P8.3"
+    },
+    {
+      "path": "core/osipc/include/os/ipc/channel.hpp",
+      "workstream": "ipc",
+      "cookie_replacement": "Cookie kernel endpoint and capability-transfer API",
+      "planned_stage": "P8.1"
+    },
+    {
+      "path": "core/osipc/src/channel_linux.cpp",
+      "workstream": "ipc",
+      "cookie_replacement": "native Cookie IPC transport",
+      "planned_stage": "P8.1"
+    },
+    {
+      "path": "core/ossandbox/include/os/sandbox/sandbox.hpp",
+      "workstream": "sandbox",
+      "cookie_replacement": "capability-first process creation and kernel isolation",
+      "planned_stage": "P8.5"
+    },
+    {
+      "path": "core/ossandbox/include/os/sandbox/substrate.hpp",
+      "workstream": "sandbox",
+      "cookie_replacement": "Cookie process/address-space/capability substrate",
+      "planned_stage": "P8.5"
+    },
+    {
+      "path": "core/ossandbox/src/sandbox_linux.cpp",
+      "workstream": "sandbox",
+      "cookie_replacement": "native least-authority process policy",
+      "planned_stage": "P8.5"
+    },
+    {
+      "path": "core/ossandbox/src/substrate_linux.cpp",
+      "workstream": "sandbox",
+      "cookie_replacement": "native Cookie execution substrate",
+      "planned_stage": "P8.5"
+    },
+    {
+      "path": "core/osservice/include/os/service/identity.hpp",
+      "workstream": "identity",
+      "cookie_replacement": "kernel-derived ExecutionAuthority and service capability identity",
+      "planned_stage": "P8.1"
+    },
+    {
+      "path": "system/app_manager/include/os/app/accessibility_control.hpp",
+      "workstream": "ipc",
+      "cookie_replacement": "attenuated accessibility-control capability",
+      "planned_stage": "P8.1"
+    },
+    {
+      "path": "system/app_manager/include/os/app/shell_lifecycle_control.hpp",
+      "workstream": "process_supervision",
+      "cookie_replacement": "Cookie process lifecycle authority",
+      "planned_stage": "P8.2"
+    },
+    {
+      "path": "system/app_manager/src/manager_linux.cpp",
+      "workstream": "process_supervision",
+      "cookie_replacement": "native app manager over Cookie process and IPC primitives",
+      "planned_stage": "P8.2"
+    },
+    {
+      "path": "system/app_manager/src/runtime_session.cpp",
+      "workstream": "process_supervision",
+      "cookie_replacement": "generation-bound runtime session authority",
+      "planned_stage": "P8.2"
+    },
+    {
+      "path": "system/services/compositor/src/service.cpp",
+      "workstream": "shared_memory_display",
+      "cookie_replacement": "Cookie buffer and compositor endpoint capabilities",
+      "planned_stage": "P8.3"
+    },
+    {
+      "path": "system/supervisor/include/os/supervisor/process_authority.hpp",
+      "workstream": "process_supervision",
+      "cookie_replacement": "kernel-minted process lifecycle authority",
+      "planned_stage": "P8.2"
+    },
+    {
+      "path": "system/supervisor/src/process_authority_linux.cpp",
+      "workstream": "process_supervision",
+      "cookie_replacement": "native Cookie process authority implementation",
+      "planned_stage": "P8.2"
+    },
+    {
+      "path": "system/supervisor/src/supervisor.cpp",
+      "workstream": "service_bootstrap",
+      "cookie_replacement": "native capability-declared service graph supervisor",
+      "planned_stage": "P8.4"
+    }
+  ],
+  "acceptance_gates": [
+    "Linux-coupling scan reports zero production files in the native service graph.",
+    "Native ARM64 boot reaches the Cookie base service graph without Linux process or IPC substrate.",
+    "Service restart creates fresh execution authority and cannot inherit stale IPC/capability/memory state.",
+    "Display/shared-memory transfer uses Cookie object authority rather than file-descriptor identity.",
+    "Production sandboxing no longer depends on UID/GID, prctl, seccomp or Linux namespaces as the security boundary."
+  ]
+}
