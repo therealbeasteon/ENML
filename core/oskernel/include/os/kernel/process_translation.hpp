@@ -37,10 +37,14 @@ struct ProcessTranslationBinding final {
 // remains present in scheduler state.
 class ProcessTranslationTable final {
 public:
+    // Binding is itself an authority transition. Cookie refuses to create a
+    // runnable translation binding from a stale/retiring epoch; callers cannot
+    // park dead memory identity in this table and hope it becomes valid later.
     [[nodiscard]] os::core::Result<void> bind(
         ThreadId thread,
         AddressSpaceEpoch epoch,
-        std::uint64_t root_physical) noexcept;
+        std::uint64_t root_physical,
+        const AddressSpaceEpochAuthority& epochs) noexcept;
 
     [[nodiscard]] os::core::Result<ProcessTranslationBinding> resolve(
         ThreadId thread,
