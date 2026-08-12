@@ -61,9 +61,6 @@ struct IpcEnvelope final {
     [[nodiscard]] friend constexpr bool operator==(const IpcEnvelope&, const IpcEnvelope&) = default;
 };
 
-// Kernel-private reply authority. EL0 never receives this structure; receive
-// exposes only `transaction`, and reply_transaction() resolves that opaque token
-// against a live seal owned by the exact replying server.
 struct IpcReplySeal final {
     IpcEndpoint endpoint {};
     IpcTransactionId transaction {0U};
@@ -137,8 +134,6 @@ public:
         Rendezvous& rendezvous,
         IpcEnvelope response = {}) noexcept;
 
-    // Syscall-facing form. A userspace server only learns the transaction id,
-    // never endpoint generation/caller identity encoded in the kernel seal.
     [[nodiscard]] os::core::Result<void> reply_transaction(
         ThreadId server,
         IpcTransactionId transaction,
@@ -146,6 +141,7 @@ public:
         IpcEnvelope response = {}) noexcept;
 
     [[nodiscard]] os::core::Result<IpcEnvelope> take_reply(ThreadId caller) noexcept;
+    [[nodiscard]] bool reply_available(ThreadId caller) const noexcept;
 
     [[nodiscard]] bool active(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] std::size_t active_endpoint_count() const noexcept { return active_; }
@@ -183,10 +179,10 @@ private:
     [[nodiscard]] EndpointSlot* slot_for(IpcEndpoint endpoint) noexcept;
     [[nodiscard]] const EndpointSlot* slot_for(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] ReplySlot* reply_slot(const IpcReplySeal& seal) noexcept;
-    [[nodiscard]] ReplySlot* reply_slot(ThreadId server, IpcTransactionId transaction) noexcept;
     [[nodiscard]] PendingSlot* pending_slot(ThreadId caller, IpcEndpoint endpoint) noexcept;
     [[nodiscard]] PendingSlot* free_pending_slot() noexcept;
     [[nodiscard]] CompletedSlot* completed_slot(ThreadId caller) noexcept;
+    [[nodiscard]] const CompletedSlot* completed_slot(ThreadId caller) const noexcept;
     [[nodiscard]] CompletedSlot* free_completed_slot() noexcept;
     void invalidate_replies_for(IpcEndpoint endpoint) noexcept;
     void cancel_pending_for(IpcEndpoint endpoint, Rendezvous& rendezvous) noexcept;
