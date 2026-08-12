@@ -13,12 +13,12 @@ namespace {
 os::core::Result<void> ProcessTranslationTable::bind(
     ThreadId thread,
     AddressSpaceEpoch epoch,
-    std::uint64_t root_physical,
+    SealedTranslationRoot root,
     const AddressSpaceEpochAuthority& epochs) noexcept {
     if (thread == invalid_thread) return error(process_translation_errors::invalid_thread);
     if (!epoch.valid()) return error(process_translation_errors::invalid_epoch);
     if (!epochs.active(epoch)) return error(process_translation_errors::stale);
-    if (!aarch64::stage1_physical_address(root_physical)) {
+    if (!root.valid() || !aarch64::stage1_physical_address(root.root_physical())) {
         return error(process_translation_errors::invalid_root);
     }
 
@@ -35,7 +35,7 @@ os::core::Result<void> ProcessTranslationTable::bind(
     for (auto& slot : slots_) {
         if (slot.occupied) continue;
         slot.occupied = true;
-        slot.binding = ProcessTranslationBinding{thread, epoch, root_physical};
+        slot.binding = ProcessTranslationBinding{thread, epoch, root.root_physical()};
         ++occupied_;
         return {};
     }
