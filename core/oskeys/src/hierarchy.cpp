@@ -129,9 +129,20 @@ KeyHierarchy::generate_profile_storage_key(os::core::UserId user) noexcept {
     const auto* profile = find_profile(user);
     if (profile == nullptr) return key_error(errors::hierarchy_root_not_found);
     auto generated = provider_->generate_under_root(
-        profile->reference,
-        profile->binding,
-        KeyPurpose::profile_storage_aead);
+        profile->reference, profile->binding, KeyPurpose::profile_storage_aead);
+    if (!generated) return generated.error();
+    if (!generated.value().valid()) return key_error(errors::provider_failure);
+    return generated.value();
+}
+
+os::core::Result<ProviderKeyReference>
+KeyHierarchy::generate_profile_storage_metadata_key(os::core::UserId user) noexcept {
+    if (provider_ == nullptr || !system_.occupied) return key_error(errors::hierarchy_not_initialized);
+    if (user.value() == 0U) return key_error(errors::invalid_protection_scope);
+    const auto* profile = find_profile(user);
+    if (profile == nullptr) return key_error(errors::hierarchy_root_not_found);
+    auto generated = provider_->generate_under_root(
+        profile->reference, profile->binding, KeyPurpose::profile_storage_metadata_aead);
     if (!generated) return generated.error();
     if (!generated.value().valid()) return key_error(errors::provider_failure);
     return generated.value();
