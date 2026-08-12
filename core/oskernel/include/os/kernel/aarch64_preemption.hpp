@@ -49,6 +49,18 @@ public:
         std::uint64_t now_nanoseconds,
         ExceptionFrame& live) noexcept;
 
+    // Event-driven scheduling transition for kernel calls, wakeups and other
+    // runnable-state changes. This is intentionally distinct from on_timer():
+    // no timer delivery is fabricated or accepted. Cookie can therefore remain
+    // tickless while still creating/replacing a deadline when contention first
+    // appears because of an event.
+    [[nodiscard]] os::core::Result<PreemptionResult> reschedule(
+        Scheduler& scheduler,
+        const ProcessTranslationTable& translations,
+        const AddressSpaceEpochAuthority& epochs,
+        std::uint64_t now_nanoseconds,
+        ExceptionFrame& live) noexcept;
+
     [[nodiscard]] os::core::Result<PreemptionResult> on_timer(
         Scheduler& scheduler,
         const ProcessTranslationTable& translations,
