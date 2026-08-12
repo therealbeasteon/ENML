@@ -145,6 +145,7 @@ public:
     [[nodiscard]] bool reply_available(ThreadId caller) const noexcept;
 
     [[nodiscard]] bool active(IpcEndpoint endpoint) const noexcept;
+    [[nodiscard]] bool receive_waiting(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] std::size_t active_endpoint_count() const noexcept { return active_; }
     [[nodiscard]] std::size_t active_reply_seal_count() const noexcept { return reply_seals_; }
     [[nodiscard]] std::size_t pending_call_count() const noexcept { return pending_calls_; }
