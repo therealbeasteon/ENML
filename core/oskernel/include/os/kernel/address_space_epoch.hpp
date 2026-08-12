@@ -27,7 +27,7 @@ struct AddressSpaceIdentity final {
     AddressSpaceGeneration generation {0U};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return generation != 0U;
+        return slot < max_address_space_epochs && generation != 0U;
     }
 
     [[nodiscard]] friend constexpr bool operator==(
@@ -40,7 +40,8 @@ struct AddressSpaceEpoch final {
     AddressSpaceAsid asid {kernel_reserved_asid};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return generation != 0U && asid != kernel_reserved_asid;
+        return slot < max_address_space_epochs && generation != 0U &&
+               asid != kernel_reserved_asid;
     }
 
     [[nodiscard]] constexpr AddressSpaceIdentity identity() const noexcept {
