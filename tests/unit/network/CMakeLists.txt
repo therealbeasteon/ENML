@@ -45,3 +45,11 @@ target_compile_options(network_blindness_test PRIVATE
 )
 add_test(NAME network_blindness_test COMMAND network_blindness_test)
 set_tests_properties(network_blindness_test PROPERTIES LABELS "m4-shell")
+
+add_executable(network_tunnel_authority_test tunnel_authority_test.cpp)
+target_link_libraries(network_tunnel_authority_test PRIVATE emnl::osnetwork emnl_warnings)
+target_compile_options(network_tunnel_authority_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME network_tunnel_authority_test COMMAND network_tunnel_authority_test)
+set_tests_properties(network_tunnel_authority_test PROPERTIES LABELS "m4-shell")
