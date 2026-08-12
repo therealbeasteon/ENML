@@ -21,7 +21,7 @@ jobs:
         run: >-
           .github/scripts/run-build.sh 'kernel-gcc' --preset host-debug --target
           kernel_abi_test kernel_rendezvous_test kernel_ipc_endpoint_test kernel_ipc_composition_test kernel_machine_host_test
-          kernel_process_translation_test kernel_user_access_test
+          kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
@@ -43,7 +43,7 @@ jobs:
         run: >-
           .github/scripts/run-build.sh 'kernel-sanitizers' --preset host-asan --target
           kernel_abi_test kernel_rendezvous_test kernel_ipc_endpoint_test kernel_ipc_composition_test kernel_machine_host_test
-          kernel_process_translation_test kernel_user_access_test
+          kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
@@ -68,7 +68,7 @@ jobs:
         run: >-
           .github/scripts/run-build.sh 'kernel-clang' build/m5-kernel-clang --target
           kernel_abi_test kernel_rendezvous_test kernel_ipc_endpoint_test kernel_ipc_composition_test kernel_machine_host_test
-          kernel_process_translation_test kernel_user_access_test
+          kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
@@ -99,7 +99,7 @@ jobs:
         run: >-
           .github/scripts/run-build.sh 'kernel-arm64-native' build/m7-arm64-native --target
           kernel_abi_test kernel_rendezvous_test kernel_ipc_endpoint_test kernel_ipc_composition_test kernel_machine_host_test
-          kernel_process_translation_test kernel_user_access_test
+          kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
