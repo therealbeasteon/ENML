@@ -46,7 +46,7 @@ if(EMNL_BUILD_LINUX_TEXT_BACKEND)
     target_compile_definitions(ui_linux_text_backend_test PRIVATE
         EMNL_TEST_FONT_PATH="${EMNL_TEST_FONT_FILE}"
     )
-    target_compile_options(${name} PRIVATE
+    target_compile_options(ui_linux_text_backend_test PRIVATE
         $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
     )
     add_test(NAME ui_linux_text_backend_test COMMAND ui_linux_text_backend_test)
