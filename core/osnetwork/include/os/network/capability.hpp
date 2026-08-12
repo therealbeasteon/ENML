@@ -15,7 +15,7 @@ struct FlowCapability final {
     os::core::PrincipalId principal {};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return id != 0U && generation != 0U && principal.valid();
+        return id != 0U && generation != 0U && os::core::valid_principal(principal);
     }
 };
 
