@@ -35,3 +35,9 @@ extern "C" int memcmp(const void* left, const void* right, std::size_t count) no
     }
     return 0;
 }
+
+extern "C" std::size_t strlen(const char* text) noexcept {
+    std::size_t length = 0U;
+    while (text[length] != '\0') ++length;
+    return length;
+}
