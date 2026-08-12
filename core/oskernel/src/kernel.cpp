@@ -23,15 +23,22 @@ void Kernel::untrack(ThreadId thread) noexcept {
 
 std::size_t Kernel::live_thread_count() const noexcept { return live_count_; }
 
+void Kernel::synchronise_thread(ThreadId thread) noexcept {
+    if (!tracks(thread)) return;
+    auto state = threads_.state_of(thread);
+    auto priority = threads_.effective_priority_of(thread);
+    if (!state || !priority) return;
+    const bool runnable = state.value() == ThreadState::ready;
+    (void)scheduler_.update(thread, runnable, priority.value());
+}
+
+void Kernel::synchronise_pair(ThreadId first, ThreadId second) noexcept {
+    synchronise_thread(first);
+    if (second != first) synchronise_thread(second);
+}
+
 void Kernel::synchronise() noexcept {
-    for (std::size_t i = 0U; i < live_count_; ++i) {
-        const ThreadId thread = live_[i];
-        auto state = threads_.state_of(thread);
-        auto priority = threads_.effective_priority_of(thread);
-        if (!state || !priority) continue;
-        const bool runnable = state.value() == ThreadState::ready;
-        (void)scheduler_.update(thread, runnable, priority.value());
-    }
+    for (std::size_t i = 0U; i < live_count_; ++i) synchronise_thread(live_[i]);
 }
 
 os::core::Result<void> Kernel::create_thread(ThreadId thread, Priority priority) noexcept {
@@ -46,7 +53,7 @@ os::core::Result<void> Kernel::create_thread(ThreadId thread, Priority priority)
     }
     live_[live_count_] = thread;
     ++live_count_;
-    synchronise();
+    synchronise_thread(thread);
     return {};
 }
 
@@ -72,21 +79,21 @@ os::core::Result<Teardown> Kernel::destroy_thread(ThreadId thread) noexcept {
 os::core::Result<void> Kernel::send(ThreadId from, ThreadId to) noexcept {
     auto sent = threads_.send(from, to);
     if (!sent) return sent;
-    synchronise();
+    synchronise_pair(from, to);
     return {};
 }
 
 os::core::Result<ThreadId> Kernel::receive(ThreadId self) noexcept {
     auto received = threads_.receive(self);
     if (!received) return received;
-    synchronise();
+    synchronise_pair(self, received.value());
     return received;
 }
 
 os::core::Result<void> Kernel::reply(ThreadId self, ThreadId caller) noexcept {
     auto replied = threads_.reply(self, caller);
     if (!replied) return replied;
-    synchronise();
+    synchronise_pair(self, caller);
     return {};
 }
 
@@ -120,9 +127,19 @@ os::core::Result<void> Kernel::ipc_send(
     ThreadId caller,
     CapabilityId endpoint_capability,
     IpcEnvelope request) noexcept {
+    auto endpoint = ipc_.endpoint_for_capability(
+        caller, endpoint_capability, ipc_right_send, capabilities_);
+    if (!endpoint) return endpoint.error();
+    const auto* owner = ipc_.slot_for(endpoint.value());
+    if (owner == nullptr) {
+        return os::core::make_error(os::core::ErrorDomain::kernel,
+                                    ipc_errors::stale_endpoint);
+    }
+    const ThreadId server = owner->server;
+
     auto sent = ipc_.send(caller, endpoint_capability, capabilities_, threads_, request);
     if (!sent) return sent;
-    synchronise();
+    synchronise_pair(caller, server);
     return {};
 }
 
@@ -131,7 +148,7 @@ os::core::Result<IpcReceived> Kernel::ipc_receive(
     CapabilityId endpoint_capability) noexcept {
     auto received = ipc_.receive(server, endpoint_capability, capabilities_, threads_);
     if (!received) return received;
-    synchronise();
+    synchronise_pair(server, received.value().caller);
     return received;
 }
 
@@ -141,7 +158,7 @@ os::core::Result<void> Kernel::ipc_reply(
     IpcEnvelope response) noexcept {
     auto replied = ipc_.reply(server, seal, threads_, response);
     if (!replied) return replied;
-    synchronise();
+    synchronise_pair(server, seal.caller);
     return {};
 }
 
@@ -233,7 +250,9 @@ os::core::Result<void> Kernel::ipc_cancel_receive_continuation(ThreadId server) 
 os::core::Result<Dispatch> Kernel::dispatch_interrupt(InterruptSource source) noexcept {
     auto taken = interrupts_.dispatch(source);
     if (!taken) return taken;
-    if (taken.value().wake && taken.value().owner != invalid_thread) synchronise();
+    if (taken.value().wake && taken.value().owner != invalid_thread) {
+        synchronise_thread(taken.value().owner);
+    }
     return taken;
 }
 
