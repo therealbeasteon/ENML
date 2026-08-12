@@ -39,9 +39,26 @@ os::core::Result<void> UserFrameTable::admit(
     return frame_error(user_frame_errors::exhausted);
 }
 
+os::core::Result<void> UserFrameTable::validate_capture(
+    ThreadId thread, const ExceptionFrame& live) const noexcept {
+    if (thread == invalid_thread) return frame_error(user_frame_errors::invalid_thread);
+    if (!valid_el0_frame(live)) return frame_error(user_frame_errors::invalid_el0_frame);
+    if (find(thread) == nullptr) return frame_error(user_frame_errors::unknown_thread);
+    return {};
+}
+
+os::core::Result<void> UserFrameTable::validate_restore(ThreadId thread) const noexcept {
+    if (thread == invalid_thread) return frame_error(user_frame_errors::invalid_thread);
+    const auto* slot = find(thread);
+    if (slot == nullptr) return frame_error(user_frame_errors::unknown_thread);
+    if (!valid_el0_frame(slot->frame)) return frame_error(user_frame_errors::invalid_el0_frame);
+    return {};
+}
+
 os::core::Result<void> UserFrameTable::capture(
     ThreadId thread, const ExceptionFrame& live) noexcept {
-    if (!valid_el0_frame(live)) return frame_error(user_frame_errors::invalid_el0_frame);
+    auto valid = validate_capture(thread, live);
+    if (!valid) return valid.error();
     auto* slot = find(thread);
     if (slot == nullptr) return frame_error(user_frame_errors::unknown_thread);
     slot->frame = live;
@@ -50,9 +67,10 @@ os::core::Result<void> UserFrameTable::capture(
 
 os::core::Result<void> UserFrameTable::restore(
     ThreadId thread, ExceptionFrame& live) const noexcept {
+    auto valid = validate_restore(thread);
+    if (!valid) return valid.error();
     const auto* slot = find(thread);
     if (slot == nullptr) return frame_error(user_frame_errors::unknown_thread);
-    if (!valid_el0_frame(slot->frame)) return frame_error(user_frame_errors::invalid_el0_frame);
     live = slot->frame;
     return {};
 }
