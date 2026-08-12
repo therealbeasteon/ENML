@@ -5,13 +5,14 @@
 namespace os::kernel {
 
 namespace aarch64 {
-class EarlyStage1Builder;
+class TranslationRootSealer;
 }
 
 // A sealed translation root is an execution capability, not a raw address.
-// Only an architecture page-table builder that has completed its sealing
-// transition may mint one. Process/scheduler code can carry the token but cannot
-// manufacture a new executable memory universe from an arbitrary physical page.
+// Only the architecture sealer may mint one after a page-table builder has
+// crossed its building -> sealed transition. Process/scheduler code can carry
+// the token but cannot manufacture an executable memory universe from an
+// arbitrary physical page.
 class SealedTranslationRoot final {
 public:
     constexpr SealedTranslationRoot() noexcept = default;
@@ -34,7 +35,7 @@ private:
 
     std::uint64_t root_physical_ {0ULL};
 
-    friend class aarch64::EarlyStage1Builder;
+    friend class aarch64::TranslationRootSealer;
 };
 
 } // namespace os::kernel
