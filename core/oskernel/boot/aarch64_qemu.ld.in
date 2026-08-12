@@ -1,0 +1,47 @@
+OUTPUT_ARCH(aarch64)
+ENTRY(_start)
+
+SECTIONS
+{
+    . = @EMNL_AARCH64_BOOT_LOAD_ADDRESS@;
+    __cookie_image_start = .;
+
+    .text ALIGN(4096) : {
+        __cookie_text_start = .;
+        KEEP(*(.text.boot))
+        *(.text .text.*)
+        __cookie_text_end = ALIGN(4096);
+        . = __cookie_text_end;
+    }
+
+    .rodata ALIGN(4096) : {
+        __cookie_rodata_start = .;
+        *(.rodata .rodata.*)
+        __cookie_rodata_end = ALIGN(4096);
+        . = __cookie_rodata_end;
+    }
+
+    .data ALIGN(4096) : {
+        __cookie_data_start = .;
+        *(.data .data.*)
+        __cookie_data_end = ALIGN(4096);
+        . = __cookie_data_end;
+    }
+
+    .bss ALIGN(4096) (NOLOAD) : {
+        __bss_start = .;
+        *(.bss.boot_stack)
+        *(.bss .bss.* COMMON)
+        __bss_end = ALIGN(4096);
+        . = __bss_end;
+    }
+
+    __cookie_image_end = .;
+
+    /DISCARD/ : {
+        *(.comment)
+        *(.note .note.*)
+        *(.eh_frame .eh_frame.*)
+        *(.gcc_except_table .gcc_except_table.*)
+    }
+}
