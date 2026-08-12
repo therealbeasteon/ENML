@@ -7,6 +7,7 @@
 #include <os/core/result.hpp>
 #include <os/kernel/address_space_epoch.hpp>
 #include <os/kernel/rendezvous.hpp>
+#include <os/kernel/translation_root.hpp>
 
 namespace os::kernel {
 
@@ -37,13 +38,13 @@ struct ProcessTranslationBinding final {
 // remains present in scheduler state.
 class ProcessTranslationTable final {
 public:
-    // Binding is itself an authority transition. Cookie refuses to create a
-    // runnable translation binding from a stale/retiring epoch; callers cannot
-    // park dead memory identity in this table and hope it becomes valid later.
+    // Binding is itself an authority transition. Cookie requires both a live
+    // epoch and a minted sealed-root capability; a raw page-table address is not
+    // sufficient execution authority.
     [[nodiscard]] os::core::Result<void> bind(
         ThreadId thread,
         AddressSpaceEpoch epoch,
-        std::uint64_t root_physical,
+        SealedTranslationRoot root,
         const AddressSpaceEpochAuthority& epochs) noexcept;
 
     [[nodiscard]] os::core::Result<ProcessTranslationBinding> resolve(
