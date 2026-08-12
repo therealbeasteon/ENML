@@ -37,6 +37,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         src/aarch64_entry.cpp
         src/aarch64_vectors.S
         src/aarch64_context_switch.S
+        src/aarch64_el0.S
     )
     add_library(emnl::oskernel_machine_aarch64 ALIAS oskernel_machine_aarch64)
     target_include_directories(oskernel_machine_aarch64
@@ -67,6 +68,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/aarch64_entry.cpp
             src/aarch64_vectors.S
             src/aarch64_context_switch.S
+            src/aarch64_el0.S
         )
         target_include_directories(cookie_kernel_aarch64_boot PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
