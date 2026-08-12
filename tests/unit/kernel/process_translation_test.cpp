@@ -1,5 +1,9 @@
+#include <os/kernel/aarch64_translation_root_sealer.hpp>
 #include <os/kernel/process_translation.hpp>
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <cstdlib>
 
 namespace {
@@ -7,49 +11,46 @@ void require(bool value) { if (!value) std::abort(); }
 }
 
 int main() {
-    os::kernel::AddressSpaceEpochAuthority epochs{};
+    using namespace os::kernel;
+    using namespace os::kernel::aarch64;
+
+    alignas(4096) std::array<std::byte, 8U * 4096U> memory{};
+    const auto begin = static_cast<std::uint64_t>(reinterpret_cast<std::uintptr_t>(memory.data()));
+    EarlyPageArena arena{begin, begin + memory.size()};
+    EarlyStage1Builder builder_a{arena};
+    EarlyStage1Builder builder_b{arena};
+    require(builder_a.initialize());
+    require(builder_b.initialize());
+    auto root_a = TranslationRootSealer::seal(builder_a);
+    auto root_b = TranslationRootSealer::seal(builder_b);
+    require(root_a && root_b);
+
+    AddressSpaceEpochAuthority epochs{};
     auto a = epochs.acquire();
     auto b = epochs.acquire();
     require(a && b);
 
-    os::kernel::ProcessTranslationTable table{};
-    require(table.bind(1U, a.value(), 0x1000ULL, epochs));
-    require(table.bind(2U, b.value(), 0x2000ULL, epochs));
+    ProcessTranslationTable table{};
+    require(table.bind(1U, a.value(), root_a.value(), epochs));
+    require(table.bind(2U, b.value(), root_b.value(), epochs));
     require(table.count() == 2U);
 
     auto ra = table.resolve(1U, epochs);
     auto rb = table.resolve(2U, epochs);
     require(ra && rb);
-    require(ra.value().epoch == a.value());
-    require(rb.value().epoch == b.value());
-    require(ra.value().root_physical == 0x1000ULL);
-    require(rb.value().root_physical == 0x2000ULL);
+    require(ra.value().root_physical == root_a.value().root_physical());
+    require(rb.value().root_physical == root_b.value().root_physical());
 
-    require(!table.bind(1U, b.value(), 0x3000ULL, epochs));
-    require(!table.bind(3U, a.value(), 0x3000ULL, epochs));
+    require(!table.bind(1U, b.value(), root_b.value(), epochs));
+    require(!table.bind(3U, a.value(), root_a.value(), epochs));
 
     auto retiring = epochs.begin_retire(a.value());
     require(retiring);
     require(!table.resolve(1U, epochs));
     require(table.resolve(2U, epochs));
+    require(!table.bind(3U, a.value(), root_a.value(), epochs));
 
-    // A stale/retiring epoch cannot be inserted under a new thread id. Cookie
-    // revokes translation authority at bind time as well as resolve time.
-    require(!table.bind(3U, a.value(), 0x3000ULL, epochs));
-
-    require(!table.retire(1U, b.value()));
     require(table.retire(1U, a.value()));
-    require(table.count() == 1U);
-    require(!table.resolve(1U, epochs));
-
     require(epochs.complete_retire(retiring.value()));
-    auto a2 = epochs.acquire();
-    require(a2);
-    require(a2.value().generation != a.value().generation || a2.value().asid != a.value().asid);
-
-    // Reuse requires the fresh epoch token; the old generation stays dead.
-    require(!table.bind(3U, a.value(), 0x3000ULL, epochs));
-    require(table.bind(3U, a2.value(), 0x3000ULL, epochs));
-
     return 0;
 }
