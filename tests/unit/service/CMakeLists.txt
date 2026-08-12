@@ -45,3 +45,11 @@ target_compile_options(connection_admission_test PRIVATE
 )
 add_test(NAME connection_admission_test COMMAND connection_admission_test)
 set_tests_properties(connection_admission_test PROPERTIES LABELS "m4-shell")
+
+add_executable(connection_session_test connection_session_test.cpp)
+target_link_libraries(connection_session_test PRIVATE emnl::supervisor emnl_warnings)
+target_compile_options(connection_session_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME connection_session_test COMMAND connection_session_test)
+set_tests_properties(connection_session_test PROPERTIES LABELS "m4-shell")
