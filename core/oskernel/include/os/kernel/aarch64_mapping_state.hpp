@@ -21,6 +21,7 @@ struct NativeMapping final {
     MachinePermissions permissions {MachinePermissions::read};
     MachineMemoryKind kind {MachineMemoryKind::normal};
     bool kernel_stack {false};
+    bool user_accessible {false};
     bool occupied {false};
 };
 
@@ -60,69 +61,19 @@ public:
         MachinePermissions permissions,
         MachineMemoryKind kind,
         bool kernel_stack = false) noexcept {
-        if (ledger_ == nullptr || builder_ == nullptr) {
-            return error(machine_errors::address_space_unbound);
-        }
-        if (length == 0ULL || !page_aligned(length) ||
-            !page_aligned(virtual_base) || !page_aligned(physical_base) ||
-            !stage1_virtual_address(virtual_base) ||
-            !stage1_physical_address(physical_base) ||
-            virtual_base > UINT64_MAX - (length - 1ULL) ||
-            physical_base > UINT64_MAX - (length - 1ULL) ||
-            !stage1_virtual_address(virtual_base + length - architectural_page_size) ||
-            !stage1_physical_address(physical_base + length - architectural_page_size)) {
-            return error(machine_errors::invalid_range);
-        }
+        return map_impl(
+            virtual_base, physical_base, length, permissions, kind,
+            kernel_stack, false);
+    }
 
-        for (const auto& existing : mappings_) {
-            if (existing.occupied && overlap(
-                    existing.virtual_base, existing.length, virtual_base, length)) {
-                return error(machine_errors::already_mapped);
-            }
-        }
-
-        for (const auto& existing : ledger_->mappings) {
-            if (!existing.occupied || !overlap(
-                    existing.physical_base, existing.length, physical_base, length)) continue;
-            if ((writable(existing.permissions) && executable(permissions)) ||
-                (executable(existing.permissions) && writable(permissions))) {
-                return error(machine_errors::writable_executable_alias);
-            }
-        }
-
-        auto* local_slot = free_local();
-        auto* physical_slot = free_physical();
-        if (local_slot == nullptr || physical_slot == nullptr) {
-            return error(machine_errors::exhausted);
-        }
-
-        const std::uint64_t page_count = length / architectural_page_size;
-        if (required_table_pages(virtual_base, page_count) > builder_->remaining_table_pages()) {
-            return error(machine_errors::exhausted);
-        }
-
-        for (std::uint64_t page = 0ULL; page < page_count; ++page) {
-            auto state = builder_->mapped(virtual_base + page * architectural_page_size);
-            if (!state) return state.error();
-            if (state.value()) return error(machine_errors::already_mapped);
-        }
-
-        for (std::uint64_t page = 0ULL; page < page_count; ++page) {
-            auto mapped = builder_->map_page(
-                virtual_base + page * architectural_page_size,
-                physical_base + page * architectural_page_size,
-                permissions,
-                kind);
-            if (!mapped) os::core::invariant_violated();
-        }
-
-        *local_slot = NativeMapping{
-            virtual_base, physical_base, length, permissions, kind, kernel_stack, true};
-        *physical_slot = NativePhysicalMapping{
-            this, physical_base, length, permissions, true};
-        ++occupied_;
-        ++ledger_->occupied;
-        return {};
+    [[nodiscard]] os::core::Result<void> map_user(
+        std::uint64_t virtual_base,
+        std::uint64_t physical_base,
+        std::uint64_t length,
+        MachinePermissions permissions) noexcept {
+        return map_impl(
+            virtual_base, physical_base, length, permissions,
+            MachineMemoryKind::normal, false, true);
     }
 
     [[nodiscard]] os::core::Result<void> map_kernel_stack(
@@ -145,13 +96,10 @@ public:
             if (!guard_state) return guard_state.error();
             if (guard_state.value()) return error(machine_errors::missing_guard_page);
         }
-        return map(
-            virtual_base,
-            physical_base,
-            length,
-            MachinePermissions::read_write,
-            MachineMemoryKind::normal,
-            true);
+        return map_impl(
+            virtual_base, physical_base, length,
+            MachinePermissions::read_write, MachineMemoryKind::normal,
+            true, false);
     }
 
     [[nodiscard]] bool valid_kernel_stack_top(std::uint64_t stack_top) const noexcept {
@@ -177,10 +125,6 @@ public:
         return error(machine_errors::not_mapped);
     }
 
-    // Retires software authority only after the caller has cleared the hardware
-    // descriptors and completed the architectural TLB invalidation sequence.
-    // Every leaf is re-read here so ordering bugs cannot silently leave a valid
-    // translation after the physical W^X ledger says the mapping is gone.
     [[nodiscard]] os::core::Result<void> retire_unmapped(
         std::uint64_t virtual_base,
         std::uint64_t length) noexcept {
@@ -232,10 +176,86 @@ private:
     NativePhysicalLedger* ledger_ {nullptr};
     EarlyStage1Builder* builder_ {nullptr};
 
+    [[nodiscard]] os::core::Result<void> map_impl(
+        std::uint64_t virtual_base,
+        std::uint64_t physical_base,
+        std::uint64_t length,
+        MachinePermissions permissions,
+        MachineMemoryKind kind,
+        bool kernel_stack,
+        bool user_accessible) noexcept {
+        if (ledger_ == nullptr || builder_ == nullptr) {
+            return error(machine_errors::address_space_unbound);
+        }
+        if (user_accessible && kind != MachineMemoryKind::normal) {
+            return error(machine_errors::invalid_range);
+        }
+        if (length == 0ULL || !page_aligned(length) ||
+            !page_aligned(virtual_base) || !page_aligned(physical_base) ||
+            !stage1_virtual_address(virtual_base) ||
+            !stage1_physical_address(physical_base) ||
+            virtual_base > UINT64_MAX - (length - 1ULL) ||
+            physical_base > UINT64_MAX - (length - 1ULL) ||
+            !stage1_virtual_address(virtual_base + length - architectural_page_size) ||
+            !stage1_physical_address(physical_base + length - architectural_page_size)) {
+            return error(machine_errors::invalid_range);
+        }
+
+        for (const auto& existing : mappings_) {
+            if (existing.occupied && overlap(
+                    existing.virtual_base, existing.length, virtual_base, length)) {
+                return error(machine_errors::already_mapped);
+            }
+        }
+
+        for (const auto& existing : ledger_->mappings) {
+            if (!existing.occupied || !overlap(
+                    existing.physical_base, existing.length, physical_base, length)) continue;
+            if ((writable(existing.permissions) && executable(permissions)) ||
+                (executable(existing.permissions) && writable(permissions))) {
+                return error(machine_errors::writable_executable_alias);
+            }
+        }
+
+        auto* local_slot = free_local();
+        auto* physical_slot = free_physical();
+        if (local_slot == nullptr || physical_slot == nullptr) {
+            return error(machine_errors::exhausted);
+        }
+
+        const std::uint64_t page_count = length / architectural_page_size;
+        if (required_table_pages(virtual_base, page_count) > builder_->remaining_table_pages()) {
+            return error(machine_errors::exhausted);
+        }
+
+        for (std::uint64_t page = 0ULL; page < page_count; ++page) {
+            auto state = builder_->mapped(virtual_base + page * architectural_page_size);
+            if (!state) return state.error();
+            if (state.value()) return error(machine_errors::already_mapped);
+        }
+
+        for (std::uint64_t page = 0ULL; page < page_count; ++page) {
+            const auto va = virtual_base + page * architectural_page_size;
+            const auto pa = physical_base + page * architectural_page_size;
+            auto mapped = user_accessible
+                ? builder_->map_user_page(va, pa, permissions)
+                : builder_->map_page(va, pa, permissions, kind);
+            if (!mapped) os::core::invariant_violated();
+        }
+
+        *local_slot = NativeMapping{
+            virtual_base, physical_base, length, permissions, kind,
+            kernel_stack, user_accessible, true};
+        *physical_slot = NativePhysicalMapping{
+            this, physical_base, length, permissions, true};
+        ++occupied_;
+        ++ledger_->occupied;
+        return {};
+    }
+
     [[nodiscard]] static constexpr os::core::Error error(std::uint32_t code) noexcept {
         return os::core::make_error(os::core::ErrorDomain::kernel, code);
     }
-
     [[nodiscard]] static constexpr bool writable(MachinePermissions value) noexcept {
         return value == MachinePermissions::read_write;
     }
