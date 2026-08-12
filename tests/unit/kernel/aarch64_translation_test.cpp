@@ -30,6 +30,7 @@ int main() {
         MachinePermissions::read_write,
         MachineMemoryKind::normal);
     require(rw != 0ULL);
+    require((rw & (3ULL << 6U)) == descriptor::ap_el1_rw_el0_none);
     require((rw & descriptor::privileged_execute_never) != 0ULL);
     require((rw & descriptor::unprivileged_execute_never) != 0ULL);
     require((rw & descriptor::access_flag) != 0ULL);
@@ -39,9 +40,33 @@ int main() {
         MachinePermissions::read_execute,
         MachineMemoryKind::normal);
     require(rx != 0ULL);
-    require((rx & descriptor::ap_read_only_el1) != 0ULL);
+    require((rx & (3ULL << 6U)) == descriptor::ap_el1_ro_el0_none);
     require((rx & descriptor::privileged_execute_never) == 0ULL);
     require((rx & descriptor::unprivileged_execute_never) != 0ULL);
+
+    const auto user_rw = user_page_descriptor(
+        0x0000'0000'0080'2000ULL,
+        MachinePermissions::read_write);
+    require(user_rw != 0ULL);
+    require((user_rw & (3ULL << 6U)) == descriptor::ap_el1_rw_el0_rw);
+    require((user_rw & descriptor::privileged_execute_never) != 0ULL);
+    require((user_rw & descriptor::unprivileged_execute_never) != 0ULL);
+
+    const auto user_rx = user_page_descriptor(
+        0x0000'0000'0080'3000ULL,
+        MachinePermissions::read_execute);
+    require(user_rx != 0ULL);
+    require((user_rx & (3ULL << 6U)) == descriptor::ap_el1_ro_el0_ro);
+    require((user_rx & descriptor::privileged_execute_never) != 0ULL);
+    require((user_rx & descriptor::unprivileged_execute_never) == 0ULL);
+
+    const auto user_ro = user_page_descriptor(
+        0x0000'0000'0080'4000ULL,
+        MachinePermissions::read);
+    require(user_ro != 0ULL);
+    require((user_ro & (3ULL << 6U)) == descriptor::ap_el1_ro_el0_ro);
+    require((user_ro & descriptor::privileged_execute_never) != 0ULL);
+    require((user_ro & descriptor::unprivileged_execute_never) != 0ULL);
 
     const auto dev = page_descriptor(
         0x0000'0000'0900'0000ULL,
