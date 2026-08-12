@@ -52,8 +52,6 @@ int main() {
     auto response = os::kernel::IpcEnvelope::from(std::span<const std::byte>{reply_bytes});
     require(response);
 
-    // Syscall-facing path sees only the opaque transaction number. A wrong
-    // transaction cannot reply, and the correct transaction is one-shot.
     require(!kernel.ipc_reply_transaction(
         server, received.value().reply.transaction + 1U, response.value()));
     require(kernel.ipc_reply_transaction(
@@ -137,6 +135,39 @@ int main() {
         require(server_state && server_state.value() == os::kernel::ThreadState::ready);
         require(!death_kernel.ipc_reply_transaction(
             live_server, in_flight.value().reply.transaction));
+    }
+
+    // Endpoint restart must settle both scheduler/rendezvous state and the
+    // syscall continuation that remembers where a blocked receive should
+    // return. Otherwise a restarted endpoint could wake into stale completion.
+    {
+        os::kernel::Kernel restart_kernel{};
+        constexpr os::kernel::ThreadId restart_server = 41U;
+        require(restart_kernel.create_thread(restart_server, 3U));
+        auto ep = restart_kernel.create_ipc_endpoint(restart_server);
+        require(ep);
+        auto owner = restart_kernel.capabilities().mint(
+            restart_server,
+            os::kernel::ipc_object_id(ep.value()),
+            os::kernel::ipc_right_receive,
+            false);
+        require(owner);
+
+        os::kernel::AddressSpaceEpochAuthority epochs{};
+        auto epoch = epochs.acquire();
+        require(epoch);
+        require(restart_kernel.ipc_arm_receive_continuation(
+            restart_server, epoch.value(), owner.value(), 0x7000U, epochs));
+        auto blocked = restart_kernel.ipc_receive(restart_server, owner.value());
+        require(blocked && !blocked.value().valid());
+        require(restart_kernel.ipc_continuations().receive_armed(restart_server));
+
+        require(restart_kernel.retire_ipc_endpoint(restart_server, ep.value()));
+        require(!restart_kernel.ipc_continuations().receive_armed(restart_server));
+        auto state = restart_kernel.threads().state_of(restart_server);
+        require(state && state.value() == os::kernel::ThreadState::ready);
+        auto reason = restart_kernel.threads().wake_reason_of(restart_server);
+        require(reason && reason.value() == os::kernel::WakeReason::endpoint_retired);
     }
 
     const std::array<std::byte, os::kernel::max_ipc_inline_bytes + 1U> oversized{};
