@@ -40,22 +40,65 @@ private:
     std::uint64_t end_ {0ULL};
 };
 
+namespace translation_root_errors {
+inline constexpr std::uint32_t sealed = 100U;
+inline constexpr std::uint32_t not_sealed = 101U;
+inline constexpr std::uint32_t retiring = 102U;
+} // namespace translation_root_errors
+
 class EarlyStage1Builder final {
 public:
+    enum class Lifecycle : std::uint8_t {
+        uninitialized = 0U,
+        building = 1U,
+        sealed = 2U,
+        retiring = 3U,
+    };
+
     explicit EarlyStage1Builder(EarlyPageArena& arena) noexcept : arena_(&arena) {}
 
     [[nodiscard]] os::core::Result<std::uint64_t> initialize() noexcept {
         if (arena_ == nullptr || !arena_->valid()) {
             return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::invalid_range);
         }
-        if (root_ != 0ULL) {
+        if (root_ != 0ULL || lifecycle_ != Lifecycle::uninitialized) {
             return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::already_mapped);
         }
         auto page = arena_->allocate_page();
         if (!page) return page.error();
         zero_table(page.value());
         root_ = page.value();
+        lifecycle_ = Lifecycle::building;
         return root_;
+    }
+
+    // Sealing is one-way for normal execution. A sealed root may be installed
+    // for a process but cannot be mutated through this builder. Teardown must
+    // explicitly enter retiring state first, separating scheduling authority
+    // from page-table mutation authority.
+    [[nodiscard]] os::core::Result<void> seal() noexcept {
+        if (lifecycle_ == Lifecycle::sealed) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::sealed);
+        }
+        if (lifecycle_ == Lifecycle::retiring) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::retiring);
+        }
+        if (lifecycle_ != Lifecycle::building || root_ == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
+        lifecycle_ = Lifecycle::sealed;
+        return {};
+    }
+
+    [[nodiscard]] os::core::Result<void> begin_retire() noexcept {
+        if (lifecycle_ == Lifecycle::retiring) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::retiring);
+        }
+        if (lifecycle_ != Lifecycle::sealed) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::not_sealed);
+        }
+        lifecycle_ = Lifecycle::retiring;
+        return {};
     }
 
     [[nodiscard]] os::core::Result<void> map_page(
@@ -63,6 +106,8 @@ public:
         std::uint64_t physical_address,
         MachinePermissions permissions,
         MachineMemoryKind kind) noexcept {
+        auto mutable_result = require_building();
+        if (!mutable_result) return mutable_result.error();
         return install_leaf(
             virtual_address,
             page_descriptor(physical_address, permissions, kind));
@@ -72,6 +117,8 @@ public:
         std::uint64_t virtual_address,
         std::uint64_t physical_address,
         MachinePermissions permissions) noexcept {
+        auto mutable_result = require_building();
+        if (!mutable_result) return mutable_result.error();
         return install_leaf(
             virtual_address,
             user_page_descriptor(physical_address, permissions));
@@ -87,6 +134,12 @@ public:
     }
 
     [[nodiscard]] os::core::Result<void> unmap_page(std::uint64_t virtual_address) noexcept {
+        if (lifecycle_ == Lifecycle::sealed) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::sealed);
+        }
+        if (lifecycle_ != Lifecycle::building && lifecycle_ != Lifecycle::retiring) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
         auto leaf = leaf_pointer(virtual_address);
         if (!leaf) return leaf.error();
         if (((*leaf.value()) & descriptor::valid) == 0ULL) {
@@ -101,10 +154,28 @@ public:
     }
 
     [[nodiscard]] std::uint64_t root_physical() const noexcept { return root_; }
+    [[nodiscard]] Lifecycle lifecycle() const noexcept { return lifecycle_; }
+    [[nodiscard]] bool executable_process_root() const noexcept {
+        return root_ != 0ULL && lifecycle_ == Lifecycle::sealed;
+    }
 
 private:
     EarlyPageArena* arena_ {nullptr};
     std::uint64_t root_ {0ULL};
+    Lifecycle lifecycle_ {Lifecycle::uninitialized};
+
+    [[nodiscard]] os::core::Result<void> require_building() const noexcept {
+        if (lifecycle_ == Lifecycle::sealed) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::sealed);
+        }
+        if (lifecycle_ == Lifecycle::retiring) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::retiring);
+        }
+        if (lifecycle_ != Lifecycle::building) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
+        return {};
+    }
 
     [[nodiscard]] static std::uint64_t* table_pointer(std::uint64_t physical) noexcept {
         return reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(physical));
