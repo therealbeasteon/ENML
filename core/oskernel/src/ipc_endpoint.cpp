@@ -405,4 +405,9 @@ bool IpcEndpointTable::active(IpcEndpoint endpoint) const noexcept {
     return slot_for(endpoint) != nullptr;
 }
 
+bool IpcEndpointTable::receive_waiting(IpcEndpoint endpoint) const noexcept {
+    const auto* slot = slot_for(endpoint);
+    return slot != nullptr && slot->receive_waiting;
+}
+
 } // namespace os::kernel
