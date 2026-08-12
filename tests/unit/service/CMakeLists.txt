@@ -37,3 +37,11 @@ target_compile_options(subsystem_lease_authority_test PRIVATE
 )
 add_test(NAME subsystem_lease_authority_test COMMAND subsystem_lease_authority_test)
 set_tests_properties(subsystem_lease_authority_test PROPERTIES LABELS "m4-shell")
+
+add_executable(connection_admission_test connection_admission_test.cpp)
+target_link_libraries(connection_admission_test PRIVATE emnl::supervisor emnl_warnings)
+target_compile_options(connection_admission_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME connection_admission_test COMMAND connection_admission_test)
+set_tests_properties(connection_admission_test PROPERTIES LABELS "m4-shell")
