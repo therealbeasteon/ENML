@@ -1,6 +1,9 @@
 #include <cstdlib>
 
+#include <os/ui/frame_scheduler.hpp>
+#include <os/ui/quality_policy.hpp>
 #include <os/ui/system_layouts.hpp>
+#include <os/ui/system_render_plan.hpp>
 #include <os/ui/system_scenes.hpp>
 
 namespace {
@@ -132,6 +135,43 @@ int main() {
     require(fold_switcher.contract.layout == SwitcherLayout::seam_split);
     require(fold_switcher.reserve_center_seam);
     require(!fold_switcher.selected_task_centered);
+
+    const FrameTelemetry smooth_120hz {
+        .refresh_hz = 120U,
+        .input_age_ns = 1'000'000ULL,
+        .cpu_render_ns = 2'000'000ULL,
+        .gpu_render_ns = 2'000'000ULL,
+        .present_wait_ns = 500'000ULL,
+        .consecutive_misses = 0U,
+        .direct_manipulation_active = false,
+    };
+    const RenderPressure nominal {};
+    const auto smooth_frame = schedule_frame(smooth_120hz, nominal);
+    const auto home_plan = make_system_render_plan(SystemSceneKind::home, tall_phone, smooth_frame);
+    require(system_render_plan_valid(home_plan));
+    require(home_plan.primary_contour == ContourFamily::anchor);
+    require(home_plan.accent_contour == ContourFamily::sweep);
+    require(home_plan.render.quality == VisualQualityTier::full);
+    require(home_plan.render.capabilities.live_backdrop);
+
+    const auto lock_plan = make_system_render_plan(SystemSceneKind::lock_screen, tall_phone, smooth_frame);
+    require(system_render_plan_valid(lock_plan));
+    require(lock_plan.trusted_attribution_required);
+    require(lock_plan.capture_protected);
+    require(lock_plan.wallpaper_context_visible);
+
+    FrameTelemetry dragging = smooth_120hz;
+    dragging.direct_manipulation_active = true;
+    const auto drag_frame = schedule_frame(dragging, nominal);
+    const auto controls_plan = make_system_render_plan(SystemSceneKind::quick_controls, tall_phone, drag_frame);
+    require(system_render_plan_valid(controls_plan));
+    require(controls_plan.render.quality == VisualQualityTier::economy);
+    require(!controls_plan.render.capabilities.live_backdrop);
+
+    const auto fold_plan = make_system_render_plan(SystemSceneKind::app_switcher, foldable, smooth_frame);
+    require(system_render_plan_valid(fold_plan));
+    require(fold_plan.reserve_display_seam);
+    require(fold_plan.motion == MotionCharacter::handoff);
 
     const DeviceProfile impossible {};
     require(!system_layouts_valid(impossible));
