@@ -19,7 +19,8 @@ void put_be32(std::byte* p, std::uint32_t value) {
 
 struct Builder final {
     std::array<std::byte, 512U> blob{};
-    std::size_t cursor {40U};
+    // Header [0,40), zero reservation terminator [40,56), structure follows.
+    std::size_t cursor {56U};
 
     void u32(std::uint32_t value) {
         put_be32(blob.data() + cursor, value);
@@ -56,6 +57,7 @@ int main() {
         "compatible\0";
 
     Builder b{};
+    constexpr std::uint32_t structure_offset = 56U;
     b.u32(FdtView::token_begin_node);
     b.padded_string("");
 
@@ -99,7 +101,7 @@ int main() {
     b.u32(FdtView::token_end_node);
     b.u32(FdtView::token_end);
 
-    const std::size_t structure_size = b.cursor - 40U;
+    const std::size_t structure_size = b.cursor - structure_offset;
     const std::size_t strings_offset = b.cursor;
     for (std::size_t i = 0U; i < sizeof(strings); ++i) {
         b.blob[b.cursor++] = static_cast<std::byte>(strings[i]);
@@ -108,7 +110,7 @@ int main() {
 
     put_be32(b.blob.data() + 0U, FdtView::magic);
     put_be32(b.blob.data() + 4U, static_cast<std::uint32_t>(total_size));
-    put_be32(b.blob.data() + 8U, 40U);
+    put_be32(b.blob.data() + 8U, structure_offset);
     put_be32(b.blob.data() + 12U, static_cast<std::uint32_t>(strings_offset));
     put_be32(b.blob.data() + 16U, 40U);
     put_be32(b.blob.data() + 20U, 17U);
