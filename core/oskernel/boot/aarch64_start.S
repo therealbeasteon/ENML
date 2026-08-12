@@ -3,14 +3,34 @@
 .global _start
 .type _start, %function
 
+// Loader envelope for firmware/emulators that implement the conventional
+// AArch64 Image boot contract. This is transport metadata only: Cookie keeps
+// its own kernel ABI and does not consume Linux services or Linux runtime state.
+//
+// code0/code1 occupy the first 8 bytes and branch over the 64-byte header.
+// text_offset=0x80000 matches Cookie's linked 0x4008_0000 placement when RAM
+// begins at a 2 MiB-aligned 0x4000_0000 base. image_size is linker-derived.
+_start:
+    b .Lcookie_entry
+    nop
+    .quad 0x0000000000080000                  // text_offset
+    .quad __cookie_image_end - __cookie_image_start // image_size
+    .quad 0x0000000000000000                  // flags: LE, page size unspecified
+    .quad 0x0000000000000000                  // reserved
+    .quad 0x0000000000000000                  // reserved
+    .quad 0x0000000000000000                  // reserved
+    .long 0x644d5241                           // "ARM\x64"
+    .long 0x00000000                           // reserved / PE header offset
+
 // AArch64 Cookie boot contract:
 //   x0 = physical pointer to a flattened device tree
 //   MMU is disabled
 //   entry is at EL1
 //
-// The machine port owns how the image is loaded. This entry contains no QEMU
-// MMIO constants and no Linux ABI assumptions.
-_start:
+// The machine port owns how the image is loaded. No QEMU MMIO constants are
+// encoded here; the 64-byte envelope only makes the raw image self-describing
+// to standard AArch64 loaders while preserving the Cookie entry contract.
+.Lcookie_entry:
     mrs x1, CurrentEL
     cmp x1, #0x4
     b.ne .Lhalt
