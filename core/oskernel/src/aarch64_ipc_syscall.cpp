@@ -218,17 +218,20 @@ os::core::Result<bool> complete_ipc_current(
         return true;
     }
 
-    if (!kernel.ipc().reply_available(current)) return false;
+    auto response = kernel.ipc_take_reply(current);
+    if (!response) {
+        const auto error = response.error();
+        if (error.domain == os::core::ErrorDomain::kernel &&
+            error.code == ipc_errors::reply_unavailable) {
+            return false;
+        }
+        return error;
+    }
 
     auto continuation = kernel.ipc_take_send_continuation(
         current, binding.value().epoch, epochs);
-    if (!continuation) {
-        (void)kernel.ipc_take_reply(current);
-        return continuation.error();
-    }
+    if (!continuation) return continuation.error();
 
-    auto response = kernel.ipc_take_reply(current);
-    if (!response) return response.error();
     auto wrote = write_envelope(
         binding.value(),
         continuation.value().exchange_address,
