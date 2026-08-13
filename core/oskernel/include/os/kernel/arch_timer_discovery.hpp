@@ -13,13 +13,13 @@ inline constexpr std::uint32_t ambiguous = 101U;
 inline constexpr std::uint32_t malformed = 102U;
 inline constexpr std::uint32_t unsupported_interrupt_cells = 103U;
 inline constexpr std::uint32_t unsupported_interrupt_type = 104U;
+inline constexpr std::uint32_t unsupported_trigger = 105U;
 } // namespace arch_timer_discovery_errors
 
-// Linux/DT GIC interrupt specifiers encode the trigger sense in the low nibble;
-// PPI affinity/CPU-mask information may occupy higher bits. Architected timer
-// PPIs are level-sensitive. Firmware seen in the field (including QEMU virt)
-// may describe the line as either level-high or level-low, so Cookie validates
-// the electrical class without confusing affinity bits for trigger bits.
+// GIC DT interrupt specifiers encode electrical sense in the low nibble; PPI
+// affinity/CPU-mask information can occupy higher bits. Cookie's GIC runtime
+// only needs edge-vs-level for this architectural PPI, but discovery preserves
+// the raw firmware value for diagnostics and later board-specific policy.
 inline constexpr std::uint32_t dt_irq_sense_mask = 0xFU;
 inline constexpr std::uint32_t dt_irq_level_high = 4U;
 inline constexpr std::uint32_t dt_irq_level_low = 8U;
@@ -31,24 +31,21 @@ inline constexpr std::uint32_t dt_irq_level_low = 8U;
 }
 
 struct ArchitectedTimerDiscovery final {
-    // Architectural interrupt ID delivered by the interrupt controller. For a
-    // standard GIC PPI this is 16 + the DT PPI number, but callers never need to
-    // know that encoding rule.
     std::uint32_t nonsecure_physical_intid {0U};
+    // Normalized trigger class consumed by the current GIC bring-up. Both
+    // level-high and level-low firmware descriptions normalize to level-high
+    // because the current controller programming only distinguishes level vs
+    // edge. raw_trigger_flags retains the exact DT description.
     std::uint32_t trigger_flags {0U};
+    std::uint32_t raw_trigger_flags {0U};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        // SGIs occupy 0..15. The architected physical timer is described as a
-        // PPI/E-PPI and must never decode into SGI space. Its IRQ must also be
-        // level-sensitive; edge-triggered timer descriptions are rejected.
         return nonsecure_physical_intid >= 16U && nonsecure_physical_intid < 1120U &&
-               architected_timer_trigger_supported(trigger_flags);
+               trigger_flags == dt_irq_level_high &&
+               architected_timer_trigger_supported(raw_trigger_flags);
     }
 };
 
-// Finds exactly one architected timer node and decodes the EL1 non-secure
-// physical timer interrupt. Cookie uses firmware topology instead of assuming a
-// fixed PPI number, keeping QEMU and real boards on the same path.
 [[nodiscard]] os::core::Result<ArchitectedTimerDiscovery>
 discover_architected_timer(const FdtView& fdt) noexcept;
 
