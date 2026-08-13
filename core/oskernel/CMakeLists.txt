@@ -26,7 +26,7 @@ target_compile_options(oskernel PRIVATE
 )
 
 option(EMNL_BUILD_AARCH64_BOOT_IMAGE "Build the freestanding Cookie AArch64 kernel image" OFF)
-set(EMNL_AARCH64_BOOT_LOAD_ADDRESS "0x40200000" CACHE STRING
+set(EMNL_AARCH64_BOOT_LOAD_ADDRESS "0x40080000" CACHE STRING
     "Machine-port load address for the standalone AArch64 image")
 
 # The host machine remains the executable contract implementation while Cookie
