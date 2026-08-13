@@ -107,6 +107,22 @@ jobs:
           for pc in $(grep -oE '^0x40[0-9a-f]{6}' cookie-qemu-debug.log | sort -u); do
             printf '%s  %s\n' "$pc" "$(addr2line -f -C -e "$elf" "$pc" | tr '\n' ' ')"
           done
+          # The bootstrap stack is fixed at link time and the frames that have
+          # to fit in it are not, so print the largest ones. A frame that
+          # overruns this stack does not fault - translation is off and
+          # .rodata/.text lie below it - so the failure appears as corrupted
+          # code rather than as a stack error.
+          echo '--- largest stack frames in the boot image ---'
+          objdump -d "$elf" | awk '
+            /^[0-9a-f]+ </ { fn=$2 }
+            /sub[ \t]+sp, sp, #/ {
+              n=$NF; sub(/^#/,"",n); sub(/,.*/,"",n);
+              if (n+0 > 512) printf "%8d  %s\n", n, fn
+            }' | sort -rn | head -10
+          echo "bootstrap stack bytes: $(nm "$elf" | awk '
+            /__cookie_bootstrap_stack_start/ { s=strtonum("0x" $1) }
+            /__cookie_bootstrap_stack_top/   { t=strtonum("0x" $1) }
+            END { print t-s }')"
           echo '--- image extent (note: BSS is not in the .bin QEMU loads) ---'
           readelf -lW "$elf" | sed -n '/Program Head/,/Section to Segment/p'
           size -A -d "$elf" | head -20
