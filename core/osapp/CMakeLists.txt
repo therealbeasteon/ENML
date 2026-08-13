@@ -4,6 +4,7 @@ add_library(osapp STATIC
     src/service_session.cpp
     src/input_event.cpp
     src/principal_store_linux.cpp
+    src/shell_lifecycle_client.cpp
 )
 
 add_library(emnl::osapp ALIAS osapp)

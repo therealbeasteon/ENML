@@ -122,12 +122,32 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/core/oscore/include)
         target_compile_features(cookie_kernel_aarch64_boot PRIVATE cxx_std_20)
+        # -mstrict-align is required, not a hardening preference.
+        #
+        # This image runs with translation disabled from _start until
+        # activate_stage1_translation. While it is off, every data access takes
+        # the Device-nGnRnE attribute regardless of what the page tables will
+        # later say, and Device memory does not permit unaligned access. SCTLR
+        #_EL1.A is irrelevant here: that bit governs alignment checking for
+        # Normal memory, so clearing it does not buy tolerance the memory type
+        # never had.
+        #
+        # Without this flag the compiler is free to emit an unaligned load or a
+        # multi-register copy for an ordinary struct assignment, and one did -
+        # inside FdtView::parse, building its Result return value. The fault
+        # was taken before any of this code could report it.
+        #
+        # -mgeneral-regs-only is required for the same window, for a different
+        # reason. Cookie does not enable or context-switch FP/SIMD state during
+        # early EL1 boot yet. Prevent the compiler from silently using vector
+        # registers for structure copies before that contract exists; otherwise
+        # such instructions trap as undefined at EL1.
+        #
+        # Both flags are load-bearing and independent. Neither substitutes for
+        # the other, and dropping either one produces an image that links but
+        # faults during early boot.
         target_compile_options(cookie_kernel_aarch64_boot PRIVATE
-            # Cookie does not enable or context-switch FP/SIMD state during
-            # early EL1 boot yet. Prevent the compiler from silently using
-            # vector registers for structure copies before that contract
-            # exists; otherwise such instructions trap as undefined at EL1.
-            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie -mgeneral-regs-only>
+            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie -mstrict-align -mgeneral-regs-only>
             $<$<COMPILE_LANGUAGE:ASM>:-ffreestanding -fno-pie>)
         target_link_options(cookie_kernel_aarch64_boot PRIVATE
             -nostdlib

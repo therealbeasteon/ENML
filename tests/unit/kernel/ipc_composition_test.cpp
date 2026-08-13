@@ -6,6 +6,9 @@
 #include <os/kernel/kernel.hpp>
 
 namespace {
+// Templated so a Result can be passed directly. Result's operator bool is
+// explicit, which satisfies the contextual conversion in `!value` but not
+// an implicit conversion to a bool parameter.
 template <typename T>
 void require(const T& value) {
     if (!static_cast<bool>(value)) std::abort();

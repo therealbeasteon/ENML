@@ -36,6 +36,21 @@ extern "C" int memcmp(const void* left, const void* right, std::size_t count) no
     return 0;
 }
 
+// Supplied for the same reason as the four above: the compiler and the standard
+// library headers assume these exist, and a -nostdlib image has no libc to take
+// them from.
+//
+// This one arrives less obviously than memcpy. Nothing in the boot code calls
+// strlen; std::string_view does. Constructing one from a string literal goes
+// through std::char_traits<char>::length, which lowers to a strlen call, so a
+// single uart_write("...") pulls in a libc symbol that is not there. The link
+// error names char_traits rather than anything written here, which is what makes
+// it worth a comment.
+//
+// Bounded only by the terminator, because that is what the contract is. Callers
+// inside the kernel pass literals; anything that ever passes attacker-influenced
+// bytes must bound them before they reach a C string, not hope this function
+// does it.
 extern "C" std::size_t strlen(const char* text) noexcept {
     std::size_t length = 0U;
     while (text[length] != '\0') ++length;

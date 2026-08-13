@@ -1,11 +1,27 @@
 OUTPUT_ARCH(aarch64)
 ENTRY(_start)
 
+/* Separate loadable segments, so the image itself obeys W^X.
+ *
+ * The sections below were already page-aligned and distinct, but alignment is
+ * not separation: with no PHDRS the linker is free to place them all in one
+ * PT_LOAD whose permissions are the union of everything inside it. That union
+ * is read, write and execute at once, and ld says so - "has a LOAD segment with
+ * RWX permissions" - which this build treats as an error rather than a warning.
+ *
+ * It was right to. M7.4a requires that no page the kernel maps be both writable
+ * and executable, and M7.4b enforces that for mappings the kernel creates at
+ * runtime. None of that helps if the image the machine loads before any of our
+ * code runs is itself one RWX blob: the very first thing in memory would be the
+ * thing the rule exists to forbid.
+ *
+ * Flags are the ELF program-header bits: PF_R = 4, PF_W = 2, PF_X = 1.
+ */
 PHDRS
 {
-    text   PT_LOAD FLAGS(5); /* R-X */
-    rodata PT_LOAD FLAGS(4); /* R-- */
-    data   PT_LOAD FLAGS(6); /* RW- */
+    text   PT_LOAD FLAGS(5); /* R + X, never writable */
+    rodata PT_LOAD FLAGS(4); /* R only - constants are not data to be changed */
+    data   PT_LOAD FLAGS(6); /* R + W, never executable */
 }
 
 SECTIONS
@@ -35,6 +51,8 @@ SECTIONS
         . = __cookie_data_end;
     } :data
 
+    /* NOLOAD, but still part of the writable segment: it is memory the kernel
+     * writes and must never be memory the kernel executes. */
     .bss ALIGN(4096) (NOLOAD) : {
         __bss_start = .;
         *(.bss.boot_stack)
