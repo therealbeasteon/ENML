@@ -85,7 +85,6 @@ os::kernel::MachineAddressSpace process_space_b{};
 os::kernel::AddressSpaceEpochAuthority boot_epochs{};
 os::kernel::ProcessTranslationTable boot_translations{};
 os::kernel::Kernel boot_kernel{};
-os::kernel::Scheduler& boot_scheduler = boot_kernel.runqueue();
 os::kernel::aarch64::PreemptionCoordinator boot_preemption{};
 
 [[noreturn]] void halt() noexcept {
@@ -326,7 +325,7 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
     const auto now = os::kernel::machine_monotonic_nanoseconds();
     boot_start_now = now;
     auto start = boot_preemption.start(
-        boot_scheduler, boot_translations, boot_epochs, now, live);
+        boot_kernel.runqueue(), boot_translations, boot_epochs, now, live);
     if (!start || start.value().next != process_a_thread ||
         start.value().switched == false || start.value().deadline.active ||
         !commit_result(start.value(), now) ||
@@ -388,7 +387,7 @@ extern "C" void cookie_kernel_syscall_entry(
 
         const auto now = os::kernel::machine_monotonic_nanoseconds();
         auto next = boot_preemption.reschedule(
-            boot_scheduler, boot_translations, boot_epochs, now, *frame);
+            boot_kernel.runqueue(), boot_translations, boot_epochs, now, *frame);
         if (!next || !commit_result(next.value(), now) ||
             !complete_after_switch(next.value().next, *frame)) {
             uart_write("COOKIE:PANIC:IPC_SWITCH\n");
@@ -414,7 +413,7 @@ extern "C" void cookie_kernel_syscall_entry(
     }
     if (el0_yield_count == 2U && frame->x[19] == process_a_marker) {
         el0_yield_count = 3U;
-        if (!boot_scheduler.update(process_b_thread, true, process_priority)) {
+        if (!boot_kernel.runqueue().update(process_b_thread, true, process_priority)) {
             uart_write("COOKIE:PANIC:SCHED_WAKE\n");
             halt();
         }
@@ -441,7 +440,7 @@ extern "C" void cookie_kernel_syscall_entry(
         // establish. Genuine elapsed time returns for the on_timer() paths
         // below, which take their timestamp from the delivered interrupt.
         auto rescheduled = boot_preemption.reschedule(
-            boot_scheduler, boot_translations, boot_epochs, boot_start_now, *frame);
+            boot_kernel.runqueue(), boot_translations, boot_epochs, boot_start_now, *frame);
         if (!rescheduled || rescheduled.value().next != process_a_thread ||
             rescheduled.value().switched || !rescheduled.value().deadline.active ||
             !commit_result(rescheduled.value(), boot_start_now) ||
@@ -505,7 +504,7 @@ extern "C" void cookie_aarch64_irq_dispatch(
     const auto delivered = boot_preemption.current_deadline();
     const auto now = os::kernel::machine_monotonic_nanoseconds();
     auto next = boot_preemption.on_timer(
-        boot_scheduler, boot_translations, boot_epochs, delivered, now, *frame);
+        boot_kernel.runqueue(), boot_translations, boot_epochs, delivered, now, *frame);
     if (!next || !commit_result(next.value(), now) ||
         !complete_after_switch(next.value().next, *frame)) {
         uart_write("COOKIE:PANIC:PREEMPT\n");
@@ -746,7 +745,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     boot_server_ipc_cap = server_cap.value();
     boot_client_ipc_cap = client_cap.value();
 
-    if (!boot_scheduler.update(process_b_thread, false, process_priority)) halt();
+    if (!boot_kernel.runqueue().update(process_b_thread, false, process_priority)) halt();
 
     os::kernel::aarch64::ExceptionFrame initial_a{};
     initial_a.elr_el1 = user_code_virtual;
