@@ -20,8 +20,8 @@ jobs:
       - name: Build kernel gates
         run: >-
           .github/scripts/run-build.sh 'kernel-gcc' --preset host-debug --target
-          kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
-          kernel_process_translation_test
+          kernel_abi_test kernel_rendezvous_test kernel_ipc_endpoint_test kernel_ipc_composition_test kernel_ipc_continuation_test kernel_machine_host_test
+          kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
@@ -49,8 +49,8 @@ jobs:
       - name: Build kernel gates with sanitizers
         run: >-
           .github/scripts/run-build.sh 'kernel-sanitizers' --preset host-asan --target
-          kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
-          kernel_process_translation_test
+          kernel_abi_test kernel_rendezvous_test kernel_ipc_endpoint_test kernel_ipc_composition_test kernel_ipc_continuation_test kernel_machine_host_test
+          kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
@@ -74,8 +74,8 @@ jobs:
       - name: Build kernel gates
         run: >-
           .github/scripts/run-build.sh 'kernel-clang' build/m5-kernel-clang --target
-          kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
-          kernel_process_translation_test
+          kernel_abi_test kernel_rendezvous_test kernel_ipc_endpoint_test kernel_ipc_composition_test kernel_ipc_continuation_test kernel_machine_host_test
+          kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
@@ -105,8 +105,8 @@ jobs:
       - name: Build all kernel gates and standalone image
         run: >-
           .github/scripts/run-build.sh 'kernel-arm64-native' build/m7-arm64-native --target
-          kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
-          kernel_process_translation_test
+          kernel_abi_test kernel_rendezvous_test kernel_ipc_endpoint_test kernel_ipc_composition_test kernel_ipc_continuation_test kernel_machine_host_test
+          kernel_process_translation_test kernel_user_access_test kernel_aarch64_user_copy_guard_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
@@ -118,7 +118,7 @@ jobs:
           oskernel_machine_aarch64 cookie_kernel_aarch64_boot --parallel 2
       - name: Test kernel gates natively
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --test-dir build/m7-arm64-native
-      - name: Boot Cookie Kernel and prove isolated EL0 A-B-A preemption under QEMU virt GICv3
+      - name: Boot Cookie Kernel and prove isolated EL0 native IPC under QEMU virt GICv3
         shell: bash
         run: |
           set -euo pipefail
@@ -149,3 +149,6 @@ jobs:
           grep -F 'COOKIE:M7.5i:A_TO_B' cookie-qemu.log
           grep -F 'COOKIE:M7.5i:B_TO_A' cookie-qemu.log
           grep -F 'COOKIE:M7.5i:ISOLATED_A_B_A' cookie-qemu.log
+          grep -F 'COOKIE:M7.6:IPC_RECEIVER_FIRST' cookie-qemu.log
+          grep -F 'COOKIE:M7.6:IPC_REQUEST_B' cookie-qemu.log
+          grep -F 'COOKIE:M7.6:IPC_A_B_REPLY' cookie-qemu.log

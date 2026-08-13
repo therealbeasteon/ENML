@@ -1,4 +1,5 @@
 #include <os/kernel/aarch64_entry.hpp>
+#include <os/kernel/aarch64_user_copy_guard.hpp>
 
 #include <cstdint>
 
@@ -21,6 +22,13 @@ bool install_exception_vectors() noexcept {
 }
 
 } // namespace os::kernel::aarch64
+
+extern "C" void cookie_aarch64_current_sync_exception_dispatch(
+    os::kernel::aarch64::ExceptionFrame* frame) noexcept {
+    if (frame == nullptr || !os::kernel::aarch64::recover_user_copy_fault(*frame)) {
+        cookie_aarch64_unhandled_exception();
+    }
+}
 
 extern "C" void cookie_aarch64_sync_exception_dispatch(
     os::kernel::aarch64::ExceptionFrame* frame) noexcept {

@@ -126,21 +126,29 @@ core_files=(
     "core/oskernel/include/os/kernel/address_space_epoch.hpp"
     "core/oskernel/include/os/kernel/capability.hpp"
     "core/oskernel/include/os/kernel/interrupt.hpp"
+    "core/oskernel/include/os/kernel/ipc_continuation.hpp"
+    "core/oskernel/include/os/kernel/ipc_endpoint.hpp"
+    "core/oskernel/include/os/kernel/ipc_syscall.hpp"
     "core/oskernel/include/os/kernel/kernel.hpp"
     "core/oskernel/include/os/kernel/process_translation.hpp"
     "core/oskernel/include/os/kernel/rendezvous.hpp"
     "core/oskernel/include/os/kernel/scheduler.hpp"
     "core/oskernel/include/os/kernel/scheduler_deadline.hpp"
     "core/oskernel/include/os/kernel/translation_root.hpp"
+    "core/oskernel/include/os/kernel/user_access.hpp"
     "core/oskernel/src/abi.cpp"
     "core/oskernel/src/address_space_epoch.cpp"
     "core/oskernel/src/capability.cpp"
     "core/oskernel/src/interrupt.cpp"
+    "core/oskernel/src/ipc_continuation.cpp"
+    "core/oskernel/src/ipc_endpoint.cpp"
+    "core/oskernel/src/ipc_syscall.cpp"
     "core/oskernel/src/kernel.cpp"
     "core/oskernel/src/process_translation.cpp"
     "core/oskernel/src/rendezvous.cpp"
     "core/oskernel/src/scheduler.cpp"
     "core/oskernel/src/scheduler_deadline.cpp"
+    "core/oskernel/src/user_access.cpp"
 )
 
 machine_files=(
@@ -150,12 +158,15 @@ machine_files=(
     "core/oskernel/include/os/kernel/aarch64_exception.hpp"
     "core/oskernel/include/os/kernel/aarch64_execution_universe.hpp"
     "core/oskernel/include/os/kernel/aarch64_gic_v3.hpp"
+    "core/oskernel/include/os/kernel/aarch64_ipc_syscall.hpp"
     "core/oskernel/include/os/kernel/aarch64_kernel_mapping_manifest.hpp"
     "core/oskernel/include/os/kernel/aarch64_mapping_state.hpp"
     "core/oskernel/include/os/kernel/aarch64_page_tables.hpp"
     "core/oskernel/include/os/kernel/aarch64_preemption.hpp"
     "core/oskernel/include/os/kernel/aarch64_translation.hpp"
     "core/oskernel/include/os/kernel/aarch64_translation_root_sealer.hpp"
+    "core/oskernel/include/os/kernel/aarch64_user_access.hpp"
+    "core/oskernel/include/os/kernel/aarch64_user_copy_guard.hpp"
     "core/oskernel/include/os/kernel/aarch64_user_frames.hpp"
     "core/oskernel/include/os/kernel/machine.hpp"
     "core/oskernel/include/os/kernel/machine_aarch64.hpp"
@@ -165,8 +176,12 @@ machine_files=(
     "core/oskernel/src/aarch64_execution_universe.cpp"
     "core/oskernel/src/aarch64_execution_universe_machine.cpp"
     "core/oskernel/src/aarch64_gic_v3.cpp"
+    "core/oskernel/src/aarch64_ipc_syscall.cpp"
     "core/oskernel/src/aarch64_preemption.cpp"
     "core/oskernel/src/aarch64_translation.cpp"
+    "core/oskernel/src/aarch64_user_access.S"
+    "core/oskernel/src/aarch64_user_access.cpp"
+    "core/oskernel/src/aarch64_user_copy_guard.cpp"
     "core/oskernel/src/aarch64_user_frames.cpp"
     "core/oskernel/src/aarch64_vectors.S"
     "core/oskernel/src/aarch64_el0.S"
@@ -304,11 +319,26 @@ not_kernel=(
 # internally, so the deadline it arms is still correct relative to actual
 # elapsed time. Genuine elapsed time returns for the on_timer() paths,
 # which take their timestamp from the delivered interrupt.
-core_ceiling=1674
-machine_ceiling=2174
+# Raised an eighth time, by M7.6a: core 1674 -> 2872, machine 2174 -> 2661,
+# entry 570 -> 751, total 5639 -> 7505. This is the milestone that gives
+# Cookie its own native IPC instead of borrowing the Linux substrate's
+# SOCK_SEQPACKET+SCM_RIGHTS - the transport M8's substrate cutover exists
+# to replace. Capability-addressed endpoints, continuations and the reply-
+# seal syscall surface are portable policy (core, alongside the scheduler
+# and process-translation machinery they compose with); the AArch64 side of
+# that same surface plus bounded user-memory copy with an explicit fault
+# guard - a syscall that copies from an untrusted, unprivileged-supplied
+# pointer without one is the direct kernel analogue of the cache-attack
+# class this project already refuses to ship AES with - are machine.
+# Reply seals exist so a capability that answered a request cannot be
+# replayed to answer a second one it was never granted for, which is worth
+# stating beside the number: this is the surface most exposed to
+# unprivileged, potentially hostile callers of any code landed so far.
+core_ceiling=2872
+machine_ceiling=2661
 discovery_ceiling=1221
-entry_ceiling=570
-total_ceiling=5639
+entry_ceiling=751
+total_ceiling=7505
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

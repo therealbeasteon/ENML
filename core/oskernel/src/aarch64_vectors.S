@@ -13,7 +13,7 @@ cookie_aarch64_vector_table:
     VECTOR cookie_aarch64_unhandled_vector   // current EL, SP0, IRQ
     VECTOR cookie_aarch64_unhandled_vector   // current EL, SP0, FIQ
     VECTOR cookie_aarch64_unhandled_vector   // current EL, SP0, SError
-    VECTOR cookie_aarch64_unhandled_vector   // current EL, SPx, sync
+    VECTOR cookie_aarch64_sync_current_spx   // current EL, SPx, sync
     VECTOR cookie_aarch64_unhandled_vector   // current EL, SPx, IRQ
     VECTOR cookie_aarch64_unhandled_vector   // current EL, SPx, FIQ
     VECTOR cookie_aarch64_unhandled_vector   // current EL, SPx, SError
@@ -93,6 +93,14 @@ cookie_aarch64_vector_table:
     add sp, sp, #COOKIE_FRAME_SIZE
     eret
 .endm
+
+.type cookie_aarch64_sync_current_spx, %function
+cookie_aarch64_sync_current_spx:
+    COOKIE_SAVE_FRAME
+    mov x0, sp
+    bl cookie_aarch64_current_sync_exception_dispatch
+    COOKIE_RESTORE_FRAME
+.size cookie_aarch64_sync_current_spx, . - cookie_aarch64_sync_current_spx
 
 .type cookie_aarch64_sync_lower_a64, %function
 cookie_aarch64_sync_lower_a64:

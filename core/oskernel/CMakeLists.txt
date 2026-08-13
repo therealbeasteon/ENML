@@ -2,11 +2,15 @@ add_library(oskernel STATIC
     src/abi.cpp
     src/rendezvous.cpp
     src/capability.cpp
+    src/ipc_endpoint.cpp
+    src/ipc_syscall.cpp
+    src/ipc_continuation.cpp
     src/interrupt.cpp
     src/scheduler.cpp
     src/scheduler_deadline.cpp
     src/address_space_epoch.cpp
     src/process_translation.cpp
+    src/user_access.cpp
     src/aarch64_user_frames.cpp
     src/aarch64_preemption.cpp
     src/aarch64_execution_universe.cpp
@@ -43,10 +47,14 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         src/machine_aarch64.cpp
         src/aarch64_translation.cpp
         src/aarch64_asid.cpp
+        src/aarch64_user_copy_guard.cpp
+        src/aarch64_user_access.cpp
+        src/aarch64_ipc_syscall.cpp
         src/aarch64_execution_universe_machine.cpp
         src/aarch64_entry.cpp
         src/aarch64_gic_v3.cpp
         src/aarch64_vectors.S
+        src/aarch64_user_access.S
         src/aarch64_context_switch.S
         src/aarch64_el0.S
     )
@@ -71,13 +79,21 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             boot/aarch64_boot.cpp
             boot/freestanding_memory.cpp
             src/abi.cpp
+            src/rendezvous.cpp
+            src/capability.cpp
+            src/ipc_endpoint.cpp
+            src/ipc_syscall.cpp
+            src/ipc_continuation.cpp
+            src/interrupt.cpp
             src/scheduler.cpp
             src/scheduler_deadline.cpp
             src/address_space_epoch.cpp
             src/process_translation.cpp
+            src/user_access.cpp
             src/aarch64_user_frames.cpp
             src/aarch64_preemption.cpp
             src/aarch64_execution_universe.cpp
+            src/kernel.cpp
             src/fdt.cpp
             src/hardware_inventory.cpp
             src/gic_v3_discovery.cpp
@@ -87,10 +103,14 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/machine_aarch64.cpp
             src/aarch64_translation.cpp
             src/aarch64_asid.cpp
+            src/aarch64_user_copy_guard.cpp
+            src/aarch64_user_access.cpp
+            src/aarch64_ipc_syscall.cpp
             src/aarch64_execution_universe_machine.cpp
             src/aarch64_entry.cpp
             src/aarch64_gic_v3.cpp
             src/aarch64_vectors.S
+            src/aarch64_user_access.S
             src/aarch64_context_switch.S
             src/aarch64_el0.S
         )

@@ -22,6 +22,30 @@ target_compile_options(kernel_capability_test PRIVATE
 add_test(NAME kernel_capability_test COMMAND kernel_capability_test)
 set_tests_properties(kernel_capability_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_ipc_endpoint_test ipc_endpoint_test.cpp)
+target_link_libraries(kernel_ipc_endpoint_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_ipc_endpoint_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_ipc_endpoint_test COMMAND kernel_ipc_endpoint_test)
+set_tests_properties(kernel_ipc_endpoint_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_ipc_composition_test ipc_composition_test.cpp)
+target_link_libraries(kernel_ipc_composition_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_ipc_composition_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_ipc_composition_test COMMAND kernel_ipc_composition_test)
+set_tests_properties(kernel_ipc_composition_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_ipc_continuation_test ipc_continuation_test.cpp)
+target_link_libraries(kernel_ipc_continuation_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_ipc_continuation_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_ipc_continuation_test COMMAND kernel_ipc_continuation_test)
+set_tests_properties(kernel_ipc_continuation_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_interrupt_test interrupt_test.cpp)
 target_link_libraries(kernel_interrupt_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_interrupt_test PRIVATE
@@ -53,6 +77,24 @@ target_compile_options(kernel_process_translation_test PRIVATE
 )
 add_test(NAME kernel_process_translation_test COMMAND kernel_process_translation_test)
 set_tests_properties(kernel_process_translation_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_user_access_test user_access_test.cpp)
+target_link_libraries(kernel_user_access_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_user_access_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_user_access_test COMMAND kernel_user_access_test)
+set_tests_properties(kernel_user_access_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_aarch64_user_copy_guard_test
+    aarch64_user_copy_guard_test.cpp
+    ${PROJECT_SOURCE_DIR}/core/oskernel/src/aarch64_user_copy_guard.cpp)
+target_link_libraries(kernel_aarch64_user_copy_guard_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_user_copy_guard_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_user_copy_guard_test COMMAND kernel_aarch64_user_copy_guard_test)
+set_tests_properties(kernel_aarch64_user_copy_guard_test PROPERTIES LABELS "m7-kernel")
 
 add_executable(kernel_machine_host_test machine_host_test.cpp)
 target_link_libraries(kernel_machine_host_test PRIVATE emnl::oskernel emnl_warnings)

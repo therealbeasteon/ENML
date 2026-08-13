@@ -33,8 +33,6 @@ constexpr os::kernel::ThreadId bystander = 30U;
 } // namespace
 
 int main() {
-    // A full rendezvous, sender first: the sender waits to be collected, the
-    // server takes the message, the sender is then awaiting an answer.
     {
         os::kernel::Rendezvous kernel;
         if (!check(static_cast<bool>(kernel.create_thread(client)) &&
@@ -62,8 +60,10 @@ int main() {
                    "caller could not tell it was answered")) return 1;
     }
 
-    // Receiver first: the server parks, and a later send completes the
-    // rendezvous immediately rather than parking the sender too.
+    // Receiver first: preserve the caller identity across the blocked receive.
+    // A real syscall resumes after the later send and still needs to know which
+    // caller it is authorized to reply to; dropping that identity would force an
+    // unsafe side channel or a second kernel queue.
     {
         os::kernel::Rendezvous kernel;
         (void)kernel.create_thread(client);
@@ -80,11 +80,15 @@ int main() {
                    "sender should have gone straight to awaiting a reply")) return 1;
         if (!check(in_state(kernel, server, os::kernel::ThreadState::ready),
                    "waiting server not woken")) return 1;
+
+        auto delivered = kernel.receive(server);
+        if (!check(delivered && delivered.value() == client,
+                   "woken receive lost delivered caller identity")) return 1;
+        auto partner = kernel.partner_of(server);
+        if (!check(partner && partner.value() == os::kernel::invalid_thread,
+                   "delivered caller identity was not consumed exactly once")) return 1;
     }
 
-    // The authority rule. Reply is bound to a received message, not to a thread
-    // id taken from a register: a thread may only answer a caller that is
-    // awaiting *its* reply.
     {
         os::kernel::Rendezvous kernel;
         (void)kernel.create_thread(client);
@@ -96,36 +100,28 @@ int main() {
         if (!check(in_state(kernel, client, os::kernel::ThreadState::reply_blocked),
                    "setup failed")) return 1;
 
-        // A thread that is not part of the conversation cannot end it.
         if (!check(refused(kernel.reply(bystander, client),
                            os::kernel::rendezvous_errors::not_awaiting_reply),
                    "an unrelated thread answered someone else's caller")) return 1;
         if (!check(in_state(kernel, client, os::kernel::ThreadState::reply_blocked),
                    "refused reply changed the caller's state")) return 1;
 
-        // Nor can a server answer a thread that never called it.
         if (!check(refused(kernel.reply(server, bystander),
                            os::kernel::rendezvous_errors::not_awaiting_reply),
                    "server answered a thread that had not called")) return 1;
 
-        // Answering twice is refused: after the first reply the caller is no
-        // longer awaiting one.
         if (!check(static_cast<bool>(kernel.reply(server, client)), "reply refused")) return 1;
         if (!check(refused(kernel.reply(server, client),
                            os::kernel::rendezvous_errors::not_awaiting_reply),
                    "caller answered twice")) return 1;
     }
 
-    // Exit releases everyone waiting, and tells them it was a death rather than
-    // an answer. A crashing server must not park its clients forever.
     {
         os::kernel::Rendezvous kernel;
         (void)kernel.create_thread(client);
         (void)kernel.create_thread(server);
         (void)kernel.create_thread(bystander);
 
-        // One caller collected and awaiting a reply, one still waiting to be
-        // collected. Both are blocked on the server and both must be freed.
         (void)kernel.send(client, server);
         (void)kernel.receive(server);
         (void)kernel.send(bystander, server);
@@ -140,21 +136,16 @@ int main() {
         if (!check(in_state(kernel, bystander, os::kernel::ThreadState::ready),
                    "sender left blocked on a dead server")) return 1;
 
-        // Told it was a death, not an answer. A caller that cannot tell them
-        // apart will treat the death as a reply.
         for (const auto thread : {client, bystander}) {
             auto wake = kernel.wake_reason_of(thread);
             if (!check(wake && wake.value() == os::kernel::WakeReason::peer_exited,
                        "released thread thought it had been answered")) return 1;
         }
 
-        // The dead thread is gone, and a stale reference resolves to a definite
-        // answer rather than to whoever is created next.
         if (!check(!kernel.state_of(server), "exited thread still resolvable")) return 1;
         if (!check(kernel.live_thread_count() == 2U, "live count wrong after exit")) return 1;
     }
 
-    // Transitions are checked against the current state, never assumed.
     {
         os::kernel::Rendezvous kernel;
         (void)kernel.create_thread(client);
@@ -171,16 +162,12 @@ int main() {
                    "send to an unknown thread accepted")) return 1;
 
         (void)kernel.send(client, server);
-        // Already blocked: it cannot send or receive again.
         if (!check(refused(kernel.send(client, server),
                            os::kernel::rendezvous_errors::not_runnable),
                    "blocked thread sent again")) return 1;
         if (!check(!kernel.receive(client), "blocked thread received")) return 1;
     }
 
-    // Duplicate creation is refused, and so is exceeding the ceiling - the
-    // fixed bound is what lets every structure here be an array with no
-    // allocator underneath it.
     {
         os::kernel::Rendezvous kernel;
         if (!check(static_cast<bool>(kernel.create_thread(client)), "creation failed")) return 1;
@@ -202,9 +189,6 @@ int main() {
                    "creation past the ceiling accepted")) return 1;
     }
 
-    // Priority inheritance. A server runs at the priority of whoever is
-    // waiting for it, so a low-priority thread cannot park a shared server and
-    // stall the high-priority threads that need it.
     {
         os::kernel::Rendezvous kernel;
         constexpr os::kernel::Priority low = 1U;
@@ -219,17 +203,12 @@ int main() {
         if (!check(effective && effective.value() == low,
                    "idle server did not run at its own priority")) return 1;
 
-        // A low-priority client parks the server's work. On its own this does
-        // not raise the server.
         (void)kernel.send(client, server);
         (void)kernel.receive(server);
         effective = kernel.effective_priority_of(server);
         if (!check(effective && effective.value() == low,
                    "low-priority caller raised the server")) return 1;
 
-        // A high-priority thread now needs the same server. Without
-        // inheritance it waits behind work running at low priority, which is
-        // the inversion: it is stalled by a thread it outranks.
         (void)kernel.send(bystander, server);
         effective = kernel.effective_priority_of(server);
         if (!check(effective && effective.value() == high,
@@ -237,9 +216,6 @@ int main() {
         auto base = kernel.base_priority_of(server);
         if (!check(base && base.value() == low, "inheritance overwrote the base priority")) return 1;
 
-        // The donation ends when the waiting ends, and it is recomputed rather
-        // than decremented - a server left permanently high is as much a defect
-        // as one left too low.
         (void)kernel.reply(server, client);
         auto collected = kernel.receive(server);
         if (!check(static_cast<bool>(collected) && collected.value() == bystander,
@@ -253,8 +229,6 @@ int main() {
         if (!check(effective && effective.value() == low,
                    "server stayed elevated after its callers were answered")) return 1;
 
-        // A caller that dies while waiting stops donating, or a crashed
-        // high-priority client would pin a server forever.
         (void)kernel.send(bystander, server);
         effective = kernel.effective_priority_of(server);
         if (!check(effective && effective.value() == high, "donation not applied")) return 1;
