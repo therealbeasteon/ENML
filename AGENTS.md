@@ -1,10 +1,16 @@
-# ENML OS — Codex Working Instructions
+# Cookie OS — Working Instructions
 
-This repository is an incremental implementation of ENML OS. Continue the existing architecture; do not redesign it into Android, a conventional desktop Linux distribution, a monolithic daemon, or a from-scratch kernel.
+This repository is an incremental implementation of Cookie OS. Continue the existing architecture; do not redesign it into Android, a conventional desktop Linux distribution, or a monolithic daemon.
+
+The operating system is **Cookie**, its microkernel is the **Cookie Kernel**, and the security architecture both carry is **EMNL**. These are three names, not one; `docs/NAMING.md` defines them and `README.md` repeats the table. Source identifiers (`os::` namespaces, `emnl_*` targets) are deliberately not renamed yet.
 
 ## Product direction
 
-ENML aims for appliance-like phone behavior, small trusted components, strong process isolation, bounded IPC, stable public APIs, low idle work, fast boot/resume, and a modern phone UX. Linux is the private hardware/process kernel. ENML services, OSIDL, security identities, package/storage/UI/telephony APIs are the public OS personality.
+Cookie aims for appliance-like phone behavior, small trusted components, strong process isolation, bounded IPC, stable public APIs, low idle work, fast boot/resume, and a modern phone UX. Cookie services, OSIDL, security identities, and package/storage/UI/telephony APIs are the public OS personality.
+
+**Substrate status.** Linux is still the private hardware/process kernel underneath the service layer, but it is no longer the destination. M7.0 reversed that decision: Cookie is acquiring its own microkernel and Linux becomes, at most, a development host. Read `docs/M7_0_KERNEL.md` for the decision and `docs/SUBSTRATE.md` for the position it reverses before touching anything substrate-shaped. A from-scratch kernel is now in scope — but only the four responsibilities M7.0 names, and only while it stays small enough to review completely.
+
+`docs/ROADMAP.md` is the plan of record for phase order and exit criteria.
 
 ## Hard architectural constraints
 
@@ -64,6 +70,11 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - M2.8: supervised host/CI `system.keys`, trusted private state/control capabilities, application lifecycle key policy, hierarchy-backed persistent key generation/rotation, generation-aware App Manager policy replay, uninstall revocation without implicit key destruction, stale-capability restart semantics, compact live-endpoint polling, and GCC/Clang/ASan/native-AArch64 product gates.
 - M2.9: shared pidfd-backed boot-scoped `ProcessAuthority`, bounded trusted multi-service `ServiceBroker`, application bootstrap v2 typed service-handle transfer, and one `PeerIdentity` across Storage + Keys.
 - M2.10: long-lived private `PlatformServiceSession`, exact runtime credential validation, bootstrap ServiceId allow-listing, explicit fresh endpoint reacquisition after Storage/Key restart, unchanged boot-scoped identity, stale old capabilities, bounded App Manager servicing, and end-to-end restart/recovery gates.
+- M3.0-M3.2: compositor/surface ownership and trusted scene ordering, typed shared buffers and supervised `system.compositor`, and the bounded semantic UI/accessibility/collections/text/input/raster foundation. M3.2 does not claim a final Unicode/font backend, GPU renderer, trust mark or translucent material implementation.
+- M4.0-M4.10h: trusted phone shell foundation, resource budget gates, fail-closed `Result` discipline, ancillary descriptor hygiene, fuzzing depth, obscured-input and consent-prompt handling, text contrast, coercion-resistant unlock, durable duress profile-root erasure, and the authenticated profile storage format.
+- M5.0-M5.6: verified boot state, attestation, sealing, transparency, platform capabilities, CTest diagnostics, fuzz leak detection and `KRG1` fuzzing. M5 designs and tests the boot evidence; no platform produces it yet.
+- M6.0-M6.3: device access policy with confinement that refuses to claim what a platform cannot enforce, time/micro-architectural partition accounting, and the substrate probe. M6 policy is complete; no platform enforces it yet.
+- M7.0-M7.5c: the Cookie Kernel decision and ABI, capability model, scheduler, interrupt dispatch, kernel composition, de-Linux boundary, machine layer, kernel hardening, anonymous attestation, machine-wide W^X ledger, real AArch64 exception entry and stage-1 translation.
 
 Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_PRIVATE_STORAGE.md`, `docs/M2_1_STORAGE_SERVICE.md`, `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`, `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`, `docs/M2_6_KEY_PERSISTENCE.md`, `docs/M2_7_KEY_HIERARCHY.md`, `docs/M2_8_KEY_SERVICE_PRODUCT_INTEGRATION.md`, `docs/M2_9_SERVICE_BROKER.md`, and `docs/M2_10_RUNTIME_SERVICE_SESSION.md` before changing those substrates.
 
@@ -127,24 +138,22 @@ Read `docs/REFERENCE_NOTES_2026_08_08.md` and the milestone-specific design note
 
 For kernel/BSP work, preserve an upstream-first Linux strategy and small reviewable patches. For C++ core code, prefer type-rich lightweight abstractions, RAII, deterministic ownership and moves. For encryption design, borrow key-hierarchy/boot-integrity principles from historical full-disk-encryption systems without copying their obsolete algorithm choices. For service architecture, preserve centralized trusted policy and explicit process/service boundaries rather than exposing cryptographic implementation choices to apps. Symbian Publish-and-Subscribe/system-server material may guide explicit system-state observation and resource ownership, but ENML keeps its own typed bounded IPC and capability model.
 
-## Current next track: display/compositor/UI foundation
+## Current next track: land the backlog, then finish the Cookie Kernel
 
-M0, M1, and the M2 storage/key/multi-service runtime substrate are complete. Do not keep broadening `ServiceBroker` merely because another global service could be added to it.
+M0 through M3 are complete. M4, M5 and M6 have merged foundations. The Cookie Kernel exists through M7.5c. Do not keep broadening `ServiceBroker` merely because another global service could be added to it.
 
-Required direction for the next product track:
+The immediate obstacle is not design, it is integration. A large body of finished work sits in stacked draft PRs whose stack bases fail on small mechanical defects — a missing enum member, a build target absent from a workflow's target list, a base branch behind `main`. `docs/ROADMAP.md` Phase 0 enumerates them.
 
-1. Introduce the minimal compositor/display service foundation with explicit surface ownership and no application direct access to display devices.
-2. Keep compositor, shell/system UI, input routing and application rendering as distinct trust responsibilities where appropriate.
-3. Define bounded typed scene/surface primitives and frame submission rather than exposing DRM/KMS/fbdev or Linux device nodes as public app ABI.
-4. Preserve frame-deadline awareness, bounded buffering and low idle wakeups from the beginning; phone UX and power efficiency are architectural requirements.
-5. Carry trusted application identity into surface ownership and secure-UI decisions without allowing apps to self-claim surface roles.
-6. Begin semantic accessibility metadata at the UI API boundary instead of retrofitting it after visual rendering is frozen.
-7. Use the supplied BlackBerry/One UI/UX references for workflow, reachability, responsive layout, accessibility and predictable standard components, while deliberately avoiding vendor visual-identity copying.
-8. Keep secure lock/permission/system surfaces visually and technically attributable to trusted system principals.
-9. Continue GCC/Clang/sanitizer/native-AArch64 validation and add deterministic compositor protocol/ownership tests before hardware-specific display work.
-10. Keep hardware/BSP display integration behind the private Linux/driver layer and follow upstream-first kernel/driver practice.
+Required direction, in order:
 
-Production TPM/TEE/HSM key providers, verified boot/attestation, hardware monotonic rollback state, telephony/baseband integration and recovery remain separate later tracks; do not fake them in the compositor milestone.
+1. Land the open stacks bottom-up. Never merge a stacked PR out of order to save time; a rebase that skips a link silently rewrites the link beneath it.
+2. Rebase each stack base onto current `main` before pushing the next link.
+3. Finish the AArch64 kernel line: standalone boot image, descriptor teardown and TLBI, first EL0 process and syscall return, GICv3 timer delivery, tickless preemptive scheduling, address-space epochs with ASID quarantine, capability-addressed native IPC with reply seals.
+4. Add the user-space driver framework — interrupt handlers inside driver processes connected to a vector by a kernel call, under M6.0 device access policy. "No drivers in the kernel" is only true once this exists.
+5. Add a kernel line-count gate. `docs/M7_0_KERNEL.md` rests the entire decision on the kernel staying small enough to review; a ceiling nobody enforces is a wish.
+6. Only then move the service layer off `SOCK_SEQPACKET` onto native capability-addressed IPC, and re-establish every existing gate against the new substrate. A gate that only ever ran on Linux proves nothing about Cookie.
+
+Production TPM/TEE/HSM key providers, hardware monotonic rollback state, IOMMU enforcement, verified boot evidence, telephony/baseband integration and recovery remain separate later tracks; do not fake them in a kernel milestone. `docs/ROADMAP.md` Phases 4-6 own them.
 
 ## Build and test
 

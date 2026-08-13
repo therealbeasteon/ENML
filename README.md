@@ -1,35 +1,92 @@
-# ENML OS
+# Cookie OS
 
-ENML OS is an incremental phone-OS project focused on a compact trusted computing base, explicit subsystem ownership, security by default, low resource consumption, fast response/startup, minimal unnecessary background activity, power efficiency, hardware portability and an original accessible mobile UX.
+Cookie is a phone operating system built for a compact trusted computing base,
+explicit subsystem ownership, security and privacy by default, low resource
+consumption, fast startup and resume, minimal background activity, power
+efficiency, hardware portability and an original accessible mobile UX.
 
-The project takes historical and contemporary OS/security/UI references as engineering guidance rather than as implementations or visual templates to copy. In particular, “Symbian-like” means compactness, modular ownership and event-driven resource discipline — not Symbian ABI compatibility or a recreation of its UI.
+The project has three names and they are not interchangeable:
 
-## Current milestone
+| Name | What it is |
+| --- | --- |
+| **Cookie** | The operating system. The product. |
+| **Cookie Kernel** | The microkernel Cookie runs on. |
+| **EMNL** | The security architecture — the boundaries, policies and invariants Cookie enforces. |
 
-Completed foundations include:
+See `docs/NAMING.md` for why the distinction is maintained, and why the
+repository is still called ENML. Source identifiers (`os::` namespaces, `emnl_*`
+CMake targets) have deliberately not been renamed; that is a change to be made
+on its own, verified on its own.
 
-- M0: bounded core/IPC/OSIDL, supervised services, trusted runtime identity, Linux sandboxing and native AArch64 validation;
-- M1: package/application foundation and lifecycle ownership;
-- M2: key/private-storage/service-broker foundations;
-- M3.0: compositor/surface ownership and trusted scene ordering;
-- M3.1: typed shared buffers and supervised `system.compositor` service.
+Historical and contemporary OS/security/UI references are engineering guidance,
+never implementations or visual templates to copy. "Symbian-like" means
+compactness, modular ownership and event-driven resource discipline — not
+Symbian ABI compatibility or a recreation of its UI. `docs/PROJECT_VISION.md`
+holds the full reference policy.
 
-M3.2 is active on `m3-2-semantic-ui-foundation` / PR #26. It is building the bounded semantic UI, accessibility, collections, text, input and concrete renderer foundation above the compositor substrate. See `docs/M3_STATUS.md` and `docs/M3_2_EXIT_CRITERIA.md` for the exact implemented/current/remaining state.
+## Where the project is
 
-The M3.2 branch already has real CPU-side ENML material/text pixels, not just UI mockups, but it deliberately does **not** claim a final production Unicode/font backend, final GPU renderer, final trust mark or final translucent material implementation yet.
+| Layer | State |
+| --- | --- |
+| Build, IPC, OSIDL, supervisor, sandbox (M0) | Complete, frozen gate |
+| Package and application lifecycle (M1) | Complete |
+| Storage, keys, service broker, runtime session (M2) | Complete |
+| Display, compositor, semantic UI and accessibility (M3) | Complete |
+| Trusted phone shell and product security (M4) | Foundation merged, remainder in flight |
+| Verified boot evidence (M5) | Designed and tested; no platform produces the evidence yet |
+| Device access policy, time protection (M6) | Policy complete; no platform enforces it yet |
+| Cookie Kernel (M7) | ABI, host-testable core and AArch64 stage-1 translation merged |
+
+`docs/ROADMAP.md` is the plan of record from here to a shippable device.
+
+Three statements that belong with any claim about Cookie:
+
+1. **Nothing has run on physical hardware.** Every property is established on
+   host or emulated builds.
+2. **The kernel is not yet the substrate.** Linux is still underneath the service
+   layer; M7 has built the Cookie Kernel beside the system, not under it.
+3. **The security architecture is further along than the system it secures.**
+   EMNL's identities, capabilities, wire formats and policies are mature. The
+   hardware mechanisms that make them enforceable are not built.
+
+## The kernel decision
+
+Cookie is acquiring its own microkernel. Linux stops being the substrate and
+becomes, at most, a development host. `docs/M7_0_KERNEL.md` records the decision
+and `docs/SUBSTRATE.md` records the position it reverses.
+
+The security case does not rest on being different from Linux — a new kernel
+begins with its own undiscovered defects. It rests on being **small enough to
+review completely**, and it is only redeemed if the kernel stays small. QNX
+shipped an entire operating system in 15,930 lines on a 605-line kernel; that is
+the class of artefact being aimed at. If Cookie Kernel reaches Linux's size, the
+exercise has failed regardless of what else it achieved.
+
+Four responsibilities go in the kernel: address spaces and threads, synchronous
+message passing, interrupt dispatch, and scheduling. No filesystem, no drivers,
+no network stack, no POSIX, no paging to storage.
 
 ## Architectural rules
 
-ENML development is expected to preserve these invariants:
+Development preserves these invariants. `AGENTS.md` holds the complete and
+authoritative list.
 
-- applications receive semantic/bounded APIs rather than raw privileged Linux device interfaces;
-- identity/ownership is re-authorized at subsystem boundaries rather than accepted from application payloads;
-- capacities, queues, shared-memory budgets and work scheduling are explicit and bounded;
-- stale generations/revisions/frames fail closed rather than aliasing replacement state;
-- UI meaning/accessibility comes from semantics, not framebuffer scraping;
-- motion/input/accessibility/collection work is event-driven and should become quiet when there is no useful work;
-- renderer implementation details such as font files, glyph IDs, RGB mappings, GPU handles and compositor internals remain platform-private;
-- richer optical effects must degrade without changing ENML's semantic hierarchy or original visual identity.
+- Applications receive semantic, bounded APIs rather than raw privileged device
+  interfaces.
+- Identity and ownership are re-authorized at subsystem boundaries, never
+  accepted from application payloads.
+- Capacities, queues, shared-memory budgets and work scheduling are explicit and
+  bounded.
+- Stale generations, revisions and frames fail closed rather than aliasing
+  replacement state.
+- UI meaning and accessibility come from semantics, not framebuffer scraping.
+- Work is event-driven and becomes quiet when there is nothing useful to do.
+- Renderer internals — font files, glyph IDs, RGB mappings, GPU handles,
+  compositor state — remain platform-private.
+- Richer optical effects degrade without changing Cookie's semantic hierarchy or
+  visual identity.
+- Secret bytes are never compared with `==`, `memcmp` or `std::equal`; use
+  `os::core::constant_time_equal` and wipe with `os::core::secure_zero`.
 
 ## Build and test
 
@@ -37,7 +94,13 @@ Host debug build:
 
 ```sh
 cmake --preset host-debug
+```
+
+```sh
 cmake --build --preset host-debug
+```
+
+```sh
 ctest --preset host-debug
 ```
 
@@ -45,51 +108,81 @@ Sanitizers:
 
 ```sh
 cmake --preset host-asan
+```
+
+```sh
 cmake --build --preset host-asan
+```
+
+```sh
 ctest --preset host-asan
 ```
 
-Focused M3 UI tests:
+Focused milestone gates, by CTest label:
 
 ```sh
 ctest --preset host-debug --output-on-failure -L '^m3-ui$'
 ```
 
-Focused M3 display/compositor tests:
-
 ```sh
-ctest --preset host-debug --output-on-failure -L '^m3-display$'
+ctest --preset host-debug --output-on-failure -L '^m7-kernel$'
 ```
 
-CI also exercises Clang and native AArch64 gates; the current PR head is not considered validated merely because an older branch head was green.
+Twelve CI workflows cover GCC, Clang, sanitizers, cross-compiled and native
+AArch64, resource budgets and nightly fuzzing. A PR head is not considered
+validated because an older branch head was green.
 
 ## Repository map
 
-- `core/oscore` — stable core identities/results/errors and bounded primitives
-- `core/osipc` — local IPC transport/RPC foundations
-- `core/osdisplay` — surfaces, buffers, compositor authority, trusted presentation/input seams
-- `core/osui` — semantic UI, accessibility, layout, collections, design tokens, text/input/motion and CPU raster foundations
-- `interfaces` — OSIDL definitions/generation examples and service interfaces
+- `core/oscore` — stable identities, results, errors, bounded primitives, constant-time and secure-zero helpers
+- `core/oskernel` — Cookie Kernel: ABI, capabilities, scheduler, interrupt and machine layers
+- `core/osipc` — local IPC transport and RPC foundations
+- `core/osboot` — boot state, attestation, sealing, transparency, profile protectors
+- `core/oskeys` — key service, hierarchy, providers, persistence
+- `core/osstorage` — descriptor-rooted private storage
+- `core/ospkg` — package identity, manifests, staging and activation
+- `core/ossandbox` — process confinement
+- `core/osservice` — service lifecycle primitives
+- `core/osdevice` — device access policy
+- `core/ostime` — time and partition accounting
+- `core/osdisplay` — surfaces, buffers, compositor authority, trusted presentation and input seams
+- `core/osui` — semantic UI, accessibility, layout, collections, design tokens, text, input, motion, CPU raster
+- `core/osaccessibility`, `core/oscollection` — accessibility and collection transports
+- `core/osapp`, `core/osshell` — application and trusted shell surfaces
+- `interfaces` — OSIDL definitions and service interfaces
 - `system/services` — supervised system-service implementations
-- `system/supervisor` — service lifecycle/bootstrap/runtime identity authority
-- `system/app_manager` — application lifecycle/sandbox ownership
-- `tests` — unit, integration, adversarial and architecture-specific validation
-- `docs` — milestone contracts, threat/architecture notes, project vision and reference-use rules
+- `system/supervisor` — service lifecycle, bootstrap and runtime identity authority
+- `system/app_manager` — application lifecycle and sandbox ownership
+- `tests` — unit, integration, adversarial, budget and architecture-specific validation
+- `fuzz` — fuzz targets for wire formats and parsers
+- `tools` — OSIDL compiler and build tooling
+- `docs` — milestone contracts, threat and architecture notes, project vision, naming, roadmap
 
 ## OSIDL
 
-The repository includes a deliberately small build-time OSIDL compiler. The current encoding remains pre-freeze; new public interfaces should be frozen only after their in-process security/ownership semantics have stabilized.
+The repository includes a deliberately small build-time OSIDL compiler. The
+encoding remains pre-freeze; new public interfaces should be frozen only after
+their in-process security and ownership semantics have stabilized.
 
 Example generation after a host build:
 
 ```sh
-./build/host-debug/tools/osidlc/osidlc \
-  --input interfaces/echo/echo.osidl \
-  --out-dir /tmp/enml-echo-generated
+./build/host-debug/tools/osidlc/osidlc --input interfaces/echo/echo.osidl --out-dir /tmp/cookie-echo-generated
 ```
 
 ## Project direction
 
-The canonical product charter is `docs/PROJECT_VISION.md`. The reference-use guardrails live in `docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md` and `docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md`.
+The canonical product charter is `docs/PROJECT_VISION.md`. The plan of record is
+`docs/ROADMAP.md`. Reference-use guardrails live in
+`docs/REFERENCE_PROJECT_FOUNDATIONS_2026_08_09.md` and
+`docs/REFERENCE_UI_DESIGN_GUIDANCE_2026_08_09.md`.
 
-The intended UI character is original ENML: classic/crafted/luxurious, colorful, dimensional and curve-authored, with controlled translucency and meaningful motion. It must stay legible, responsive and recognizably ENML when accessibility, capability, thermal/power or frame-budget constraints reduce premium effects.
+The intended UI character is original to Cookie: classic, crafted and luxurious,
+colorful, dimensional and curve-authored, with controlled translucency and
+meaningful motion. It must stay legible, responsive and recognizably Cookie when
+accessibility, capability, thermal, power or frame-budget constraints reduce
+premium effects.
+
+## License
+
+See `LICENSE`.
