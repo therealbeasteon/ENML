@@ -2,6 +2,11 @@ add_library(osstorage STATIC
     src/path.cpp
     src/private_storage_linux.cpp
     src/protected_format.cpp
+    src/protected_crypto.cpp
+    src/protected_key_record.cpp
+    src/protected_atomic_replace.cpp
+    src/protected_namespace.cpp
+    src/protected_namespace_snapshot.cpp
 )
 
 add_library(emnl::osstorage ALIAS osstorage)
