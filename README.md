@@ -32,7 +32,7 @@ holds the full reference policy.
 | Package and application lifecycle (M1) | Complete |
 | Storage, keys, service broker, runtime session (M2) | Complete |
 | Display, compositor, semantic UI and accessibility (M3) | Complete |
-| Trusted phone shell and product security (M4) | Through M4.15 merged — profile encryption, recovery domains, network blindness, connection admission. Not every M4 exit criterion is verified |
+| Trusted phone shell and product security (M4) | Through M4.15 merged — profile encryption, recovery domains, network blindness, connection admission. Every milestone is in; **none of the three M4 exit criteria is met yet** |
 | Verified boot evidence (M5) | Designed and tested; no platform produces the evidence yet |
 | Device access policy, time protection (M6) | Policy complete; no platform enforces it yet |
 | Cookie Kernel (M7) | Through M7.5d merged — boots on AArch64 under QEMU virt: exception vectors, device tree, hardware discovery, page tables, stage-1 translation, guarded runtime stack |
@@ -52,13 +52,23 @@ workflow will not notice its absence.
 
 Three statements that belong with any claim about Cookie:
 
+All three are still true after the kernel started booting, and the boot changes
+what each of them has to be read against:
+
 1. **Nothing has run on physical hardware.** Every property is established on
-   host or emulated builds.
+   host or emulated builds. The AArch64 boot is QEMU virt — an emulated machine,
+   on a CI runner, with no board, no peripherals and no power path.
 2. **The kernel is not yet the substrate.** Linux is still underneath the service
-   layer; M7 has built the Cookie Kernel beside the system, not under it.
+   layer; M7 has built the Cookie Kernel beside the system, not under it. The
+   services still talk over `SOCK_SEQPACKET`, and what the kernel boots into
+   today is a guarded kernel stack that parks — no EL0 process has ever run on
+   it.
 3. **The security architecture is further along than the system it secures.**
    EMNL's identities, capabilities, wire formats and policies are mature. The
-   hardware mechanisms that make them enforceable are not built.
+   hardware mechanisms that make them enforceable are not built. Two current
+   examples: the encrypted-Storage engine is complete behind a service seam that
+   nothing calls yet, and the network blindness policy governs a network stack
+   that does not exist.
 
 ## The kernel decision
 
@@ -139,8 +149,12 @@ ctest --preset host-debug --output-on-failure -L '^m3-ui$'
 ctest --preset host-debug --output-on-failure -L '^m7-kernel$'
 ```
 
-Twelve CI workflows cover GCC, Clang, sanitizers, cross-compiled and native
-AArch64, resource budgets and nightly fuzzing. A PR head is not considered
+Thirteen CI workflows cover GCC, Clang, sanitizers, cross-compiled and native
+AArch64, and resource budgets. Twelve run on every push and pull request; the
+thirteenth is nightly fuzzing on a schedule, which is why a green pull request
+is not evidence the corpus is clean. The native AArch64 kernel job also boots
+the standalone image under QEMU virt and fails unless the serial log carries
+both `COOKIE:M7.5d:MMU` and `COOKIE:M7.5d:GUARDED`. A PR head is not considered
 validated because an older branch head was green.
 
 ## Repository map
@@ -150,7 +164,8 @@ validated because an older branch head was green.
 - `core/osipc` — local IPC transport and RPC foundations
 - `core/osboot` — boot state, attestation, sealing, transparency, profile protectors
 - `core/oskeys` — key service, hierarchy, providers, persistence
-- `core/osstorage` — descriptor-rooted private storage
+- `core/osstorage` — descriptor-rooted private storage, protected namespaces and encrypted publication
+- `core/osnetwork` — network blindness plans, tunnel authority, packet and link admission policy
 - `core/ospkg` — package identity, manifests, staging and activation
 - `core/ossandbox` — process confinement
 - `core/osservice` — service lifecycle primitives
