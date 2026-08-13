@@ -19,6 +19,7 @@
 #include <cassert>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstdlib>
 #include <span>
 #include <string_view>
@@ -225,6 +226,13 @@ int main() {
     assert(!exists_at(root_path, "docs/note.txt"));
     assert(!exists_at(root_path, "docs/note2.txt"));
     assert(exists_at(root_path, "docs"));
+
+    char docs_native[512]{};
+    const int docs_length = std::snprintf(
+        docs_native, sizeof(docs_native), "%s/docs", root_path);
+    assert(docs_length > 0 && static_cast<std::size_t>(docs_length) < sizeof(docs_native));
+    assert(::rmdir(docs_native) == 0);
+    assert(::rmdir(root_path) == 0);
 
     return 0;
 }
