@@ -178,7 +178,7 @@ void install_first_user_program(std::uint64_t physical_page) noexcept {
         uart_write("COOKIE:PANIC:EL0_CONTEXT\n");
         halt();
     }
-    cookie_aarch64_enter_el0(user_code_virtual, user_stack_top);
+    os::kernel::cookie_aarch64_enter_el0(user_code_virtual, user_stack_top);
 }
 
 } // namespace

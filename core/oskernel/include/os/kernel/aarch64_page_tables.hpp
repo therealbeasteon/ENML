@@ -40,6 +40,10 @@ private:
     std::uint64_t end_ {0ULL};
 };
 
+// Page-only stage-1 table builder used before the general VM subsystem exists.
+// Intermediate table pages are monotonic in the early regime: leaf mappings can
+// be removed, but empty L2/L3 table pages are not reclaimed until the general
+// physical allocator owns page-table lifetime.
 class EarlyStage1Builder final {
 public:
     explicit EarlyStage1Builder(EarlyPageArena& arena) noexcept : arena_(&arena) {}
@@ -86,6 +90,10 @@ public:
         return ((*leaf.value()) & descriptor::valid) != 0ULL;
     }
 
+    // Clears exactly one level-3 page descriptor. This deliberately performs no
+    // TLBI: architectural invalidation belongs to the machine layer, which must
+    // order descriptor writes and TLB invalidation with DSB/ISB. Separating the
+    // table mutation from CPU invalidation makes that ordering explicit.
     [[nodiscard]] os::core::Result<void> unmap_page(std::uint64_t virtual_address) noexcept {
         auto leaf = leaf_pointer(virtual_address);
         if (!leaf) return leaf.error();

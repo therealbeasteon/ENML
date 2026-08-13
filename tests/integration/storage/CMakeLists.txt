@@ -26,6 +26,11 @@ add_emnl_storage_integration_test(
     storage_service_quota_test.cpp
 )
 
+add_emnl_storage_integration_test(
+    storage_service_protected_replace_test
+    storage_service_protected_replace_test.cpp
+)
+
 add_executable(storage_app_manager_restart_test storage_app_manager_restart_test.cpp)
 target_link_libraries(storage_app_manager_restart_test PRIVATE
     emnl::app_manager

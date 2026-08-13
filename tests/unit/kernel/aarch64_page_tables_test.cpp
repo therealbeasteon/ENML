@@ -48,6 +48,8 @@ int main() {
     require(static_cast<bool>(after_remove));
     require(!after_remove.value());
 
+    // Intermediate translation tables remain allocated in the monotonic early
+    // regime; removing a leaf never fabricates reusable physical memory.
     const auto table_pages_after_remove = builder.remaining_table_pages();
     auto remove_again = builder.unmap_page(va);
     require(!remove_again);
