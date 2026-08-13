@@ -30,10 +30,23 @@ struct KernelMappingManifestEntry final {
     KernelMappingRole role {KernelMappingRole::ordinary};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return virtual_base != 0ULL && physical_base != 0ULL && length != 0ULL &&
-               (role != KernelMappingRole::guarded_stack ||
-                (kind == MachineMemoryKind::normal &&
-                 permissions == MachinePermissions::read_write));
+        if (virtual_base == 0ULL || physical_base == 0ULL || length == 0ULL) return false;
+        if (!page_aligned(virtual_base) || !page_aligned(physical_base) || !page_aligned(length)) {
+            return false;
+        }
+        if (length > UINT64_MAX - virtual_base || length > UINT64_MAX - physical_base) {
+            return false;
+        }
+        // Device mappings are never executable. Keep this at the reviewed
+        // manifest boundary instead of relying on a deeper page-table failure.
+        if (kind == MachineMemoryKind::device && permissions == MachinePermissions::read_execute) {
+            return false;
+        }
+        if (role == KernelMappingRole::guarded_stack &&
+            (kind != MachineMemoryKind::normal || permissions != MachinePermissions::read_write)) {
+            return false;
+        }
+        return true;
     }
 };
 
@@ -81,8 +94,7 @@ project_kernel_manifest_to_upper(
     KernelMappingManifest projected{};
     for (std::size_t i = 0U; i < source.size(); ++i) {
         const auto& entry = source[i];
-        if (!page_aligned(entry.physical_base) ||
-            !page_aligned(entry.length) ||
+        if (!entry.valid() ||
             entry.physical_base >= user_virtual_limit ||
             entry.length > user_virtual_limit - entry.physical_base) {
             return os::core::make_error(
@@ -113,6 +125,11 @@ project_kernel_manifest_to_upper(
     MachineAddressSpace& target) noexcept {
     for (std::size_t i = 0U; i < manifest.size(); ++i) {
         const auto& entry = manifest[i];
+        if (!entry.valid()) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                kernel_mapping_manifest_errors::invalid);
+        }
         os::core::Result<void> result =
             entry.role == KernelMappingRole::guarded_stack
                 ? machine_map_kernel_stack(
