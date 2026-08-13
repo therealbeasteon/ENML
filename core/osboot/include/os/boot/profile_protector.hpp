@@ -74,7 +74,9 @@ inline constexpr std::uint32_t buffer_too_small = 9U;
 } // namespace profile_protector_errors
 
 [[nodiscard]] constexpr os::core::Error profile_protector_error(std::uint32_t code) noexcept {
-    return os::core::make_error(os::core::ErrorDomain::boot, 0x580U + code);
+    // Same domain and rationale as profile_unlock_error; 0x580 keeps the two
+    // modules' codes distinct from each other.
+    return os::core::make_error(os::core::ErrorDomain::security, 0x580U + code);
 }
 
 [[nodiscard]] bool valid_profile_protector_header(
