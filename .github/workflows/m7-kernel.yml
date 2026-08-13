@@ -102,6 +102,16 @@ jobs:
           # console is discovered cannot print a stage, so for those the trace
           # PC is the only evidence there is - and an address is only evidence
           # once something maps it back to a function.
+          # Every executed block, not only those inside the image. Filtering to
+          # 0x40xxxxxx hides the one thing most worth seeing: execution that
+          # left the kernel entirely. A fault taken before VBAR_EL1 is set goes
+          # to whatever the reset value points at, and on this board that is
+          # not an address the image occupies.
+          echo '--- blocks executed OUTSIDE the kernel image ---'
+          grep -oE '^0x[0-9a-f]+' cookie-qemu-debug.log | sort -u \
+            | grep -vE '^0x40[0-9a-f]{6}$' || echo 'none - execution stayed in the image'
+          echo '--- last 30 blocks in execution order ---'
+          grep -oE '^0x[0-9a-f]+' cookie-qemu-debug.log | tail -30 | uniq -c
           echo '--- executed blocks, resolved ---'
           elf=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot
           for pc in $(grep -oE '^0x40[0-9a-f]{6}' cookie-qemu-debug.log | sort -u); do
