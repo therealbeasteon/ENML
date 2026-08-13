@@ -302,7 +302,7 @@ no branch, no document; M7.10 is built and enforced by this change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 7,676 lines, a ratchet rather than the 605-line
+  ceiling is the measured 7,896 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -331,11 +331,11 @@ cannot be laundered between them:
 
 | Category | Lines |
 | --- | --- |
-| core — privileged portable runtime | 2,872 |
-| machine — the AArch64 port | 2,757 |
-| discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,221 |
-| entry — reset vector, freestanding memory | 826 |
-| **total** | **7,676** |
+| core — privileged portable runtime | 3,052 |
+| machine — the AArch64 port | 2,772 |
+| discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,234 |
+| entry — reset vector, freestanding memory | 838 |
+| **total** | **7,896** |
 
 `core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -413,7 +413,19 @@ written against: `Stage1Region` (lower/upper) on the page-table builder, so a
 kernel-region root can refuse `map_user_page()` the way its own error code
 already implied; and named per-stage failure diagnostics replacing bare
 `halt()` at roughly forty boot stop points, so a failure reads as which stage
-rejected the machine rather than as an opaque QEMU timeout. None of it is discretionary — see
+rejected the machine rather than as an opaque QEMU timeout. A tenth raise, by
+M7.8, closes the gap M7.6a's own IPC surface opened: core 3,052, machine
+2,772, discovery 1,234, entry 838, total 7,676 → 7,896. A capability minted
+for a numeric `ThreadId` was holder-checked by that same bare number, so a
+recycled thread ID — the ordinary result of a process exiting and a new one
+being admitted — could let the new process silently inherit whatever the old
+one could still reach. `execution_authority.hpp` binds a capability's holder
+to `ExecutionAuthority` — thread plus address-space epoch identity, not
+thread alone — so a recycled ASID with a fresh generation is a different
+holder even at the same `ThreadId`. The migration is deliberately
+fail-closed: bound capabilities are unusable through the legacy
+`ThreadId`-only IPC path rather than silently losing their generation
+binding, until M7.8.2 adds the explicit `ExecutionAuthority` IPC path. None of it is discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 

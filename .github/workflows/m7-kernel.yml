@@ -28,7 +28,7 @@ jobs:
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
-          kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-gcc' --preset host-debug
@@ -56,8 +56,7 @@ jobs:
           kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
-          kernel_arch_timer_discovery_test kernel_boot_memory_test
-          kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
+          kernel_arch_timer_discovery_test kernel_boot_memory_test kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates with sanitizers
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-sanitizers' --preset host-asan
@@ -82,7 +81,7 @@ jobs:
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
-          kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-clang' --test-dir build/m5-kernel-clang
@@ -113,17 +112,44 @@ jobs:
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
-          kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test
           oskernel_machine_aarch64 cookie_kernel_aarch64_boot --parallel 2
       - name: Test kernel gates natively
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --test-dir build/m7-arm64-native
-      - name: Boot Cookie Kernel and prove isolated EL0 native IPC under QEMU virt GICv3
+      - name: Inspect freestanding image layout
+        run: |
+          set -euo pipefail
+          elf=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot
+          image=${elf}.bin
+          test -s "$elf"
+          test -s "$image"
+          entry=$(readelf -h "$elf" | awk '/Entry point address:/ {print $4}')
+          boot_main=$(nm -n "$elf" | awk '$3 == "cookie_aarch64_boot_main" {print "0x"$1}')
+          test -n "$entry"
+          test -n "$boot_main"
+          readelf -h "$elf"
+          readelf -l "$elf"
+          readelf -S "$elf"
+          readelf -r "$elf"
+          nm -n "$elf" | grep -E '(_start|cookie_aarch64_boot_main|__cookie_image_start|__cookie_image_end|__bss_start|__bss_end|__cookie_bootstrap_stack_top)$'
+          echo '--- _start ---'
+          objdump -d --start-address="$entry" --stop-address=$((entry + 0x120)) "$elf" || true
+          echo '--- cookie_aarch64_boot_main prologue ---'
+          objdump -d --start-address="$boot_main" --stop-address=$((boot_main + 0x100)) "$elf" || true
+          echo '--- reject accidental FP/SIMD before kernel context support exists ---'
+          if objdump -d "$elf" | grep -Eq '\b(q[0-9]+|v[0-9]+\.)\b'; then
+            echo 'freestanding Cookie kernel unexpectedly contains FP/SIMD register use' >&2
+            objdump -d "$elf" | grep -E '\b(q[0-9]+|v[0-9]+\.)\b' | head -n 40 >&2 || true
+            exit 1
+          fi
+          stat -c 'raw-image-bytes=%s' "$image"
+      - name: Boot Cookie Kernel as bare-metal ELF and prove isolated EL0 native IPC under QEMU virt GICv3
         shell: bash
         run: |
           set -euo pipefail
-          image=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot.bin
-          test -s "$image"
+          elf=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot
+          test -s "$elf"
           set +e
           timeout 12s qemu-system-aarch64 \
             -machine virt,gic-version=3,virtualization=off \
@@ -131,13 +157,25 @@ jobs:
             -m 512M \
             -nographic \
             -monitor none \
+            -no-reboot \
             -d cpu_reset,guest_errors,int,in_asm \
             -D cookie-qemu-debug.log \
-            -kernel "$image" >cookie-qemu.log 2>&1
+            -device loader,file="$elf",cpu-num=0 >cookie-qemu.log 2>&1
           status=$?
           set -e
+          cat cookie-qemu.log
+          echo '--- QEMU first-exception instruction window ---'
+          first_exception=$(grep -n -m1 'Taking exception' cookie-qemu-debug.log | cut -d: -f1 || true)
+          if [[ -n "$first_exception" ]]; then
+            begin=$(( first_exception > 140 ? first_exception - 140 : 1 ))
+            end=$(( first_exception + 25 ))
+            sed -n "${begin},${end}p" cookie-qemu-debug.log || true
+          else
+            tail -n 260 cookie-qemu-debug.log || true
+          fi
+          echo '--- QEMU diagnostic tail ---'
+          tail -n 80 cookie-qemu-debug.log || true
           if [[ $status -ne 0 && $status -ne 124 ]]; then
-            cat cookie-qemu.log
             exit "$status"
           fi
           cat cookie-qemu.log

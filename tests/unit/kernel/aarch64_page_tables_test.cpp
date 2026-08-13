@@ -9,7 +9,7 @@ namespace {
 // explicit, which satisfies the contextual conversion in `!value` but not
 // an implicit conversion to a bool parameter.
 template <typename T>
-void require(const T& value) { if (!value) std::abort(); }
+void require(const T& value) { if (!static_cast<bool>(value)) std::abort(); }
 }
 
 int main() {
@@ -41,7 +41,6 @@ int main() {
         va, pa, MachinePermissions::read_execute, MachineMemoryKind::normal);
     require(static_cast<bool>(mapped));
 
-    // Lower/process builders cannot acquire mappings in the future TTBR1 range.
     auto lower_to_kernel = builder.map_page(
         kernel_virtual_base,
         pa + 0x10000ULL,
@@ -138,8 +137,6 @@ int main() {
     require((other_l3[level3_index(user_va)] & page_address_mask) == other_user_pa);
     require((user_l3[level3_index(user_va)] & page_address_mask) == user_pa);
 
-    // Upper/kernel builders accept only the TTBR1 canonical region and cannot
-    // mint EL0-accessible mappings through map_user_page().
     EarlyStage1Builder kernel_builder{arena, Stage1Region::upper};
     auto kernel_root = kernel_builder.initialize();
     require(static_cast<bool>(kernel_root));

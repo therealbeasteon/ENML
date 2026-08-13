@@ -6,6 +6,7 @@
 
 #include <os/core/result.hpp>
 #include <os/kernel/address_space_epoch.hpp>
+#include <os/kernel/execution_authority.hpp>
 #include <os/kernel/rendezvous.hpp>
 #include <os/kernel/translation_root.hpp>
 
@@ -29,6 +30,11 @@ struct ProcessTranslationBinding final {
 
     [[nodiscard]] constexpr bool valid() const noexcept {
         return thread != invalid_thread && epoch.valid() && root_physical != 0ULL;
+    }
+
+    [[nodiscard]] constexpr ExecutionAuthority authority() const noexcept {
+        if (!valid()) return {};
+        return ExecutionAuthority{thread, epoch.identity()};
     }
 };
 

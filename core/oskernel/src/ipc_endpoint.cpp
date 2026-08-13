@@ -228,7 +228,12 @@ os::core::Result<IpcEndpoint> IpcEndpointTable::endpoint_for_capability(
         return ipc_error(ipc_errors::invalid_capability);
     }
     auto description = capabilities.describe(capability);
-    if (!description || description.value().holder != holder) {
+    // This is the legacy ThreadId-only IPC path. It must fail closed for an
+    // M7.8 context-bound capability rather than comparing only the reusable
+    // numeric holder. Context-bound IPC gets its own ExecutionAuthority path in
+    // M7.8.2; until then a bound capability is intentionally unusable here.
+    if (!description || description.value().context_bound ||
+        !capabilities.holds(holder, capability)) {
         return ipc_error(ipc_errors::invalid_capability);
     }
     if (!has_rights(description.value().rights, required)) {

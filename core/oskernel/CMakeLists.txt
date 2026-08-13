@@ -136,12 +136,17 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         # multi-register copy for an ordinary struct assignment, and one did -
         # inside FdtView::parse, building its Result return value. The fault
         # was taken before any of this code could report it.
+        #
+        # -mgeneral-regs-only is required for the same window, for a different
+        # reason. Cookie does not enable or context-switch FP/SIMD state during
+        # early EL1 boot yet. Prevent the compiler from silently using vector
+        # registers for structure copies before that contract exists; otherwise
+        # such instructions trap as undefined at EL1.
+        #
+        # Both flags are load-bearing and independent. Neither substitutes for
+        # the other, and dropping either one produces an image that links but
+        # faults during early boot.
         target_compile_options(cookie_kernel_aarch64_boot PRIVATE
-            # -mgeneral-regs-only is required alongside it. Cookie does not
-            # enable or context-switch FP/SIMD state during early EL1 boot, so
-            # a vector instruction the compiler chose for a structure copy
-            # traps as undefined. The two flags cover different instruction
-            # choices and neither substitutes for the other.
             $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie -mstrict-align -mgeneral-regs-only>
             $<$<COMPILE_LANGUAGE:ASM>:-ffreestanding -fno-pie>)
         target_link_options(cookie_kernel_aarch64_boot PRIVATE

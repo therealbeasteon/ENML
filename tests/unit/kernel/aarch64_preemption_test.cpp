@@ -14,7 +14,9 @@ namespace {
 // explicit, which satisfies the contextual conversion in `!value` but not
 // an implicit conversion to a bool parameter.
 template <typename T>
-void require(const T& value) { if (!value) std::abort(); }
+void require(const T& value) {
+    if (!static_cast<bool>(value)) std::abort();
+}
 }
 
 int main() {
