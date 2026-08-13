@@ -135,6 +135,7 @@ core_files=(
     "core/oskernel/include/os/kernel/abi.hpp"
     "core/oskernel/include/os/kernel/address_space_epoch.hpp"
     "core/oskernel/include/os/kernel/capability.hpp"
+    "core/oskernel/include/os/kernel/execution_authority.hpp"
     "core/oskernel/include/os/kernel/interrupt.hpp"
     "core/oskernel/include/os/kernel/ipc_continuation.hpp"
     "core/oskernel/include/os/kernel/ipc_endpoint.hpp"
@@ -359,11 +360,28 @@ not_kernel=(
 # reads as which stage rejected the machine rather than as an opaque QEMU
 # timeout - the same category of fix M7.5's own halt-site work made once
 # already, applied to the sites this milestone's review passed over them.
-core_ceiling=2872
-machine_ceiling=2757
-discovery_ceiling=1221
-entry_ceiling=826
-total_ceiling=7676
+# Raised a tenth time, by M7.8: core 2872 -> 3052, machine 2757 -> 2772,
+# discovery 1221 -> 1234, entry 826 -> 838, total 7676 -> 7896. This closes
+# the gap M7.6a's own IPC surface opened: a capability minted for a numeric
+# ThreadId is holder-checked by that same bare number, and a recycled
+# thread ID - the ordinary result of a process exiting and a new one being
+# admitted - would let the new process silently inherit whatever the old
+# one could still reach if nothing else changed. execution_authority.hpp
+# (core, pulled into the trusted image transitively through capability.hpp
+# and process_translation.hpp, both already counted) binds a capability's
+# holder to ExecutionAuthority - thread plus AddressSpaceEpoch identity,
+# not thread alone - so a recycled ASID with a fresh generation is a
+# different holder even at the same ThreadId, and stale capability
+# authority does not survive the recycling standing set up to prevent it.
+# The migration is deliberately fail-closed: bound capabilities are
+# unusable through the legacy ThreadId-only IPC path rather than silently
+# losing their generation binding, until M7.8.2 adds the explicit
+# ExecutionAuthority IPC path.
+core_ceiling=3052
+machine_ceiling=2772
+discovery_ceiling=1234
+entry_ceiling=838
+total_ceiling=7896
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
