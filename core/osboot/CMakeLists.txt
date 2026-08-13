@@ -3,6 +3,7 @@ add_library(osboot STATIC
     src/attestation.cpp
     src/sealing.cpp
     src/transparency.cpp
+    src/profile_protector.cpp
 )
 
 add_library(emnl::osboot ALIAS osboot)

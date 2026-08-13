@@ -19,7 +19,7 @@ jobs:
       - name: Configure
         run: cmake --preset host-debug
       - name: Build kernel ABI gates
-        run: .github/scripts/run-build.sh 'kernel-gcc' --preset host-debug --target kernel_abi_test kernel_rendezvous_test kernel_machine_host_test kernel_capability_test kernel_interrupt_test kernel_scheduler_test kernel_composition_test --parallel 2
+        run: .github/scripts/run-build.sh 'kernel-gcc' --preset host-debug --target kernel_abi_test kernel_rendezvous_test kernel_machine_host_test kernel_aarch64_contract_test kernel_capability_test kernel_interrupt_test kernel_scheduler_test kernel_composition_test --parallel 2
       - name: Test kernel ABI gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-gcc' --preset host-debug
 
@@ -30,7 +30,7 @@ jobs:
       - name: Configure
         run: cmake --preset host-asan
       - name: Build kernel ABI gates with sanitizers
-        run: .github/scripts/run-build.sh 'kernel-sanitizers' --preset host-asan --target kernel_abi_test kernel_rendezvous_test kernel_machine_host_test kernel_capability_test kernel_interrupt_test kernel_scheduler_test kernel_composition_test --parallel 2
+        run: .github/scripts/run-build.sh 'kernel-sanitizers' --preset host-asan --target kernel_abi_test kernel_rendezvous_test kernel_machine_host_test kernel_aarch64_contract_test kernel_capability_test kernel_interrupt_test kernel_scheduler_test kernel_composition_test --parallel 2
       - name: Test kernel ABI gates with sanitizers
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-sanitizers' --preset host-asan
 
@@ -44,14 +44,14 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           -DCMAKE_CXX_COMPILER=clang++
       - name: Build kernel ABI gates
-        run: .github/scripts/run-build.sh 'kernel-clang' build/m5-kernel-clang --target kernel_abi_test kernel_rendezvous_test kernel_machine_host_test kernel_capability_test kernel_interrupt_test kernel_scheduler_test kernel_composition_test --parallel 2
+        run: .github/scripts/run-build.sh 'kernel-clang' build/m5-kernel-clang --target kernel_abi_test kernel_rendezvous_test kernel_machine_host_test kernel_aarch64_contract_test kernel_capability_test kernel_interrupt_test kernel_scheduler_test kernel_composition_test --parallel 2
       - name: Test kernel ABI gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-clang' --test-dir build/m5-kernel-clang
 
-  # A device access policy describes physical address windows, so its parser
-  # handles 64-bit addresses and lengths at the edge of the address space. That
-  # arithmetic, and the explicitly little-endian encoding, must hold on the
-  # primary target architecture and not merely on the build host.
+  # The real AArch64 machine backend is compiled here in addition to the hosted
+  # contract tests. It is not yet linked into a boot image: unsupported machine
+  # operations must remain visibly unsupported until their hardware mechanism is
+  # implemented rather than being hidden behind a host stub.
   kernel-arm64-native:
     runs-on: ubuntu-24.04-arm
     steps:
@@ -62,7 +62,7 @@ jobs:
           test "$(uname -m)" = "aarch64"
       - name: Configure
         run: cmake --preset host-debug
-      - name: Build kernel ABI gates natively
-        run: .github/scripts/run-build.sh 'kernel-arm64-native' --preset host-debug --target kernel_abi_test kernel_rendezvous_test kernel_machine_host_test kernel_capability_test kernel_interrupt_test kernel_scheduler_test kernel_composition_test --parallel 2
+      - name: Build kernel ABI gates and real AArch64 machine slice natively
+        run: .github/scripts/run-build.sh 'kernel-arm64-native' --preset host-debug --target kernel_abi_test kernel_rendezvous_test kernel_machine_host_test kernel_aarch64_contract_test kernel_capability_test kernel_interrupt_test kernel_scheduler_test kernel_composition_test oskernel_machine_aarch64 --parallel 2
       - name: Test kernel ABI gates natively
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --preset host-debug

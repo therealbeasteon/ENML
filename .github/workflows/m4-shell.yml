@@ -23,9 +23,11 @@ jobs:
       - name: Build shell gates
         run: >-
           cmake --build --preset host-debug
-          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test shell_credential_rule_test
+          --target shell_task_model_test shell_activation_test shell_preview_policy_test
+          shell_chrome_test shell_consent_test shell_unlock_test shell_credential_rule_test
           shell_lifecycle_control_test display_exact_activation_test
-          shell_compositor_control_test recovery_policy_test
+          shell_compositor_control_test compositor_shell_private_runtime_test
+          shell_service_supervisor_test
           --parallel 2
       - name: Test shell gates
         run: ctest --preset host-debug --output-on-failure -L '^m4-shell$'
@@ -42,9 +44,11 @@ jobs:
       - name: Build shell gates
         run: >-
           cmake --build build/m4-shell-clang
-          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test shell_credential_rule_test
+          --target shell_task_model_test shell_activation_test shell_preview_policy_test
+          shell_chrome_test shell_consent_test shell_unlock_test shell_credential_rule_test
           shell_lifecycle_control_test display_exact_activation_test
-          shell_compositor_control_test recovery_policy_test
+          shell_compositor_control_test compositor_shell_private_runtime_test
+          shell_service_supervisor_test
           --parallel 2
       - name: Test shell gates
         run: ctest --test-dir build/m4-shell-clang --output-on-failure -L '^m4-shell$'
@@ -58,9 +62,11 @@ jobs:
       - name: Build shell gates with sanitizers
         run: >-
           cmake --build --preset host-asan
-          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test shell_credential_rule_test
+          --target shell_task_model_test shell_activation_test shell_preview_policy_test
+          shell_chrome_test shell_consent_test shell_unlock_test shell_credential_rule_test
           shell_lifecycle_control_test display_exact_activation_test
-          shell_compositor_control_test recovery_policy_test
+          shell_compositor_control_test compositor_shell_private_runtime_test
+          shell_service_supervisor_test
           --parallel 2
       - name: Test shell gates with sanitizers
         run: ctest --preset host-asan --output-on-failure -L '^m4-shell$'
@@ -76,9 +82,11 @@ jobs:
       - name: Build shell gates natively
         run: >-
           cmake --build --preset host-debug
-          --target shell_task_model_test shell_activation_test shell_preview_policy_test shell_consent_test shell_unlock_test shell_credential_rule_test
+          --target shell_task_model_test shell_activation_test shell_preview_policy_test
+          shell_chrome_test shell_consent_test shell_unlock_test shell_credential_rule_test
           shell_lifecycle_control_test display_exact_activation_test
-          shell_compositor_control_test recovery_policy_test
+          shell_compositor_control_test compositor_shell_private_runtime_test
+          shell_service_supervisor_test
           --parallel 2
       - name: Test shell gates natively
         run: ctest --preset host-debug --output-on-failure -L '^m4-shell$'
