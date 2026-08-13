@@ -123,7 +123,11 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             ${PROJECT_SOURCE_DIR}/core/oscore/include)
         target_compile_features(cookie_kernel_aarch64_boot PRIVATE cxx_std_20)
         target_compile_options(cookie_kernel_aarch64_boot PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie>
+            # Cookie does not enable or context-switch FP/SIMD state during
+            # early EL1 boot yet. Prevent the compiler from silently using
+            # vector registers for structure copies before that contract
+            # exists; otherwise such instructions trap as undefined at EL1.
+            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie -mgeneral-regs-only>
             $<$<COMPILE_LANGUAGE:ASM>:-ffreestanding -fno-pie>)
         target_link_options(cookie_kernel_aarch64_boot PRIVATE
             -nostdlib
