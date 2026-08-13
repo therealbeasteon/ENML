@@ -84,7 +84,15 @@ os::kernel::MachineAddressSpace process_space_b{};
 os::kernel::AddressSpaceEpochAuthority boot_epochs{};
 os::kernel::ProcessTranslationTable boot_translations{};
 os::kernel::Kernel boot_kernel{};
-os::kernel::Scheduler& boot_scheduler = boot_kernel.runqueue();
+// An accessor, not a reference bound at namespace scope. Binding one to
+// boot_kernel.runqueue() is dynamic initialisation, because runqueue() is
+// not constexpr - and the linker script asserts that .init_array is empty,
+// since a freestanding image with -nostdlib has nothing that would run a
+// global constructor. The assert is the design being enforced, not an
+// obstacle: this kernel starts at _start and never through a C++ runtime.
+[[nodiscard]] os::kernel::Scheduler& boot_scheduler() noexcept {
+    return boot_kernel.runqueue();
+}
 os::kernel::aarch64::PreemptionCoordinator boot_preemption{};
 
 [[noreturn]] void halt() noexcept {
@@ -324,7 +332,7 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
     os::kernel::aarch64::ExceptionFrame live{};
     const auto now = os::kernel::machine_monotonic_nanoseconds();
     auto start = boot_preemption.start(
-        boot_scheduler, boot_translations, boot_epochs, now, live);
+        boot_scheduler(), boot_translations, boot_epochs, now, live);
     if (!start || start.value().next != process_a_thread ||
         start.value().switched == false || start.value().deadline.active ||
         !commit_result(start.value(), now) ||
@@ -386,7 +394,7 @@ extern "C" void cookie_kernel_syscall_entry(
 
         const auto now = os::kernel::machine_monotonic_nanoseconds();
         auto next = boot_preemption.reschedule(
-            boot_scheduler, boot_translations, boot_epochs, now, *frame);
+            boot_scheduler(), boot_translations, boot_epochs, now, *frame);
         if (!next || !commit_result(next.value(), now) ||
             !complete_after_switch(next.value().next, *frame)) {
             uart_write("COOKIE:PANIC:IPC_SWITCH\n");
@@ -412,13 +420,13 @@ extern "C" void cookie_kernel_syscall_entry(
     }
     if (el0_yield_count == 2U && frame->x[19] == process_a_marker) {
         el0_yield_count = 3U;
-        if (!boot_scheduler.update(process_b_thread, true, process_priority)) {
+        if (!boot_scheduler().update(process_b_thread, true, process_priority)) {
             uart_write("COOKIE:PANIC:SCHED_WAKE\n");
             halt();
         }
         const auto now = os::kernel::machine_monotonic_nanoseconds();
         auto rescheduled = boot_preemption.reschedule(
-            boot_scheduler, boot_translations, boot_epochs, now, *frame);
+            boot_scheduler(), boot_translations, boot_epochs, now, *frame);
         if (!rescheduled || rescheduled.value().next != process_a_thread ||
             rescheduled.value().switched || !rescheduled.value().deadline.active ||
             !commit_result(rescheduled.value(), now) ||
@@ -482,7 +490,7 @@ extern "C" void cookie_aarch64_irq_dispatch(
     const auto delivered = boot_preemption.current_deadline();
     const auto now = os::kernel::machine_monotonic_nanoseconds();
     auto next = boot_preemption.on_timer(
-        boot_scheduler, boot_translations, boot_epochs, delivered, now, *frame);
+        boot_scheduler(), boot_translations, boot_epochs, delivered, now, *frame);
     if (!next || !commit_result(next.value(), now) ||
         !complete_after_switch(next.value().next, *frame)) {
         uart_write("COOKIE:PANIC:PREEMPT\n");
@@ -723,7 +731,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     boot_server_ipc_cap = server_cap.value();
     boot_client_ipc_cap = client_cap.value();
 
-    if (!boot_scheduler.update(process_b_thread, false, process_priority)) halt();
+    if (!boot_scheduler().update(process_b_thread, false, process_priority)) halt();
 
     os::kernel::aarch64::ExceptionFrame initial_a{};
     initial_a.elr_el1 = user_code_virtual;
