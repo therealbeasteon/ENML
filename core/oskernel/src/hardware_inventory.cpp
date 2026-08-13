@@ -226,8 +226,19 @@ bool end_node(void* opaque, std::size_t depth) noexcept {
     if (node.compatible_size != 0U && node.has_reg && !node.memory &&
         !node.inside_reserved_memory && !node.reserved_memory_root) {
         if (context.inventory.device_count >= context.inventory.devices.size()) {
-            fail(context, hardware_inventory_errors::inventory_exhausted);
-            return false;
+            // Record the truncation and keep walking. A full device table is a
+            // capacity limit on an informational list, not a failure of the
+            // walk, and aborting here abandoned the memory and reservation
+            // ranges that had not been visited yet - so a board with more
+            // devices than the table holds reported "no RAM". QEMU virt alone
+            // publishes thirty-two virtio-mmio nodes before its other
+            // peripherals, which is the whole table.
+            //
+            // Not silent: devices_truncated is part of the inventory, so a
+            // caller that needs a device it cannot find can tell the
+            // difference between absent and dropped.
+            context.inventory.devices_truncated = true;
+            return true;
         }
         auto& device = context.inventory.devices[context.inventory.device_count++];
         device.compatible = node.compatible;
