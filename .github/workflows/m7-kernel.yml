@@ -83,6 +83,8 @@ jobs:
             -m 512M \
             -nographic \
             -monitor none \
+            -d cpu_reset,guest_errors,int,in_asm \
+            -D cookie-qemu-debug.log \
             -device loader,file="$elf",cpu-num=0 >cookie-qemu.log 2>&1
           status=$?
           set -e
@@ -91,5 +93,10 @@ jobs:
             exit "$status"
           fi
           cat cookie-qemu.log
+          echo '--- executed blocks, and whether any are in the linked image ---'
+          grep -c '^IN: ' cookie-qemu-debug.log || true
+          grep -m 8 -E '^0x40[0-9a-f]{6}' cookie-qemu-debug.log || echo 'NOTHING EXECUTED AT 0x40xxxxxx'
+          echo '--- first 40 lines of the trace ---'
+          head -n 40 cookie-qemu-debug.log || true
           grep -F 'COOKIE:M7.5d:MMU' cookie-qemu.log
           grep -F 'COOKIE:M7.5d:GUARDED' cookie-qemu.log
