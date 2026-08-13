@@ -14,28 +14,18 @@
 #include <os/storage/directory.hpp>
 #include <os/storage/file.hpp>
 #include <os/storage/private_root.hpp>
+#include <os/storage/protected_service.hpp>
 
 namespace os::storage {
 
-// F010 is reserved by the private application bootstrap protocol. Storage uses
-// its own stable service-id range so bootstrap and public service traffic can
-// never be confused even if they share the OSIP transport format.
 inline constexpr os::core::ServiceId storage_service_id{0x0000F020U};
 inline constexpr os::core::ServiceId storage_object_service_id{0x0000F021U};
 inline constexpr std::uint32_t storage_open_private_root_operation = 1U;
-
-// Private supervisor/control-channel extensions. They deliberately use the
-// bootstrap control service rather than the public Storage endpoint. Only
-// trusted system code holding a duplicate of the supervisor control channel can
-// publish or revoke roots; applications can never invoke these operations.
 inline constexpr std::uint32_t storage_control_register_root_operation = 100U;
 inline constexpr std::uint32_t storage_control_unregister_root_operation = 101U;
 
 inline constexpr std::size_t max_private_roots = 64U;
 inline constexpr std::size_t max_storage_objects = 64U;
-// One profile must not be able to consume the global object table. The quota is
-// keyed by the durable private-data identity (PrincipalId + UserId), not by a
-// transient ProcessId.
 inline constexpr std::size_t max_storage_objects_per_principal = 16U;
 inline constexpr std::size_t max_storage_io_bytes = 60U * 1024U;
 inline constexpr std::size_t max_storage_atomic_bytes = 56U * 1024U;
@@ -80,32 +70,21 @@ public:
 
     [[nodiscard]] static os::core::Result<FileObjectHandle>
     adopt(os::ipc::Channel channel, RightsMask rights) noexcept;
-
     [[nodiscard]] bool valid() const noexcept { return channel_.valid(); }
     [[nodiscard]] RightsMask rights() const noexcept { return rights_; }
 
     [[nodiscard]] os::core::Result<std::size_t>
-    read_at(
-        std::uint64_t offset,
-        os::core::MutableByteSpan output,
-        os::core::MutableByteSpan scratch) noexcept;
-
+    read_at(std::uint64_t offset, os::core::MutableByteSpan output, os::core::MutableByteSpan scratch) noexcept;
     [[nodiscard]] os::core::Result<std::size_t>
-    write_at(
-        std::uint64_t offset,
-        os::core::ByteSpan input,
-        os::core::MutableByteSpan scratch) noexcept;
-
+    write_at(std::uint64_t offset, os::core::ByteSpan input, os::core::MutableByteSpan scratch) noexcept;
     [[nodiscard]] os::core::Result<std::uint64_t>
     size(os::core::MutableByteSpan scratch) noexcept;
-
     [[nodiscard]] os::core::Result<void>
     sync(os::core::MutableByteSpan scratch) noexcept;
 
 private:
     FileObjectHandle(os::ipc::Channel channel, RightsMask rights) noexcept
         : channel_(static_cast<os::ipc::Channel&&>(channel)), rights_(rights) {}
-
     os::ipc::Channel channel_ {};
     RightsMask rights_ {0U};
     std::uint64_t next_request_id_ {1U};
@@ -122,49 +101,25 @@ public:
 
     [[nodiscard]] static os::core::Result<DirectoryObjectHandle>
     adopt(os::ipc::Channel channel, RightsMask rights) noexcept;
-
     [[nodiscard]] bool valid() const noexcept { return channel_.valid(); }
     [[nodiscard]] RightsMask rights() const noexcept { return rights_; }
 
     [[nodiscard]] os::core::Result<FileObjectHandle>
-    open_file(
-        const RelativePath& path,
-        OpenOptions options,
-        os::core::MutableByteSpan scratch) noexcept;
-
-    // The child directory receives exactly requested_rights. The service
-    // rejects any bit not already held by this parent capability.
+    open_file(const RelativePath& path, OpenOptions options, os::core::MutableByteSpan scratch) noexcept;
     [[nodiscard]] os::core::Result<DirectoryObjectHandle>
-    open_directory(
-        const RelativePath& path,
-        RightsMask requested_rights,
-        os::core::MutableByteSpan scratch) noexcept;
-
+    open_directory(const RelativePath& path, RightsMask requested_rights, os::core::MutableByteSpan scratch) noexcept;
     [[nodiscard]] os::core::Result<void>
-    create_directory(
-        const RelativePath& path,
-        os::core::MutableByteSpan scratch) noexcept;
-
+    create_directory(const RelativePath& path, os::core::MutableByteSpan scratch) noexcept;
     [[nodiscard]] os::core::Result<void>
-    remove_file(
-        const RelativePath& path,
-        os::core::MutableByteSpan scratch) noexcept;
-
+    remove_file(const RelativePath& path, os::core::MutableByteSpan scratch) noexcept;
     [[nodiscard]] os::core::Result<void>
-    remove_empty_directory(
-        const RelativePath& path,
-        os::core::MutableByteSpan scratch) noexcept;
-
+    remove_empty_directory(const RelativePath& path, os::core::MutableByteSpan scratch) noexcept;
     [[nodiscard]] os::core::Result<void>
-    atomic_replace(
-        const RelativePath& path,
-        os::core::ByteSpan contents,
-        os::core::MutableByteSpan scratch) noexcept;
+    atomic_replace(const RelativePath& path, os::core::ByteSpan contents, os::core::MutableByteSpan scratch) noexcept;
 
 private:
     DirectoryObjectHandle(os::ipc::Channel channel, RightsMask rights) noexcept
         : channel_(static_cast<os::ipc::Channel&&>(channel)), rights_(rights) {}
-
     os::ipc::Channel channel_ {};
     RightsMask rights_ {0U};
     std::uint64_t next_request_id_ {1U};
@@ -172,67 +127,37 @@ private:
 
 class StorageClient final {
 public:
-    explicit StorageClient(os::ipc::ClientConnection& connection) noexcept
-        : connection_(&connection) {}
-
+    explicit StorageClient(os::ipc::ClientConnection& connection) noexcept : connection_(&connection) {}
     [[nodiscard]] os::core::Result<DirectoryObjectHandle>
     open_private_root(os::core::MutableByteSpan scratch) noexcept;
-
 private:
     os::ipc::ClientConnection* connection_ {nullptr};
 };
 
-// Trusted-system client for the service's private supervisor control channel.
-// The target PrincipalId/UserId is allowed in this payload because possession
-// of this channel is itself system authority; the public Storage endpoint never
-// accepts caller-supplied identity for root selection.
 class StorageControlClient final {
 public:
-    explicit StorageControlClient(os::ipc::Channel& control) noexcept
-        : control_(&control) {}
-
+    explicit StorageControlClient(os::ipc::Channel& control) noexcept : control_(&control) {}
     [[nodiscard]] os::core::Result<void>
-    register_private_root(
-        os::core::PrincipalId principal,
-        os::core::UserId user,
-        const os::core::NativeHandle& directory,
-        os::core::MutableByteSpan scratch,
+    register_private_root(os::core::PrincipalId principal, os::core::UserId user,
+        const os::core::NativeHandle& directory, os::core::MutableByteSpan scratch,
         std::uint32_t timeout_ms) noexcept;
-
     [[nodiscard]] os::core::Result<void>
-    unregister_private_root(
-        os::core::PrincipalId principal,
-        os::core::UserId user,
-        os::core::MutableByteSpan scratch,
-        std::uint32_t timeout_ms) noexcept;
-
+    unregister_private_root(os::core::PrincipalId principal, os::core::UserId user,
+        os::core::MutableByteSpan scratch, std::uint32_t timeout_ms) noexcept;
 private:
     os::ipc::Channel* control_ {nullptr};
     std::uint64_t next_request_id_ {0x8000000000000001ULL};
 };
 
-// Trusted policy registry. Applications never register roots and no registration
-// method accepts a Linux pathname. The key is durable application principal +
-// user; ProcessId is deliberately not part of private-data identity.
 class PrivateRootRegistry final {
 public:
     [[nodiscard]] os::core::Result<void>
-    register_root(
-        os::core::PrincipalId principal,
-        os::core::UserId user,
-        PrivateRoot root) noexcept;
-
+    register_root(os::core::PrincipalId principal, os::core::UserId user, PrivateRoot root) noexcept;
     [[nodiscard]] os::core::Result<void>
     unregister_root(os::core::PrincipalId principal, os::core::UserId user) noexcept;
-
-    [[nodiscard]] PrivateRoot*
-    find(os::core::PrincipalId principal, os::core::UserId user) noexcept;
-
-    [[nodiscard]] const PrivateRoot*
-    find(os::core::PrincipalId principal, os::core::UserId user) const noexcept;
-
+    [[nodiscard]] PrivateRoot* find(os::core::PrincipalId principal, os::core::UserId user) noexcept;
+    [[nodiscard]] const PrivateRoot* find(os::core::PrincipalId principal, os::core::UserId user) const noexcept;
     [[nodiscard]] std::size_t size() const noexcept;
-
 private:
     struct Entry final {
         bool occupied {false};
@@ -240,60 +165,30 @@ private:
         os::core::UserId user {};
         PrivateRoot root {};
     };
-
     std::array<Entry, max_private_roots> entries_ {};
 };
 
-// Single-threaded bounded Storage Service core. The main endpoint mints one
-// private-root directory capability only after RequestContext identity lookup.
-// Object endpoints are possession-based capabilities whose rights are held in
-// service memory, not trusted from subsequent request payloads.
 class StorageService final {
 public:
     StorageService(
         os::ipc::Channel& endpoint,
         os::ipc::PeerIdentityResolver& identity_resolver,
-        PrivateRootRegistry& roots) noexcept
-        : endpoint_(&endpoint), identity_resolver_(&identity_resolver), roots_(&roots) {}
+        PrivateRootRegistry& roots,
+        ProtectedReplaceHandler* protected_replace = nullptr) noexcept
+        : endpoint_(&endpoint), identity_resolver_(&identity_resolver), roots_(&roots),
+          protected_replace_(protected_replace) {}
 
-    // Descriptors this service can contribute to a caller-owned wait set: the
-    // public endpoint plus one per live object endpoint.
     static constexpr std::size_t max_wait_descriptors = max_storage_objects + 1U;
-
-    // Writes the service's currently live descriptors into `out` and returns
-    // how many were written. Raw descriptors rather than pollfd keep this
-    // header free of platform headers; the caller builds its own wait set.
-    //
-    // This exists so a host can block on one wait covering both its own
-    // channels and the service's. Without it a host has two independent wait
-    // points, cannot block on either, and degenerates into a timed spin that
-    // never lets the process become quiet.
-    [[nodiscard]] std::size_t
-    collect_wait_descriptors(int* out, std::size_t capacity) const noexcept;
-
-    // `timeout_ms` of 0 is the correct choice when the caller has already
-    // blocked on a shared wait set and only needs the ready descriptor served.
+    [[nodiscard]] std::size_t collect_wait_descriptors(int* out, std::size_t capacity) const noexcept;
     [[nodiscard]] os::core::Result<void>
     dispatch_once(os::core::MutableByteSpan receive_buffer, int timeout_ms) noexcept;
-
-    // Storage-specific router for the private supervisor control channel. It
-    // preserves the existing identity register/unregister protocol and adds
-    // root publication/revocation operations on the same trusted channel.
     [[nodiscard]] os::core::Result<void>
-    dispatch_control_once(
-        os::ipc::Channel& control,
-        os::core::MutableByteSpan receive_buffer,
+    dispatch_control_once(os::ipc::Channel& control, os::core::MutableByteSpan receive_buffer,
         os::service::IdentityRegistry& identity_registry) noexcept;
-
     [[nodiscard]] std::size_t live_object_count() const noexcept;
 
 private:
-    enum class SlotKind : std::uint8_t {
-        none = 0U,
-        root_directory = 1U,
-        directory = 2U,
-        file = 3U,
-    };
+    enum class SlotKind : std::uint8_t { none = 0U, root_directory = 1U, directory = 2U, file = 3U };
 
     struct ObjectSlot final {
         bool occupied {false};
@@ -302,6 +197,9 @@ private:
         os::core::PrincipalId principal {};
         os::core::UserId user {};
         PrivateRoot* root {nullptr};
+        // Invalid only for the private-root slot itself. Every descendant
+        // directory/file carries its canonical root-relative namespace address.
+        RelativePath namespace_path {};
         Directory directory {};
         File file {};
         os::ipc::Channel endpoint {};
@@ -310,14 +208,11 @@ private:
     os::ipc::Channel* endpoint_ {nullptr};
     os::ipc::PeerIdentityResolver* identity_resolver_ {nullptr};
     PrivateRootRegistry* roots_ {nullptr};
+    ProtectedReplaceHandler* protected_replace_ {nullptr};
     std::array<ObjectSlot, max_storage_objects> objects_ {};
 
-    [[nodiscard]] os::core::Result<void>
-    dispatch_main(os::core::MutableByteSpan receive_buffer) noexcept;
-
-    [[nodiscard]] os::core::Result<void>
-    dispatch_object(std::size_t index, os::core::MutableByteSpan receive_buffer) noexcept;
-
+    [[nodiscard]] os::core::Result<void> dispatch_main(os::core::MutableByteSpan receive_buffer) noexcept;
+    [[nodiscard]] os::core::Result<void> dispatch_object(std::size_t index, os::core::MutableByteSpan receive_buffer) noexcept;
     [[nodiscard]] os::core::Result<std::size_t>
     allocate_slot(os::core::PrincipalId principal, os::core::UserId user) noexcept;
     void clear_slot(std::size_t index) noexcept;
