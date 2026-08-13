@@ -876,15 +876,41 @@ StorageService::dispatch_object(
         return storage_error(errors::invalid_object_type);
     };
 
+    // The canonical root-relative address of `path` as seen from this slot.
+    // Only the private root itself has no namespace address of its own; every
+    // descendant carries one. Composing through it is what stops a child
+    // directory capability from presenting "file" as though it named a
+    // root-level object, which is the reason join_relative_paths exists.
+    const auto canonical_namespace_path = [&](const RelativePath& path)
+        -> os::core::Result<RelativePath> {
+        if (!slot.namespace_path.valid()) return path;
+        return join_relative_paths(slot.namespace_path, path);
+    };
+
     const auto atomic_replace_from_slot = [&](const RelativePath& path, os::core::ByteSpan contents)
         -> os::core::Result<void> {
-        if (slot.kind == SlotKind::root_directory && slot.root != nullptr) {
+        const bool addressable =
+            (slot.kind == SlotKind::root_directory && slot.root != nullptr) ||
+            slot.kind == SlotKind::directory;
+        if (!addressable) return storage_error(errors::invalid_object_type);
+
+        // With a protected handler installed, durable replacement goes through
+        // the encrypted publication engine instead of the substrate. Identity
+        // is taken from the slot - server-held and fixed when the capability
+        // was minted - never from the request, and the path handed over is the
+        // canonical root-relative one rather than the caller's child-relative
+        // view.
+        if (protected_replace_ != nullptr) {
+            auto canonical = canonical_namespace_path(path);
+            if (!canonical) return canonical.error();
+            return protected_replace_->atomic_replace(
+                slot.principal, slot.user, canonical.value(), contents);
+        }
+
+        if (slot.kind == SlotKind::root_directory) {
             return slot.root->atomic_replace(path, contents);
         }
-        if (slot.kind == SlotKind::directory) {
-            return slot.directory.atomic_replace(path, contents);
-        }
-        return storage_error(errors::invalid_object_type);
+        return slot.directory.atomic_replace(path, contents);
     };
 
     switch (message.header().operation_id) {
@@ -931,6 +957,12 @@ StorageService::dispatch_object(
         auto file = std::move(opened).value();
         const auto child_rights = rights_for_file(file);
 
+        auto child_namespace = canonical_namespace_path(path.value());
+        if (!child_namespace) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), child_namespace.error());
+        }
+
         auto child_index = allocate_slot(slot.principal, slot.user);
         if (!child_index) {
             return os::ipc::send_rpc_error(slot.endpoint, message.header(), child_index.error());
@@ -946,6 +978,7 @@ StorageService::dispatch_object(
         child.rights = child_rights;
         child.principal = slot.principal;
         child.user = slot.user;
+        child.namespace_path = child_namespace.value();
         child.file = std::move(file);
         child.endpoint = std::move(pair[0]);
 
@@ -989,6 +1022,12 @@ StorageService::dispatch_object(
         if (!opened) return os::ipc::send_rpc_error(slot.endpoint, message.header(), opened.error());
         auto directory = std::move(opened).value();
 
+        auto child_namespace = canonical_namespace_path(path.value());
+        if (!child_namespace) {
+            return os::ipc::send_rpc_error(
+                slot.endpoint, message.header(), child_namespace.error());
+        }
+
         auto child_index = allocate_slot(slot.principal, slot.user);
         if (!child_index) {
             return os::ipc::send_rpc_error(slot.endpoint, message.header(), child_index.error());
@@ -1004,6 +1043,7 @@ StorageService::dispatch_object(
         child.rights = requested.value();
         child.principal = slot.principal;
         child.user = slot.user;
+        child.namespace_path = child_namespace.value();
         child.directory = std::move(directory);
         child.endpoint = std::move(pair[0]);
 
