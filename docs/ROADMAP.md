@@ -302,7 +302,7 @@ no branch, no document; M7.10 is built and enforced by this change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 5,638 lines, a ratchet rather than the 605-line
+  ceiling is the measured 5,646 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -334,8 +334,8 @@ cannot be laundered between them:
 | core — privileged portable runtime | 1,674 |
 | machine — the AArch64 port | 2,174 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,221 |
-| entry — reset vector, freestanding memory | 569 |
-| **total** | **5,638** |
+| entry — reset vector, freestanding memory | 577 |
+| **total** | **5,646** |
 
 `core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -379,7 +379,16 @@ with; 1,766 → 2,174 in `machine` for ASID assignment, execution-universe
 composition and translation-root sealing; 411 → 569 in `entry` for wiring
 two real EL0 processes through that machinery at boot, which is what proves
 generation-bound epochs against something other than a host test. total
-4,758 → 5,638. None of it is discretionary — see
+4,758 → 5,638. A seventh raise, not from a milestone but from a defect fix,
+followed: entry 569 → 577, total 5,638 → 5,646. M7.5i's own boot proof was
+flaky under QEMU TCG on shared CI — `Scheduler::choose()` correctly charges
+all elapsed real time since the last decision even while uncontested (the
+anti-gaming property that stops a thread dodging its charge by avoiding
+decision points), and a UART print plus two EL0/EL1 round trips measured
+over 2ms of guest-visible time, exhausting process A's round-robin slice
+before contention with B was ever introduced. Not a scheduler defect — fixed
+with an extra, uncontested reschedule() call that banks the print's cost
+against a fresh decision point. None of it is discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 
