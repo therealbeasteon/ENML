@@ -56,9 +56,7 @@ int main() {
 
     constexpr char compatible_text[] = "arm,armv8-timer\0arm,armv7-timer\0";
     std::array<std::byte, sizeof(compatible_text) - 1U> compatible{};
-    for (std::size_t i = 0U; i < compatible.size(); ++i) {
-        compatible[i] = static_cast<std::byte>(compatible_text[i]);
-    }
+    for (std::size_t i = 0U; i < compatible.size(); ++i) compatible[i] = static_cast<std::byte>(compatible_text[i]);
     b.property(off_compatible, compatible.data(), compatible.size());
 
     constexpr char names_text[] = "sec-phys\0phys\0virt\0hyp-phys\0";
@@ -66,15 +64,13 @@ int main() {
     for (std::size_t i = 0U; i < names.size(); ++i) names[i] = static_cast<std::byte>(names_text[i]);
     b.property(off_interrupt_names, names.data(), names.size());
 
-    // Four standard GIC 3-cell specifiers. The named non-secure physical timer
-    // is PPI 14, which becomes architectural INTID 30.
     std::array<std::byte, 48U> interrupts{};
     constexpr std::array<std::uint32_t, 4U> ppis{13U, 14U, 11U, 10U};
     for (std::size_t i = 0U; i < ppis.size(); ++i) {
         const auto o = i * 12U;
         put_be32(interrupts.data() + o, 1U);
         put_be32(interrupts.data() + o + 4U, ppis[i]);
-        put_be32(interrupts.data() + o + 8U, 4U);
+        put_be32(interrupts.data() + o + 8U, 0xF08U);
     }
     b.property(off_interrupts, interrupts.data(), interrupts.size());
 
@@ -104,6 +100,10 @@ int main() {
     require(static_cast<bool>(timer));
     require(timer.value().valid());
     require(timer.value().nonsecure_physical_intid == 30U);
-    require((timer.value().trigger_flags & 0xFU) == 4U);
+    require(timer.value().trigger_flags == dt_irq_level_high);
+    require(timer.value().raw_trigger_flags == 0xF08U);
+    require(architected_timer_trigger_supported(timer.value().raw_trigger_flags));
+    require(!architected_timer_trigger_supported(1U));
+    require(!architected_timer_trigger_supported(2U));
     return 0;
 }
