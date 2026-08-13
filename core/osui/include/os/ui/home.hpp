@@ -4,10 +4,12 @@
 
 namespace os::ui {
 
+// Cookie Continuum regions. These are semantic locations in one continuous
+// scene, not launcher pages or rectangular containers.
 enum class HomeRegion : std::uint8_t {
-    field = 0U,
-    shelf = 1U,
-    dock = 2U,
+    now = 0U,
+    pinned = 1U,
+    index = 2U,
 };
 
 enum class HomeObjectKind : std::uint8_t {
@@ -39,7 +41,7 @@ struct HomeObjectId final {
 struct HomeObject final {
     HomeObjectId id {};
     HomeObjectKind kind {HomeObjectKind::application};
-    HomeRegion preferred_region {HomeRegion::field};
+    HomeRegion preferred_region {HomeRegion::pinned};
     HomePrivacyClass privacy {HomePrivacyClass::public_metadata};
     std::uint16_t preferred_span_x {1U};
     std::uint16_t preferred_span_y {1U};
@@ -49,6 +51,12 @@ struct HomeObject final {
 
 [[nodiscard]] constexpr bool home_object_valid(const HomeObject& object) noexcept {
     if (!object.id.valid() || object.preferred_span_x == 0U || object.preferred_span_y == 0U) {
+        return false;
+    }
+    // Pinned is explicitly user-stable. Prediction/context may populate Now,
+    // but cannot claim that a non-pinned object belongs to the stable map.
+    if (object.preferred_region == HomeRegion::pinned && !object.user_pinned &&
+        object.kind != HomeObjectKind::trusted_system_tile) {
         return false;
     }
     if (object.privacy == HomePrivacyClass::secret && object.remote_enrichment_allowed) {
