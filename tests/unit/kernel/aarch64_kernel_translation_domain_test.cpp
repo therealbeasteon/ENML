@@ -1,5 +1,6 @@
 #include <array>
 #include <cstdlib>
+#include <cstdint>
 
 #include <os/kernel/aarch64_kernel_translation_domain.hpp>
 #include <os/kernel/aarch64_translation_root_sealer.hpp>
@@ -38,6 +39,52 @@ int main() {
         .length = architectural_page_size,
         .permissions = MachinePermissions::read_write,
         .kind = MachineMemoryKind::device,
+    }));
+
+    // Reviewed-manifest boundary rejects malformed and dangerous mappings
+    // before they reach a page-table builder.
+    require(!manifest.add({
+        .virtual_base = 0x4000'0001ULL,
+        .physical_base = 0x0200'0000ULL,
+        .length = architectural_page_size,
+        .permissions = MachinePermissions::read,
+        .kind = MachineMemoryKind::normal,
+    }));
+    require(!manifest.add({
+        .virtual_base = 0x4100'0000ULL,
+        .physical_base = 0x0200'0001ULL,
+        .length = architectural_page_size,
+        .permissions = MachinePermissions::read,
+        .kind = MachineMemoryKind::normal,
+    }));
+    require(!manifest.add({
+        .virtual_base = 0x4200'0000ULL,
+        .physical_base = 0x0300'0000ULL,
+        .length = architectural_page_size - 1ULL,
+        .permissions = MachinePermissions::read,
+        .kind = MachineMemoryKind::normal,
+    }));
+    require(!manifest.add({
+        .virtual_base = 0x4300'0000ULL,
+        .physical_base = 0x0901'0000ULL,
+        .length = architectural_page_size,
+        .permissions = MachinePermissions::read_execute,
+        .kind = MachineMemoryKind::device,
+    }));
+    require(!manifest.add({
+        .virtual_base = UINT64_MAX - (architectural_page_size - 1ULL),
+        .physical_base = 0x0400'0000ULL,
+        .length = 2ULL * architectural_page_size,
+        .permissions = MachinePermissions::read,
+        .kind = MachineMemoryKind::normal,
+    }));
+    require(!manifest.add({
+        .virtual_base = 0x4400'0000ULL,
+        .physical_base = 0x0500'0000ULL,
+        .length = architectural_page_size,
+        .permissions = MachinePermissions::read_execute,
+        .kind = MachineMemoryKind::normal,
+        .role = KernelMappingRole::guarded_stack,
     }));
 
     EarlyStage1Builder kernel_builder{arena, Stage1Region::upper};
