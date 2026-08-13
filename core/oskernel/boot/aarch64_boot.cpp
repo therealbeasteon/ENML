@@ -59,7 +59,6 @@ constexpr os::kernel::ThreadId process_b_thread = 2U;
 constexpr os::kernel::Priority process_priority = 4U;
 
 volatile std::uint32_t* boot_uart = nullptr;
-std::uint64_t boot_start_now = 0U;
 std::uint32_t el0_yield_count = 0U;
 std::uint32_t timer_irq_count = 0U;
 os::kernel::aarch64::GicV3PrimaryCpu boot_gic{};
@@ -116,21 +115,6 @@ void uart_write_char(char value) noexcept {
 
 void uart_write(std::string_view text) noexcept {
     for (char c : text) uart_write_char(c);
-}
-
-// TEMPORARY diagnostic for the M7.5i SCHED_EVENT investigation.
-void uart_write_u64(std::uint64_t value) noexcept {
-    char digits[20];
-    std::size_t count = 0U;
-    if (value == 0U) {
-        uart_write_char('0');
-        return;
-    }
-    while (value != 0U && count < sizeof(digits)) {
-        digits[count++] = static_cast<char>('0' + (value % 10U));
-        value /= 10U;
-    }
-    while (count > 0U) uart_write_char(digits[--count]);
 }
 
 [[nodiscard]] const os::kernel::DiscoveredDevice*
@@ -253,7 +237,6 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
 
     os::kernel::aarch64::ExceptionFrame live{};
     const auto now = os::kernel::machine_monotonic_nanoseconds();
-    boot_start_now = now;
     auto start = boot_preemption.start(
         boot_scheduler, boot_translations, boot_epochs, now, live);
     if (!start || start.value().next != process_a_thread ||
@@ -293,6 +276,31 @@ extern "C" void cookie_kernel_syscall_entry(
     if (el0_yield_count == 1U && frame->x[0] == syscall_return_cookie) {
         el0_yield_count = 2U;
         uart_write("COOKIE:M7.5f:EL0_SVC_RETURN\n");
+
+        // Reschedule now, uncontested, purely to reset the round-robin
+        // decision clock (Scheduler::choose() charges all elapsed real time
+        // since the last decision, by design - a thread cannot dodge that
+        // charge by avoiding decision points, which is exactly what stops it
+        // gaming the scheduler). That charging is correct and must stay: on
+        // real hardware this whole handler runs in low-single-digit
+        // microseconds, comfortably inside default_slice_nanoseconds. Under
+        // QEMU TCG on shared CI, the UART print above alone was measured
+        // taking >2ms of guest-visible time, which exhausted process A's
+        // slice before contention with B was ever introduced below - not a
+        // scheduler defect, a boot-proof timing assumption that held on
+        // hardware and didn't hold under emulation. This call is uncontested
+        // (B is not runnable yet) so it cannot switch or arm a deadline; it
+        // only banks the print's cost against a fresh decision point so the
+        // contention check below measures only the handful of instructions
+        // between here and there, not the print.
+        const auto reset_now = os::kernel::machine_monotonic_nanoseconds();
+        auto reset = boot_preemption.reschedule(
+            boot_scheduler, boot_translations, boot_epochs, reset_now, *frame);
+        if (!reset || reset.value().next != process_a_thread || reset.value().switched ||
+            reset.value().deadline.active || !commit_result(reset.value(), reset_now)) {
+            uart_write("COOKIE:PANIC:SCHED_RESET\n");
+            halt();
+        }
         return;
     }
     if (el0_yield_count == 2U && frame->x[19] == process_a_marker) {
@@ -302,19 +310,8 @@ extern "C" void cookie_kernel_syscall_entry(
             halt();
         }
         const auto now = os::kernel::machine_monotonic_nanoseconds();
-        uart_write("COOKIE:DIAG:ELAPSED_NS:");
-        uart_write_u64(now >= boot_start_now ? now - boot_start_now : 0U);
-        uart_write("\n");
         auto rescheduled = boot_preemption.reschedule(
             boot_scheduler, boot_translations, boot_epochs, now, *frame);
-        if (!rescheduled) uart_write("COOKIE:DIAG:RESCHED_ERR\n");
-        if (rescheduled && rescheduled.value().next != process_a_thread) {
-            uart_write(rescheduled.value().next == process_b_thread
-                ? "COOKIE:DIAG:RESCHED_NEXT_IS_B\n"
-                : "COOKIE:DIAG:RESCHED_NEXT_OTHER\n");
-        }
-        if (rescheduled && rescheduled.value().switched) uart_write("COOKIE:DIAG:RESCHED_SWITCHED\n");
-        if (rescheduled && !rescheduled.value().deadline.active) uart_write("COOKIE:DIAG:RESCHED_NO_DEADLINE\n");
         if (!rescheduled || rescheduled.value().next != process_a_thread ||
             rescheduled.value().switched || !rescheduled.value().deadline.active ||
             !commit_result(rescheduled.value(), now)) {
