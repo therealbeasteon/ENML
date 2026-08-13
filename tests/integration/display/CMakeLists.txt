@@ -28,6 +28,7 @@ set_tests_properties(input_service_transport_test PROPERTIES LABELS m3-display)
 add_executable(shell_compositor_control_test shell_compositor_control_test.cpp)
 target_link_libraries(shell_compositor_control_test PRIVATE
     emnl::compositor_service
+    osshell
     emnl_warnings
 )
 target_compile_options(shell_compositor_control_test PRIVATE
@@ -35,3 +36,25 @@ target_compile_options(shell_compositor_control_test PRIVATE
 )
 add_test(NAME shell_compositor_control_test COMMAND shell_compositor_control_test)
 set_tests_properties(shell_compositor_control_test PROPERTIES LABELS "m3-display;m4-shell")
+
+add_executable(compositor_shell_private_runtime_test
+    compositor_shell_private_runtime_test.cpp
+)
+target_link_libraries(compositor_shell_private_runtime_test PRIVATE
+    emnl::compositor_service
+    emnl::supervisor
+    osshell
+    emnl_warnings
+)
+target_compile_options(compositor_shell_private_runtime_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_dependencies(compositor_shell_private_runtime_test system.compositor)
+add_test(
+    NAME compositor_shell_private_runtime_test
+    COMMAND compositor_shell_private_runtime_test $<TARGET_FILE:system.compositor>
+)
+set_tests_properties(
+    compositor_shell_private_runtime_test
+    PROPERTIES LABELS "m3-display;m4-shell"
+)
