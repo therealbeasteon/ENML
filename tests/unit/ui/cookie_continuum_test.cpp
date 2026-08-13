@@ -1,6 +1,8 @@
 #include <cstdlib>
 
 #include <os/ui/cookie_continuum.hpp>
+#include <os/ui/home.hpp>
+#include <os/ui/layout_policy.hpp>
 
 namespace {
 void require(bool condition) {
@@ -62,6 +64,40 @@ int main() {
     require(cookie_index_policy_valid(left_index));
     require(left_index.side == ThreadSide::left);
 
+    const auto phone_layout = resolve_home_layout_policy(right_hand_phone);
+    require(phone_layout.composition == HomeComposition::reach_biased);
+    require(phone_layout.index_edge_reachable);
+    require(preferred_reach_zone(right_hand_phone, HomeRegion::index) == ReachZone::primary);
+    require(preferred_reach_zone(right_hand_phone, HomeRegion::now) == ReachZone::primary);
+    require(preferred_reach_zone(right_hand_phone, HomeRegion::pinned) == ReachZone::secondary);
+
+    HomeObject pinned {
+        .id = HomeObjectId{1U},
+        .kind = HomeObjectKind::application,
+        .preferred_region = HomeRegion::pinned,
+        .privacy = HomePrivacyClass::public_metadata,
+        .preferred_span_x = 1U,
+        .preferred_span_y = 1U,
+        .user_pinned = true,
+        .remote_enrichment_allowed = false,
+    };
+    require(home_object_valid(pinned));
+
+    HomeObject predicted_pinned = pinned;
+    predicted_pinned.id = HomeObjectId{2U};
+    predicted_pinned.user_pinned = false;
+    require(!home_object_valid(predicted_pinned));
+
+    HomeObject contextual = predicted_pinned;
+    contextual.preferred_region = HomeRegion::now;
+    require(home_object_valid(contextual));
+
+    HomeObject secret_remote = contextual;
+    secret_remote.id = HomeObjectId{3U};
+    secret_remote.privacy = HomePrivacyClass::secret;
+    secret_remote.remote_enrichment_allowed = true;
+    require(!home_object_valid(secret_remote));
+
     const DeviceProfile foldable {
         .width_q6 = 1536U * 64U,
         .height_q6 = 1840U * 64U,
@@ -77,6 +113,9 @@ int main() {
     const auto fold_index = resolve_cookie_index(foldable, false);
     require(cookie_index_policy_valid(fold_index));
     require(fold_index.side == ThreadSide::split);
+    const auto fold_layout = resolve_home_layout_policy(foldable);
+    require(fold_layout.composition == HomeComposition::seam_split);
+    require(fold_layout.reserve_center_seam);
 
     CookieIndexPolicy reshuffling = right_index;
     reshuffling.prediction_may_reorder_main_index = true;
