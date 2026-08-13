@@ -32,12 +32,18 @@ holds the full reference policy.
 | Package and application lifecycle (M1) | Complete |
 | Storage, keys, service broker, runtime session (M2) | Complete |
 | Display, compositor, semantic UI and accessibility (M3) | Complete |
-| Trusted phone shell and product security (M4) | Foundation merged, remainder in flight |
+| Trusted phone shell and product security (M4) | Through M4.10g merged, remainder in flight |
 | Verified boot evidence (M5) | Designed and tested; no platform produces the evidence yet |
 | Device access policy, time protection (M6) | Policy complete; no platform enforces it yet |
-| Cookie Kernel (M7) | ABI, host-testable core and AArch64 stage-1 translation merged |
+| Cookie Kernel (M7) | Through M7.5a merged — ABI, host-testable core, first real AArch64 machine operations |
 
 `docs/ROADMAP.md` is the plan of record from here to a shippable device.
+
+**A caution about "merged".** M4.10h, M7.5b and M7.5c report as merged on GitHub
+but are absent from `main`. Each was merged into a stack parent that had already
+been merged to `main` moments earlier, so the content never arrived. Their
+commits survive in the open stack branches and are recovered by landing those
+stacks. Check ancestry rather than PR state.
 
 Three statements that belong with any claim about Cookie:
 

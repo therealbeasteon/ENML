@@ -22,10 +22,10 @@ Measured on `main` at `19be516`, not claimed:
 | Package and application lifecycle (M1) | Complete |
 | Storage, keys, broker, runtime session (M2) | Complete |
 | Display, compositor, semantic UI (M3) | Complete |
-| Trusted phone shell and product security (M4) | Foundation merged; **13 PRs open** |
+| Trusted phone shell and product security (M4) | Through M4.10g merged; **13 PRs open** |
 | Verified boot evidence (M5) | Designed and tested; nothing produces the evidence |
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
-| Cookie Kernel (M7) | ABI, core state machines, AArch64 stage-1 merged; **9 PRs open** |
+| Cookie Kernel (M7) | Through M7.5a merged; **9 PRs open** |
 
 Roughly 40,000 lines of implementation against 25,000 lines of test. Zero
 `TODO`/`FIXME`/`HACK` markers in the tree. Twelve CI workflows, all green on
@@ -70,6 +70,30 @@ Diagnosed:
 | M4.1 (supervised phone shell) | #28 | None — fully green since 2026-08-10, simply never merged. |
 
 Every stack base is also behind `main` and needs rebasing.
+
+### Stranded merges
+
+Three milestones report as merged on GitHub but are **not in `main`**:
+
+| Milestone | PR | Merged into | Recovered by |
+| --- | --- | --- | --- |
+| M4.10h authenticated profile storage format | #33 | `m4-10g` | `m4-10i` (PR #34) |
+| M7.5b real AArch64 exception entry | #46 | `m7-5` | `m7-5d` (PR #52) |
+| M7.5c AArch64 stage-1 translation | #51 | `m7-5b` | `m7-5d` (PR #52) |
+
+The cause is a merge-ordering race, and the M4.10h case shows it precisely: PR
+#32 merged `m4-10g` into `main` at 11:58:17, and PR #33 merged `m4-10h` into
+`m4-10g` at 11:58:24. Seven seconds decided whether a milestone shipped. The
+parent had already left, so the child merged into a branch nothing was going to
+read again.
+
+Nothing is lost — every stranded commit survives in the open stack branch above
+it, and landing the stacks bottom-up onto `main` recovers all three. But it is
+the reason this phase outranks everything else, and it produces a rule worth
+keeping: **a closed PR is not evidence that its work is in `main`.** Check
+ancestry. `git merge-base --is-ancestor origin/<branch> origin/main` answers it
+in one command, and the twelve green workflows on `main` did not, because code
+that never arrived cannot fail a gate.
 
 **Order of work:** land #28 first (green, no dependants), then each stack
 bottom-up, fixing the base defect and rebasing before pushing the next link.
