@@ -95,7 +95,7 @@ int main() {
     require((user_leaf & descriptor::unprivileged_execute_never) == 0ULL);
 
     // A process translation root becomes immutable before it is executable.
-    require(builder.seal());
+    require(static_cast<bool>(builder.seal()));
     require(builder.executable_process_root());
     require(!builder.map_user_page(
         user_va + architectural_page_size,
@@ -107,14 +107,14 @@ int main() {
     // bounded boot arena; sealing A does not freeze construction of B.
     EarlyStage1Builder other{arena};
     auto other_root = other.initialize();
-    require(other_root);
+    require(static_cast<bool>(other_root));
     require(other_root.value() != root.value());
     constexpr std::uint64_t other_user_pa = 0x0000'0000'8300'0000ULL;
-    require(other.map_user_page(
+    require(static_cast<bool>(other.map_user_page(
         user_va,
         other_user_pa,
-        MachinePermissions::read_execute));
-    require(other.seal());
+        MachinePermissions::read_execute)));
+    require(static_cast<bool>(other.seal()));
     require(other.executable_process_root());
 
     auto* other_l1 = reinterpret_cast<std::uint64_t*>(
@@ -128,9 +128,9 @@ int main() {
 
     // Teardown is an explicit lifecycle transition. Only after begin_retire()
     // can leaf mappings be destructively removed.
-    require(builder.begin_retire());
+    require(static_cast<bool>(builder.begin_retire()));
     require(builder.lifecycle() == EarlyStage1Builder::Lifecycle::retiring);
-    require(builder.unmap_page(user_va));
+    require(static_cast<bool>(builder.unmap_page(user_va)));
     auto retired_user = builder.mapped(user_va);
     require(retired_user && !retired_user.value());
 
