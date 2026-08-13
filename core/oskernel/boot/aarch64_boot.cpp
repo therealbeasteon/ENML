@@ -59,6 +59,7 @@ constexpr os::kernel::ThreadId process_b_thread = 2U;
 constexpr os::kernel::Priority process_priority = 4U;
 
 volatile std::uint32_t* boot_uart = nullptr;
+std::uint64_t boot_start_now = 0U;
 std::uint32_t el0_yield_count = 0U;
 std::uint32_t timer_irq_count = 0U;
 os::kernel::aarch64::GicV3PrimaryCpu boot_gic{};
@@ -115,6 +116,21 @@ void uart_write_char(char value) noexcept {
 
 void uart_write(std::string_view text) noexcept {
     for (char c : text) uart_write_char(c);
+}
+
+// TEMPORARY diagnostic for the M7.5i SCHED_EVENT investigation.
+void uart_write_u64(std::uint64_t value) noexcept {
+    char digits[20];
+    std::size_t count = 0U;
+    if (value == 0U) {
+        uart_write_char('0');
+        return;
+    }
+    while (value != 0U && count < sizeof(digits)) {
+        digits[count++] = static_cast<char>('0' + (value % 10U));
+        value /= 10U;
+    }
+    while (count > 0U) uart_write_char(digits[--count]);
 }
 
 [[nodiscard]] const os::kernel::DiscoveredDevice*
@@ -237,6 +253,7 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
 
     os::kernel::aarch64::ExceptionFrame live{};
     const auto now = os::kernel::machine_monotonic_nanoseconds();
+    boot_start_now = now;
     auto start = boot_preemption.start(
         boot_scheduler, boot_translations, boot_epochs, now, live);
     if (!start || start.value().next != process_a_thread ||
@@ -285,6 +302,9 @@ extern "C" void cookie_kernel_syscall_entry(
             halt();
         }
         const auto now = os::kernel::machine_monotonic_nanoseconds();
+        uart_write("COOKIE:DIAG:ELAPSED_NS:");
+        uart_write_u64(now >= boot_start_now ? now - boot_start_now : 0U);
+        uart_write("\n");
         auto rescheduled = boot_preemption.reschedule(
             boot_scheduler, boot_translations, boot_epochs, now, *frame);
         if (!rescheduled) uart_write("COOKIE:DIAG:RESCHED_ERR\n");
