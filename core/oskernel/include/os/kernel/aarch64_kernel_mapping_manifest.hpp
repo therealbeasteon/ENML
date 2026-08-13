@@ -6,6 +6,7 @@
 
 #include <os/core/error.hpp>
 #include <os/core/result.hpp>
+#include <os/kernel/aarch64_translation.hpp>
 #include <os/kernel/machine.hpp>
 
 namespace os::kernel::aarch64 {
@@ -36,11 +37,9 @@ struct KernelMappingManifestEntry final {
     }
 };
 
-// Bring-up-only manifest for the pre-TTBR1 regime. Process roots may replay
-// only this explicit EL1 mapping set; user mappings are never represented here.
-// The mature design will replace this duplication with a stable kernel TTBR1
-// domain, but until then the manifest prevents accidental copying of one
-// process's EL0 mappings into another root.
+// Bring-up manifest: this is the one reviewed list of EL1 mappings. M7.7 uses
+// the same physical ranges and attributes to derive the future TTBR1 aliases;
+// it does not maintain a second hand-written kernel map.
 class KernelMappingManifest final {
 public:
     static constexpr std::size_t max_entries = 24U;
@@ -65,6 +64,49 @@ private:
     std::array<KernelMappingManifestEntry, max_entries> entries_ {};
     std::size_t count_ {0U};
 };
+
+// Cookie's first TTBR1 layout uses a direct, deterministic upper-region alias
+// for each reviewed physical kernel range. The alias is deliberately limited to
+// the same 39-bit span as TTBR1 so a mapping cannot wrap or escape the domain.
+[[nodiscard]] constexpr std::uint64_t kernel_virtual_alias(
+    std::uint64_t physical_address) noexcept {
+    return physical_address < user_virtual_limit
+        ? kernel_virtual_base + physical_address
+        : 0ULL;
+}
+
+[[nodiscard]] inline os::core::Result<KernelMappingManifest>
+project_kernel_manifest_to_upper(
+    const KernelMappingManifest& source) noexcept {
+    KernelMappingManifest projected{};
+    for (std::size_t i = 0U; i < source.size(); ++i) {
+        const auto& entry = source[i];
+        if (!page_aligned(entry.physical_base) ||
+            !page_aligned(entry.length) ||
+            entry.physical_base >= user_virtual_limit ||
+            entry.length > user_virtual_limit - entry.physical_base) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                kernel_mapping_manifest_errors::invalid);
+        }
+        const auto alias = kernel_virtual_alias(entry.physical_base);
+        if (alias == 0ULL || !kernel_stage1_virtual_address(alias)) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                kernel_mapping_manifest_errors::invalid);
+        }
+        auto added = projected.add({
+            .virtual_base = alias,
+            .physical_base = entry.physical_base,
+            .length = entry.length,
+            .permissions = entry.permissions,
+            .kind = entry.kind,
+            .role = entry.role,
+        });
+        if (!added) return added.error();
+    }
+    return projected;
+}
 
 [[nodiscard]] inline os::core::Result<void> replay_kernel_mapping_manifest(
     const KernelMappingManifest& manifest,

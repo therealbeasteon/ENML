@@ -66,6 +66,16 @@ label="${1:-kernel-line-count}"
 #                   than merely omitted, so that the exclusion is a decision on
 #                   the page instead of an accident of a glob.
 #
+#   aarch64_kernel_translation_domain.hpp  A reviewed contract for the future
+#                   no-stack split-TTBR0/TTBR1 machine transition (M7.7). Its
+#                   own comments say so: "construction, sealing and hardware
+#                   activation remain separate transactions." Nothing in
+#                   cookie_kernel_aarch64_boot includes it yet - only its own
+#                   unit test does - so it is not in the shipped image. It
+#                   moves into `machine` the moment something in the boot path
+#                   includes it, which is the whole point of listing it here
+#                   by name rather than letting it slip in unclassified.
+#
 #   CMakeLists.txt, *.ld.in  Build description. Not code that runs.
 #
 # Any file under core/oskernel that appears in neither a category nor the
@@ -214,6 +224,7 @@ entry_files=(
 not_kernel=(
     "core/oskernel/CMakeLists.txt"
     "core/oskernel/boot/aarch64_qemu.ld.in"
+    "core/oskernel/include/os/kernel/aarch64_kernel_translation_domain.hpp"
     "core/oskernel/include/os/kernel/machine_host.hpp"
     "core/oskernel/src/machine_host.cpp"
 )
@@ -334,11 +345,25 @@ not_kernel=(
 # replayed to answer a second one it was never granted for, which is worth
 # stating beside the number: this is the surface most exposed to
 # unprivileged, potentially hostile callers of any code landed so far.
+# Raised a ninth time, by M7.7: machine 2661 -> 2757, entry 751 -> 826,
+# total 7505 -> 7676. core/oskernel/include/os/kernel/aarch64_kernel_
+# translation_domain.hpp - the actual KernelTranslationDomain contract this
+# milestone names - is excluded above (see not_kernel) because nothing in
+# the boot image includes it yet; what is counted here is the machinery it
+# is written against and the boot path it will eventually be spliced into.
+# machine gains Stage1Region (lower/upper) on EarlyStage1Builder, so a
+# kernel-region root can be distinguished from a process root and refuse
+# map_user_page() the way translation_root_errors::wrong_region already
+# implies. entry gains named per-stage failure diagnostics (fail(stage))
+# replacing bare halt() at boot's roughly forty stop points, so a failure
+# reads as which stage rejected the machine rather than as an opaque QEMU
+# timeout - the same category of fix M7.5's own halt-site work made once
+# already, applied to the sites this milestone's review passed over them.
 core_ceiling=2872
-machine_ceiling=2661
+machine_ceiling=2757
 discovery_ceiling=1221
-entry_ceiling=751
-total_ceiling=7505
+entry_ceiling=826
+total_ceiling=7676
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

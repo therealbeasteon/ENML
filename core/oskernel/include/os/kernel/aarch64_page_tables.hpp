@@ -65,7 +65,13 @@ namespace translation_root_errors {
 inline constexpr std::uint32_t sealed = 100U;
 inline constexpr std::uint32_t not_sealed = 101U;
 inline constexpr std::uint32_t retiring = 102U;
+inline constexpr std::uint32_t wrong_region = 103U;
 } // namespace translation_root_errors
+
+enum class Stage1Region : std::uint8_t {
+    lower = 0U,
+    upper = 1U,
+};
 
 // Page-only stage-1 table builder used before the general VM subsystem exists.
 // Intermediate table pages are monotonic in the early regime: leaf mappings can
@@ -81,9 +87,14 @@ public:
     };
 
     constexpr EarlyStage1Builder() noexcept = default;
-    explicit constexpr EarlyStage1Builder(EarlyPageArena& arena) noexcept : arena_(&arena) {}
+    explicit constexpr EarlyStage1Builder(
+        EarlyPageArena& arena,
+        Stage1Region region = Stage1Region::lower) noexcept
+        : arena_(&arena), region_(region) {}
 
-    [[nodiscard]] os::core::Result<void> attach_arena(EarlyPageArena& arena) noexcept {
+    [[nodiscard]] os::core::Result<void> attach_arena(
+        EarlyPageArena& arena,
+        Stage1Region region = Stage1Region::lower) noexcept {
         if (arena_ != nullptr || root_ != 0ULL || lifecycle_ != Lifecycle::uninitialized) {
             return os::core::make_error(
                 os::core::ErrorDomain::kernel,
@@ -95,6 +106,7 @@ public:
                 machine_errors::invalid_range);
         }
         arena_ = &arena;
+        region_ = region;
         return {};
     }
 
@@ -156,6 +168,11 @@ public:
         MachinePermissions permissions) noexcept {
         auto mutable_result = require_building();
         if (!mutable_result) return mutable_result.error();
+        if (region_ != Stage1Region::lower) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                translation_root_errors::wrong_region);
+        }
         return install_leaf(
             virtual_address,
             user_page_descriptor(physical_address, permissions));
@@ -196,14 +213,27 @@ public:
 
     [[nodiscard]] std::uint64_t root_physical() const noexcept { return root_; }
     [[nodiscard]] Lifecycle lifecycle() const noexcept { return lifecycle_; }
+    [[nodiscard]] Stage1Region region() const noexcept { return region_; }
     [[nodiscard]] bool executable_process_root() const noexcept {
-        return root_ != 0ULL && lifecycle_ == Lifecycle::sealed;
+        return region_ == Stage1Region::lower &&
+               root_ != 0ULL && lifecycle_ == Lifecycle::sealed;
+    }
+    [[nodiscard]] bool sealed_kernel_root() const noexcept {
+        return region_ == Stage1Region::upper &&
+               root_ != 0ULL && lifecycle_ == Lifecycle::sealed;
     }
 
 private:
     EarlyPageArena* arena_ {nullptr};
     std::uint64_t root_ {0ULL};
     Lifecycle lifecycle_ {Lifecycle::uninitialized};
+    Stage1Region region_ {Stage1Region::lower};
+
+    [[nodiscard]] bool accepts_virtual_address(std::uint64_t virtual_address) const noexcept {
+        return region_ == Stage1Region::lower
+            ? user_stage1_virtual_address(virtual_address)
+            : kernel_stage1_virtual_address(virtual_address);
+    }
 
     [[nodiscard]] os::core::Result<void> require_building() const noexcept {
         if (lifecycle_ == Lifecycle::sealed) {
@@ -233,7 +263,7 @@ private:
         if (root_ == 0ULL) {
             return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
         }
-        if (!page_aligned(virtual_address) || !stage1_virtual_address(virtual_address)) {
+        if (!page_aligned(virtual_address) || !accepts_virtual_address(virtual_address)) {
             return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::alignment);
         }
         if (leaf == 0ULL) {
@@ -260,7 +290,7 @@ private:
         if (root_ == 0ULL) {
             return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
         }
-        if (!page_aligned(virtual_address) || !stage1_virtual_address(virtual_address)) {
+        if (!page_aligned(virtual_address) || !accepts_virtual_address(virtual_address)) {
             return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::alignment);
         }
 

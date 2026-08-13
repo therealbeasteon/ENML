@@ -5,14 +5,18 @@
 #include <cstdint>
 
 namespace {
-void require(bool value) { if (!value) std::abort(); }
+// Templated so a Result can be passed directly. Result's operator bool is
+// explicit, which satisfies the contextual conversion in `!value` but not
+// an implicit conversion to a bool parameter.
+template <typename T>
+void require(const T& value) { if (!value) std::abort(); }
 }
 
 int main() {
     using namespace os::kernel;
     using namespace os::kernel::aarch64;
 
-    alignas(4096) std::array<std::byte, 14U * 4096U> storage{};
+    alignas(4096) std::array<std::byte, 20U * 4096U> storage{};
     const auto begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(storage.data()));
     const auto end = begin + storage.size();
@@ -24,6 +28,7 @@ int main() {
     auto root = builder.initialize();
     require(static_cast<bool>(root));
     require(root.value() == begin);
+    require(builder.region() == Stage1Region::lower);
     require(builder.lifecycle() == EarlyStage1Builder::Lifecycle::building);
 
     constexpr std::uint64_t va = 0x0000'0000'4000'0000ULL;
@@ -35,6 +40,14 @@ int main() {
     auto mapped = builder.map_page(
         va, pa, MachinePermissions::read_execute, MachineMemoryKind::normal);
     require(static_cast<bool>(mapped));
+
+    // Lower/process builders cannot acquire mappings in the future TTBR1 range.
+    auto lower_to_kernel = builder.map_page(
+        kernel_virtual_base,
+        pa + 0x10000ULL,
+        MachinePermissions::read_write,
+        MachineMemoryKind::normal);
+    require(!lower_to_kernel);
 
     auto second = builder.map_page(
         va + 4096ULL,
@@ -97,14 +110,13 @@ int main() {
     // A process translation root becomes immutable before it is executable.
     require(static_cast<bool>(builder.seal()));
     require(builder.executable_process_root());
+    require(!builder.sealed_kernel_root());
     require(!builder.map_user_page(
         user_va + architectural_page_size,
         user_pa + architectural_page_size,
         MachinePermissions::read_write));
     require(!builder.unmap_page(user_va));
 
-    // A second process receives a genuinely separate L1 root from the same
-    // bounded boot arena; sealing A does not freeze construction of B.
     EarlyStage1Builder other{arena};
     auto other_root = other.initialize();
     require(static_cast<bool>(other_root));
@@ -125,6 +137,44 @@ int main() {
     auto* other_l3 = reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(other_l3_pa));
     require((other_l3[level3_index(user_va)] & page_address_mask) == other_user_pa);
     require((user_l3[level3_index(user_va)] & page_address_mask) == user_pa);
+
+    // Upper/kernel builders accept only the TTBR1 canonical region and cannot
+    // mint EL0-accessible mappings through map_user_page().
+    EarlyStage1Builder kernel_builder{arena, Stage1Region::upper};
+    auto kernel_root = kernel_builder.initialize();
+    require(static_cast<bool>(kernel_root));
+    require(kernel_builder.region() == Stage1Region::upper);
+    constexpr std::uint64_t kernel_va = kernel_virtual_base + 0x0020'0000ULL;
+    constexpr std::uint64_t kernel_pa = 0x0000'0000'8400'0000ULL;
+    require(static_cast<bool>(kernel_builder.map_page(
+        kernel_va,
+        kernel_pa,
+        MachinePermissions::read_execute,
+        MachineMemoryKind::normal)));
+    require(!kernel_builder.map_page(
+        user_va,
+        kernel_pa + architectural_page_size,
+        MachinePermissions::read_write,
+        MachineMemoryKind::normal));
+    auto upper_user_attempt = kernel_builder.map_user_page(
+        kernel_va + architectural_page_size,
+        kernel_pa + architectural_page_size,
+        MachinePermissions::read_write);
+    require(!upper_user_attempt);
+    require(upper_user_attempt.error().code == translation_root_errors::wrong_region);
+    require(static_cast<bool>(kernel_builder.seal()));
+    require(kernel_builder.sealed_kernel_root());
+    require(!kernel_builder.executable_process_root());
+
+    auto* kernel_l1 = reinterpret_cast<std::uint64_t*>(
+        static_cast<std::uintptr_t>(kernel_root.value()));
+    const auto kernel_l2_pa = kernel_l1[level1_index(kernel_va)] & page_address_mask;
+    auto* kernel_l2 = reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(kernel_l2_pa));
+    const auto kernel_l3_pa = kernel_l2[level2_index(kernel_va)] & page_address_mask;
+    auto* kernel_l3 = reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(kernel_l3_pa));
+    const auto kernel_leaf = kernel_l3[level3_index(kernel_va)];
+    require((kernel_leaf & page_address_mask) == kernel_pa);
+    require((kernel_leaf & (3ULL << 6U)) == descriptor::ap_el1_ro_el0_none);
 
     // Teardown is an explicit lifecycle transition. Only after begin_retire()
     // can leaf mappings be destructively removed.

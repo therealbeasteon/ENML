@@ -38,7 +38,11 @@ target_compile_options(oskernel PRIVATE
 )
 
 option(EMNL_BUILD_AARCH64_BOOT_IMAGE "Build the freestanding Cookie AArch64 kernel image" OFF)
-set(EMNL_AARCH64_BOOT_LOAD_ADDRESS "0x40080000" CACHE STRING
+# QEMU virt reserves 0x40000000..0x40100000 for its generated DTB when using
+# the generic bare-metal loader. Keep Cookie's linked image outside that region.
+# The address remains a machine-port cache variable so physical boards can
+# supply their own non-overlapping placement without changing kernel code.
+set(EMNL_AARCH64_BOOT_LOAD_ADDRESS "0x40200000" CACHE STRING
     "Machine-port load address for the standalone AArch64 image")
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
@@ -133,7 +137,12 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         # inside FdtView::parse, building its Result return value. The fault
         # was taken before any of this code could report it.
         target_compile_options(cookie_kernel_aarch64_boot PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie -mstrict-align>
+            # -mgeneral-regs-only is required alongside it. Cookie does not
+            # enable or context-switch FP/SIMD state during early EL1 boot, so
+            # a vector instruction the compiler chose for a structure copy
+            # traps as undefined. The two flags cover different instruction
+            # choices and neither substitutes for the other.
+            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie -mstrict-align -mgeneral-regs-only>
             $<$<COMPILE_LANGUAGE:ASM>:-ffreestanding -fno-pie>)
         target_link_options(cookie_kernel_aarch64_boot PRIVATE
             -nostdlib

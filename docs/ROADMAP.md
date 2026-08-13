@@ -302,7 +302,7 @@ no branch, no document; M7.10 is built and enforced by this change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 7,505 lines, a ratchet rather than the 605-line
+  ceiling is the measured 7,676 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -332,10 +332,10 @@ cannot be laundered between them:
 | Category | Lines |
 | --- | --- |
 | core — privileged portable runtime | 2,872 |
-| machine — the AArch64 port | 2,661 |
+| machine — the AArch64 port | 2,757 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,221 |
-| entry — reset vector, freestanding memory | 751 |
-| **total** | **7,505** |
+| entry — reset vector, freestanding memory | 826 |
+| **total** | **7,676** |
 
 `core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -403,7 +403,17 @@ cache-attack class this project already refuses to ship AES with; 570 → 751
 in `entry` for wiring it through boot. Reply seals exist so a capability
 that answered one request cannot be replayed against a second it was never
 granted for — the most exposed surface to unprivileged callers landed so
-far. total 5,639 → 7,505. None of it is discretionary — see
+far. total 5,639 → 7,505. A ninth raise, by M7.7, followed: machine
+2,661 → 2,757, entry 751 → 826, total 7,505 → 7,676. The `KernelTranslationDomain`
+contract this milestone names is excluded from the count entirely (`not_kernel`,
+by name) because nothing in the boot image includes it yet — its own comments
+say construction, sealing and hardware activation stay separate transactions
+until a later milestone splices it in. What's counted is the machinery it is
+written against: `Stage1Region` (lower/upper) on the page-table builder, so a
+kernel-region root can refuse `map_user_page()` the way its own error code
+already implied; and named per-stage failure diagnostics replacing bare
+`halt()` at roughly forty boot stop points, so a failure reads as which stage
+rejected the machine rather than as an opaque QEMU timeout. None of it is discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 
