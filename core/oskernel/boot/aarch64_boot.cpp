@@ -127,6 +127,44 @@ void uart_write(std::string_view text) noexcept {
     halt();
 }
 
+// discover_hardware has five distinct ways to fail and, reported through one
+// halt, they were indistinguishable - which is how two successive guesses at
+// which one was firing both turned out to be wrong. The console is not up yet
+// (finding it requires the inventory this call did not produce), so the halt
+// address is the only channel available, and it carries one bit of
+// information unless there is one address per cause.
+[[gnu::noinline]] [[noreturn]] void halt_inv_cells() noexcept {
+    asm volatile("mov x20, #70" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_inv_reg() noexcept {
+    asm volatile("mov x20, #71" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_inv_depth() noexcept {
+    asm volatile("mov x20, #72" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_inv_exhausted() noexcept {
+    asm volatile("mov x20, #73" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_inv_property() noexcept {
+    asm volatile("mov x20, #74" ::: "x20");
+    halt();
+}
+
+[[noreturn]] void halt_inventory_error(os::core::Error error) noexcept {
+    switch (error.code) {
+    case os::kernel::hardware_inventory_errors::unsupported_cells: halt_inv_cells();
+    case os::kernel::hardware_inventory_errors::malformed_reg: halt_inv_reg();
+    case os::kernel::hardware_inventory_errors::depth_exhausted: halt_inv_depth();
+    case os::kernel::hardware_inventory_errors::inventory_exhausted: halt_inv_exhausted();
+    case os::kernel::hardware_inventory_errors::invalid_property: halt_inv_property();
+    default: halt_no_inventory();
+    }
+}
+
 [[nodiscard]] const os::kernel::DiscoveredDevice*
 find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
     for (std::size_t i = 0U; i < inventory.device_count; ++i) {
@@ -209,7 +247,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     auto fdt = os::kernel::FdtView::parse(dtb_blob);
     if (!fdt) halt_unparsable_fdt();
     auto inventory = os::kernel::discover_hardware(fdt.value());
-    if (!inventory) halt_no_inventory();
+    if (!inventory) halt_inventory_error(inventory.error());
 
     // Publish the UART the moment the device tree names it. Translation is
     // still off, so the physical address is directly addressable, and every
