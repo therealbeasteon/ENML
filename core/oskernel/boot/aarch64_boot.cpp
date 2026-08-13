@@ -246,7 +246,7 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
         halt();
     }
 
-    cookie_aarch64_enter_el0(live.elr_el1, live.sp_el0);
+    os::kernel::cookie_aarch64_enter_el0(live.elr_el1, live.sp_el0);
 }
 
 } // namespace
