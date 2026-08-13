@@ -288,22 +288,27 @@ not_kernel=(
 # exactly the kind of gap this ceiling exists to keep visible rather than
 # quietly under-reviewed.
 # Raised a seventh time, not by a milestone but by a defect fix: entry
-# 569 -> 577, total 5638 -> 5646. The M7.5i boot proof's contention check
+# 569 -> 570, total 5638 -> 5639. The M7.5i boot proof's contention check
 # was flaky under QEMU TCG on shared CI - Scheduler::choose() correctly
 # charges all elapsed real time since the last decision even while
 # uncontested (the anti-gaming property that stops a thread dodging its
-# charge by avoiding decision points), and a UART print plus two EL0/EL1
-# round trips was measured taking >2ms of guest-visible time, exhausting
-# process A's round-robin slice before contention with B was ever
-# introduced. Fixed by an extra, uncontested call to the same
-# event-driven reschedule() right after the print, which cannot switch or
-# arm a deadline (B is not runnable yet) and exists only to bank the
-# print's cost against a fresh decision point.
+# charge by avoiding decision points, which stays exactly as it is), and
+# two EL0/EL1 round trips plus a UART print were measured exceeding 2ms of
+# guest-visible time - kernel-internal servicing cost, not the user
+# thread's own work, and microseconds on real hardware - exhausting
+# process A's round-robin slice before this deliberate contention test
+# ever ran. Fixed by passing the still-current since-start() timestamp to
+# the contention-detecting reschedule() call instead of a fresh clock
+# read, which keeps this decision uncontested-in-effect regardless of
+# emulator speed; machine_set_timer() reads the real hardware counter
+# internally, so the deadline it arms is still correct relative to actual
+# elapsed time. Genuine elapsed time returns for the on_timer() paths,
+# which take their timestamp from the delivered interrupt.
 core_ceiling=1674
 machine_ceiling=2174
 discovery_ceiling=1221
-entry_ceiling=577
-total_ceiling=5646
+entry_ceiling=570
+total_ceiling=5639
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
