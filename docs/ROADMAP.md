@@ -14,7 +14,7 @@ only the *order*, the *exit criteria*, and the *honest position* at each phase.
 
 ## Where the project actually is
 
-Measured on `main` at `d8bb620`, not claimed:
+Measured on `main` at `ed26bf6`, not claimed:
 
 | Layer | State |
 | --- | --- |
@@ -25,7 +25,7 @@ Measured on `main` at `d8bb620`, not claimed:
 | Trusted phone shell and product security (M4) | Through M4.15 merged; **exit criteria not all verified** |
 | Verified boot evidence (M5) | Designed and tested; nothing produces the evidence |
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
-| Cookie Kernel (M7) | Through M7.5d merged; **boots on QEMU virt**; 7 PRs open (M7.5f–M7.8) |
+| Cookie Kernel (M7) | Through M7.8 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption**; M7.9 not started |
 
 Roughly 49,000 lines of implementation against 29,000 lines of test, both grown
 by the backlog rather than by new work. Zero `TODO`/`FIXME`/`HACK` markers in
@@ -253,15 +253,27 @@ markers `COOKIE:M7.5d:MMU` and `COOKIE:M7.5d:GUARDED` are what the boot gate
 watches for. This is the first point in the project at which the kernel is an
 artefact that runs rather than a library that is tested.
 
-Remaining, mostly already written and sitting in the M7.5e–M7.8 stack:
-descriptor teardown and TLBI (M7.5e — PR #53 is closed without being merged and
-`m7-5e-aarch64-unmap-tlbi` is not an ancestor of `main`, so the work exists on
-the branch and needs relanding rather than rewriting; this is the ancestry rule
-from Phase 0 applying to the phase that follows it), the first real EL0
-process and syscall return, GICv3 timer delivery, a tickless preemptive
-scheduler, generation-bound address-space epochs with ASID quarantine,
-capability-addressed native IPC with reply seals, a stable translation domain,
-and execution authority bound to address-space generations.
+The M7.5e–M7.8 stack is landed *(complete, as of `main` at `ed26bf6`)*.
+Descriptor teardown and TLBI (M7.5e — PR #53 had closed unmerged when its base
+branch was deleted on merge; PR #71 relanded the same work from the surviving
+branch rather than rewriting it, the ancestry rule from Phase 0 applied to the
+phase that follows it), the first real EL0 process and syscall return
+(M7.5f), GICv3 timer delivery (M7.5g), a tickless preemptive scheduler
+(M7.5h), generation-bound address-space epochs with ASID quarantine (M7.5i),
+capability-addressed native IPC with reply seals (M7.6a), a stable
+translation domain (M7.7), and execution authority bound to address-space
+generations (M7.8) are all in `main`. Seven PRs, seven relands: each stack
+branch was based on stale content and needed the same treatment Phase 0
+established — merge `main` in, resolve conflicts by understanding intent
+rather than picking a side mechanically, fix the mechanical defect blocking
+it, verify, land, move to the next. Two defects were genuinely novel rather
+than stale-base noise and are worth carrying forward as lessons: a second,
+independent DTB walker (`gic_v3_discovery.cpp`) that hadn't inherited the
+M7.5d cells-tolerance fix already present in `hardware_inventory.cpp`, and a
+namespace-scope reference (`boot_scheduler`) initialized through a
+non-constexpr accessor call, which requires dynamic initialization the
+freestanding image's linker script forbids by design. Both are recorded in
+project memory so they don't need rediscovering.
 
 ### The pre-MMU window
 
@@ -442,34 +454,41 @@ processes, delivers timer and device interrupts to user-space handlers, passes
 the full EMNL wire-format and capability fuzz corpus, and reports a trusted line
 count under the declared ceiling.
 
-One of the five is met. Taken in order:
+Three of the five are met, one is partially met, one is not. Taken in order:
 
 - *Boots on QEMU virt* — **met**, and gated: `kernel-arm64-native` greps the
   serial log for both markers and fails the workflow without them.
-- *Schedules multiple EL0 processes* — **not met.** No EL0 process exists on
-  `main` at all. `cookie_kernel_syscall_entry` currently panics with
-  `COOKIE:PANIC:EARLY_SVC` on any lower-EL syscall, on the grounds that nothing
-  should be down there yet, and boot ends in a context switch onto a guarded
-  kernel stack that parks in `wfe`. The scheduler exists and is tested on the
-  host; it has never scheduled anything on the machine. M7.5f–M7.5i.
-- *Delivers timer and device interrupts to user-space handlers* — **not met.**
-  Timer delivery is M7.5g and still on a branch. User-space handlers are M7.9,
-  which does not exist, so the second half of this criterion has no work item
-  behind it beyond the bullet above.
-- *Passes the full EMNL wire-format and capability fuzz corpus* — **not met, and
-  not currently measurable.** `fuzz/` holds targets for boot state, device
-  access, the IPC decoder and RPC errors, the key registry snapshot, the OSIDL
-  compiler, package manifests, storage paths and time protection. There is no
-  target for the kernel ABI and none for the kernel capability model. Both are
-  bounded typed formats of exactly the kind every other one in that list is
-  fuzzed as, and the M7.0 argument that the kernel is the part small enough to
-  review completely applies with more force, not less, to the part that parses
-  untrusted syscall arguments.
-- *Reports a trusted line count under the declared ceiling* — **not met on
-  either half.** No ceiling has been declared and no gate computes the count;
-  `.github/scripts/` holds hardening, hygiene and Linux-coupling checks and
-  nothing that counts lines. See the section above for why the number is the
-  easy part.
+- *Schedules multiple EL0 processes* — **met.** Two isolated EL0 processes run
+  under `main` today, gated by `kernel-arm64-native`: process A and process B
+  each get their own sealed translation root, ASID and address-space epoch,
+  communicate over Cookie's own native IPC with reply seals (M7.6a), and are
+  preempted between each other by a real GICv3 timer interrupt, proven by the
+  `COOKIE:M7.5i:CONTENTION_ARMED` → `A_TO_B` → `B_TO_A` → `ISOLATED_A_B_A`
+  marker sequence. `cookie_kernel_syscall_entry` no longer panics on every
+  lower-EL syscall; it decodes and dispatches real ones.
+- *Delivers timer and device interrupts to user-space handlers* — **partially
+  met.** The timer half is real: GICv3 timer IRQs are delivered to EL1,
+  correctly attributed, and drive the preemption above (M7.5g). The "device
+  interrupts to user-space handlers" half — an arbitrary driver process owning
+  its own interrupt line — has no work item behind it yet, because that is
+  M7.9's job and M7.9 does not exist: no source, no branch, no document.
+- *Passes the full EMNL wire-format and capability fuzz corpus* — **not met,
+  and not currently measurable.** `fuzz/` gained an `ipc/` target during this
+  stack, but it fuzzes `os::ipc` — the service-layer RPC decoder used over the
+  Linux substrate's `SOCK_SEQPACKET` transport — not `os::kernel`'s own native
+  IPC syscall decoders (`decode_ipc_send_syscall` and siblings) or capability
+  model that M7.6a and M7.8 just added. Those remain unfuzzed. Both are
+  bounded typed formats of exactly the kind every other target in that
+  directory is fuzzed as, and the M7.0 argument that the kernel is the part
+  small enough to review completely applies with more force, not less, to the
+  part that parses untrusted syscall arguments from unprivileged EL0 code.
+- *Reports a trusted line count under the declared ceiling* — **met**, and has
+  been since M7.10 landed. The ceiling moved ten times across this stack —
+  once per milestone plus one defect fix — each raise landing in the same diff
+  as the lines it covers, with the justification recorded in
+  `.github/scripts/kernel-line-count.sh` and restated in
+  `docs/M7_10_LINE_COUNT.md`. The gate has never gone more than one commit
+  without being either green or in the process of an honest, reviewed raise.
 
 **Honest position:** an unaudited new kernel is genuinely worse than the mature
 one it replaces, for as long as the intermediate state lasts. That cost is
