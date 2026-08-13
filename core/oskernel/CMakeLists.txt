@@ -5,6 +5,10 @@ add_library(oskernel STATIC
     src/interrupt.cpp
     src/scheduler.cpp
     src/kernel.cpp
+    src/fdt.cpp
+    src/hardware_inventory.cpp
+    src/boot_memory.cpp
+    src/boot_memory_plan.cpp
     src/machine_host.cpp
 )
 
@@ -23,13 +27,15 @@ target_compile_options(oskernel PRIVATE
 
 # The host machine remains the executable contract implementation while Cookie
 # is migrating off Linux. On a native AArch64 builder, compile the real machine
-# backend, vector entry and context-switch assembly as a separate archive.
-# Assembly is enabled only here so architecture code cannot leak into portable
-# targets by accident.
+# backend, stage-1 activation, vector entry/dispatch and context-switch assembly
+# as a separate archive. Assembly is enabled only here so architecture code
+# cannot leak into portable targets by accident.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     enable_language(ASM)
     add_library(oskernel_machine_aarch64 STATIC
         src/machine_aarch64.cpp
+        src/aarch64_translation.cpp
+        src/aarch64_entry.cpp
         src/aarch64_vectors.S
         src/aarch64_context_switch.S
     )
