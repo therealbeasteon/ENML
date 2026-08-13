@@ -122,6 +122,10 @@ void uart_write(std::string_view text) noexcept {
     asm volatile("mov x20, #4" ::: "x20");
     halt();
 }
+[[gnu::noinline]] [[noreturn]] void halt_no_vectors() noexcept {
+    asm volatile("mov x20, #5" ::: "x20");
+    halt();
+}
 
 [[nodiscard]] const os::kernel::DiscoveredDevice*
 find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
@@ -188,6 +192,17 @@ extern "C" void cookie_kernel_syscall_entry(
 }
 
 extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physical) noexcept {
+    // Vectors first, before any code that can fault. VBAR_EL1 has no
+    // architectural reset value, so until this runs a synchronous exception
+    // vectors to whatever base the implementation happens to start with - on
+    // this board zero, where 0x200 is flash rather than a handler. The machine
+    // then executes flash contents and the failure presents as a hang with no
+    // handler having run and no halt having been reached.
+    //
+    // Installing them here costs one system register write and makes every
+    // fault below land somewhere that identifies itself.
+    if (!os::kernel::aarch64::install_exception_vectors()) halt_no_vectors();
+
     const auto dtb_blob = bounded_dtb(dtb_physical);
     if (dtb_blob.empty()) halt_no_dtb();
 
@@ -279,13 +294,11 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             static_cast<std::uintptr_t>(plan.value().kernel_stack.base),
             static_cast<std::size_t>(plan.value().kernel_stack.size))) fail("MAP_STACK");
 
-    // Vectors before translation, not after. Enabling the MMU is the single
-    // most likely instruction in this function to fault, and installing the
-    // handler afterwards leaves precisely that fault with nowhere to go - the
-    // CPU takes it to whatever VBAR_EL1 happened to contain at reset and the
-    // machine locks up silently. Vectors are valid to install with translation
-    // off, so there is no reason to order it the other way.
-    if (!os::kernel::aarch64::install_exception_vectors()) fail("VECTORS");
+    // Vectors were installed at entry and stay installed across the MMU
+    // transition: VBAR_EL1 holds a virtual address that the identity mapping
+    // above keeps valid, so enabling translation does not invalidate them.
+    // This matters most for the activation itself, which is the single most
+    // likely instruction here to fault.
     if (!os::kernel::aarch64::activate_stage1_translation(root.value())) fail("ACTIVATE_MMU");
     uart_write("COOKIE:M7.5d:MMU\n");
 
