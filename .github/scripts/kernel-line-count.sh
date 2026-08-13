@@ -149,6 +149,7 @@ machine_files=(
     "core/oskernel/src/aarch64_entry.cpp"
     "core/oskernel/src/aarch64_translation.cpp"
     "core/oskernel/src/aarch64_vectors.S"
+    "core/oskernel/src/aarch64_el0.S"
     "core/oskernel/src/machine_aarch64.cpp"
 )
 
@@ -156,10 +157,12 @@ discovery_files=(
     "core/oskernel/include/os/kernel/boot_memory.hpp"
     "core/oskernel/include/os/kernel/boot_memory_plan.hpp"
     "core/oskernel/include/os/kernel/fdt.hpp"
+    "core/oskernel/include/os/kernel/gic_v3_discovery.hpp"
     "core/oskernel/include/os/kernel/hardware_inventory.hpp"
     "core/oskernel/src/boot_memory.cpp"
     "core/oskernel/src/boot_memory_plan.cpp"
     "core/oskernel/src/fdt.cpp"
+    "core/oskernel/src/gic_v3_discovery.cpp"
     "core/oskernel/src/hardware_inventory.cpp"
 )
 
@@ -200,11 +203,24 @@ not_kernel=(
 # use-after-free with hardware caching it. This is the machine layer doing the
 # job the machine layer exists for, so the growth is accepted rather than
 # argued down.
+#
+# Raised again, by M7.5f: machine 1151 -> 1362, discovery 723 -> 996,
+# entry 352 -> 362, total 3506 -> 4000. This is the first milestone that runs
+# code outside EL1 at all, and every added line is load-bearing for that:
+# EL0 entry/exit assembly and the guarded user stack, W^X ledger and
+# guard-page machinery that make handing control to EL0 safe (machine);
+# bounded GICv3 topology discovery from the device tree, needed before any
+# interrupt can be routed to an EL0 handler in M7.5g/M7.9 (discovery); and
+# validating the guarded EL0 context before eret and installing the first
+# EL0 program, which closes the boot path that previously parked in wfe
+# forever (entry). None of it is discretionary - a kernel that cannot prove
+# the context it is about to drop into is safe has no business dropping into
+# it.
 core_ceiling=1280
-machine_ceiling=1151
-discovery_ceiling=723
-entry_ceiling=352
-total_ceiling=3506
+machine_ceiling=1362
+discovery_ceiling=996
+entry_ceiling=362
+total_ceiling=4000
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

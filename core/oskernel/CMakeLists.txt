@@ -7,6 +7,7 @@ add_library(oskernel STATIC
     src/kernel.cpp
     src/fdt.cpp
     src/hardware_inventory.cpp
+    src/gic_v3_discovery.cpp
     src/boot_memory.cpp
     src/boot_memory_plan.cpp
     src/machine_host.cpp
@@ -37,6 +38,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         src/aarch64_entry.cpp
         src/aarch64_vectors.S
         src/aarch64_context_switch.S
+        src/aarch64_el0.S
     )
     add_library(emnl::oskernel_machine_aarch64 ALIAS oskernel_machine_aarch64)
     target_include_directories(oskernel_machine_aarch64
@@ -58,8 +60,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             boot/aarch64_start.S
             boot/aarch64_boot.cpp
             boot/freestanding_memory.cpp
+            src/abi.cpp
             src/fdt.cpp
             src/hardware_inventory.cpp
+            src/gic_v3_discovery.cpp
             src/boot_memory.cpp
             src/boot_memory_plan.cpp
             src/machine_aarch64.cpp
@@ -67,6 +71,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/aarch64_entry.cpp
             src/aarch64_vectors.S
             src/aarch64_context_switch.S
+            src/aarch64_el0.S
         )
         target_include_directories(cookie_kernel_aarch64_boot PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
