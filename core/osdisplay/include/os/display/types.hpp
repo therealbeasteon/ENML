@@ -199,7 +199,11 @@ struct SceneEntry final {
     std::uint64_t frame_sequence {0U};
     std::uint8_t buffer_slot {0U};
     bool has_frame {false};
-    bool capture_allowed {true};
+    // Capture is denied unless the compositor explicitly grants it. A
+    // SceneSnapshot default-constructs its whole entry array, so a permissive
+    // default would mean every unused slot, and any future producer that
+    // forgets this field, reports a capturable surface.
+    bool capture_allowed {false};
     TrustedPresentation trusted_presentation {TrustedPresentation::none};
 };
 

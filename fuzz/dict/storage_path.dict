@@ -1,0 +1,45 @@
+# libFuzzer dictionary for storage_relative_path_fuzz.
+#
+# RelativePath::parse is the private-storage confinement boundary. Every entry
+# here is a token that one of its rejection rules exists to catch, so mutation
+# spends its budget on the boundary rather than on random printable bytes.
+#
+# Keep in step with core/osstorage/src/path.cpp.
+
+sep_slash="/"
+sep_double_slash="//"
+sep_backslash="\\"
+segment_parent=".."
+segment_current="."
+traversal_up="/../"
+traversal_here="/./"
+traversal_prefix="../"
+traversal_suffix="/.."
+nul="\x00"
+
+# Absolute and root-relative forms the parser must never accept.
+absolute_root="/"
+absolute_etc="/etc/"
+absolute_proc="/proc/self/"
+
+# UTF-8 shapes that must be rejected: overlong encodings, surrogates, values
+# above U+10FFFF, and lone continuation bytes.
+utf8_overlong_slash="\xc0\xaf"
+utf8_overlong_dot="\xc0\xae"
+utf8_overlong_two="\xc0\x80"
+utf8_overlong_three="\xe0\x80\x80"
+utf8_surrogate="\xed\xa0\x80"
+utf8_above_max="\xf4\x90\x80\x80"
+utf8_lone_continuation="\x80"
+utf8_truncated_three="\xe2\x82"
+
+# Valid multi-byte UTF-8, so mutation has well-formed sequences to corrupt.
+utf8_two_byte="\xc3\xa9"
+utf8_three_byte="\xe2\x9c\x93"
+utf8_four_byte="\xf0\x9f\x94\x92"
+
+# Shapes that appear in real paths, giving mutation plausible scaffolding.
+name_simple="file.txt"
+name_nested="dir/file.txt"
+name_hidden=".hidden"
+name_dotdot_lookalike="...."

@@ -1,12 +1,16 @@
 name: M3 Display and Compositor
 
 on:
+  # Every branch, not only main. A gate that first runs after a change has
+  # landed is not a gate on that change - the same reasoning fuzz-nightly.yml
+  # already records for its own trigger. The other eight workflows run on
+  # every push; these three did not, and a test could therefore be added,
+  # labelled and merged without ever having been executed.
   push:
-    branches: [main]
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -19,7 +23,7 @@ jobs:
       - name: Build display gates
         run: >-
           cmake --build --preset host-debug
-          --target display_compositor_test display_input_hit_test display_input_authority_test
+          --target display_compositor_test display_input_hit_test display_input_authority_test display_obscured_input_test
           display_shared_buffer_test display_generation_namespace_test display_trusted_overlay_test
           display_trusted_mark_test display_exact_activation_test compositor_service_integration_test
           input_service_transport_test shell_compositor_control_test compositor_shell_private_runtime_test
@@ -37,7 +41,7 @@ jobs:
       - name: Build display gates with sanitizers
         run: >-
           cmake --build --preset host-asan
-          --target display_compositor_test display_input_hit_test display_input_authority_test
+          --target display_compositor_test display_input_hit_test display_input_authority_test display_obscured_input_test
           display_shared_buffer_test display_generation_namespace_test display_trusted_overlay_test
           display_trusted_mark_test display_exact_activation_test compositor_service_integration_test
           input_service_transport_test shell_compositor_control_test compositor_shell_private_runtime_test
@@ -58,7 +62,7 @@ jobs:
       - name: Build display gates
         run: >-
           cmake --build build/m3-display-clang
-          --target display_compositor_test display_input_hit_test display_input_authority_test
+          --target display_compositor_test display_input_hit_test display_input_authority_test display_obscured_input_test
           display_shared_buffer_test display_generation_namespace_test display_trusted_overlay_test
           display_trusted_mark_test display_exact_activation_test compositor_service_integration_test
           input_service_transport_test shell_compositor_control_test compositor_shell_private_runtime_test
@@ -78,7 +82,7 @@ jobs:
       - name: Build display gates natively
         run: >-
           cmake --build --preset host-debug
-          --target display_compositor_test display_input_hit_test display_input_authority_test
+          --target display_compositor_test display_input_hit_test display_input_authority_test display_obscured_input_test
           display_shared_buffer_test display_generation_namespace_test display_trusted_overlay_test
           display_trusted_mark_test display_exact_activation_test compositor_service_integration_test
           input_service_transport_test shell_compositor_control_test compositor_shell_private_runtime_test

@@ -1,0 +1,458 @@
+# ENML OS — achievement checklist
+
+## Implementation authority
+
+**References teach principles. ENML determines implementation. External systems are not the design specification.**
+
+This document is a running ledger of what ENML has actually built and validated.
+It is not a roadmap and not a wishlist. An item is checked only when it exists in
+the tree and its gates are green on the merge candidate.
+
+## How to read this
+
+- `[x]` — implemented and validated by a green gate.
+- `[ ]` — not implemented, or implemented without the gate that would justify it.
+- **Not claimed** sections are as important as the checked ones. ENML's habit of
+  writing down what it has *not* earned is what keeps the checked items
+  meaningful.
+
+Each milestone's authoritative detail lives in its own status document; this
+file is the index, not a replacement.
+
+---
+
+## M0 — trusted foundation
+
+`docs/M0_STATUS.md`
+
+- [x] **M0.0** Build and repository foundation; warnings-as-errors with
+      `-Wconversion`/`-Wsign-conversion` across GCC and Clang.
+- [x] **M0.1** `liboscore`: `Result<T>`, `Error`, strong IDs, checked
+      arithmetic, move-only RAII `NativeHandle`.
+- [x] **M0.2** Bounded `libosipc` wire codec. Explicit little-endian, 40-byte
+      `WireHeaderV1`, 64 KiB payload ceiling, 16-handle ceiling, unknown flags
+      and nonzero reserved fields rejected, canonical booleans, complete UTF-8
+      validation (overlongs, surrogates, above U+10FFFF).
+- [x] **M0.3** Linux `AF_UNIX`/`SOCK_SEQPACKET` transport. `SCM_RIGHTS`
+      descriptor passing, `FD_CLOEXEC` on receipt, `SO_PASSCRED` per-message
+      credentials, strict ancillary validation, peer-death semantics.
+- [x] **M0.4** `osidlc` compiler with deterministic lexer/parser/semantic pass
+      and generated types, codecs and ABI metadata. No runtime schema parser in
+      services.
+- [x] **M0.5** Typed cross-process Echo RPC with generated client and dispatcher
+      bindings, request-ID validation and a canonical error envelope.
+- [x] **M0.6–M0.7** Supervisor process lifecycle, readiness, crash-loop
+      suppression, restart policy, and trusted identity resolution separating
+      kernel evidence from ENML `PrincipalId`.
+- [x] **M0.8** Linux sandbox: `no_new_privs`, capability clearing, seccomp,
+      Landlock, resource limits.
+- [x] **M0.9** Adversarial and resource-limit gates against hostile services.
+- [x] **M0.10** Native AArch64 gate plus an independent cross-build/QEMU gate.
+- [x] Zero dynamic allocation proven on the IPC and typed-RPC hot paths.
+
+**Not claimed at M0:** any kernel of ENML's own. Linux is the private
+hardware/process substrate.
+
+---
+
+## M1 — packages, applications, principals
+
+`docs/M1_STATUS.md`
+
+- [x] **M1.0** Signer-bound package identity and bounded hostile-input manifest
+      analysis.
+- [x] **M1.1–M1.2** Manifest analyzer and durable package registry.
+- [x] **M1.3** Generation-bound App Manager launch. Applications never choose
+      executable path, credentials, `PrincipalId`, generation, digest, storage
+      root, key identity or sandbox policy.
+- [x] **M1.4** Durable per-user application principals and per-application
+      sandbox.
+- [x] **M1.5** Update, uninstall, revocation and generation retention, with
+      running processes pinned to the immutable generation that created them.
+
+---
+
+## M2 — storage, keys, service composition
+
+`docs/M2_STATUS.md`
+
+- [x] **M2.0** Descriptor-rooted private storage. Bounded UTF-8 `RelativePath`,
+      `O_NOFOLLOW` segment-by-segment traversal, crash-resistant atomic replace.
+- [x] **M2.1** Identity-rooted Storage Service with typed object capabilities
+      and server-authoritative rights reduction.
+- [x] **M2.2** Supervised `system.storage`; no direct private-data directory in
+      applications.
+- [x] **M2.3** Per-profile quotas, deterministic revocation, uninstall policy
+      revocation with data and principal continuity preserved.
+- [x] **M2.4–M2.5** Typed Key Service AEAD path (AES-256-GCM-v1), opaque
+      `KeyId`s, bounded `EKEY` envelopes, logical key rotation with retained
+      historical versions.
+- [x] **M2.6** Provider-wrapped persistence, durable `KRG1` registry with
+      canonical binding, transactional publication, durable tombstones.
+- [x] **M2.7** System → profile → application protection scopes with strict
+      downward-only hierarchy.
+- [x] **M2.8** Supervised `system.keys` with application lifecycle key policy
+      and generation-aware policy replay.
+- [x] **M2.9** Shared pidfd-backed boot-scoped `ProcessAuthority` and bounded
+      trusted `ServiceBroker`; one `PeerIdentity` across Storage and Keys.
+- [x] **M2.10** Long-lived private `PlatformServiceSession` with exact runtime
+      credential validation and explicit fresh endpoint reacquisition.
+
+**Not claimed at M2:** production TPM/TEE/HSM providers, and anti-rollback.
+`MonotonicSecurityState` is an interface boundary only; the OpenSSL provider and
+fixed wrapping root are test-only.
+
+---
+
+## M3 — display, compositor, semantic UI
+
+`docs/M3_STATUS.md`
+
+- [x] **M3.0** Display and compositor foundation with generation-scoped object
+      identity.
+- [x] **M3.1** Shared-buffer compositor service.
+- [x] **M3.2** Semantic UI foundation: semantic tree, responsive layout,
+      collections, render damage planning, contour anti-aliasing, paragraph
+      layout, grapheme-safe font fallback, command-to-pixel text rendering.
+- [x] **M3.2** Accessibility bridge and bounded cross-process accessibility and
+      collection transports.
+- [x] **M3.2** Trusted presentation: compositor-derived attribution that
+      applications cannot mint by drawing lookalike pixels.
+- [x] **M3.2** Input routing, delivery and hit-testing with authority checks.
+
+**Not claimed at M3:** GPU/DRM/KMS composition, editable text and IME, color
+font policy, final font assets and licensing, multitouch and gesture contracts.
+
+---
+
+## M4 — trusted phone shell and system quality
+
+`docs/M4_0_TRUSTED_PHONE_SHELL_FOUNDATION.md`,
+`docs/M4_0_SECURITY_EXIT_CRITERIA.md`
+
+- [x] **M4.0** Bounded trusted `ShellTaskModel` with corroborated lifecycle
+      authority: a task exists only when App Manager lifecycle identity and
+      compositor application-root ownership agree on the same exact live
+      `PeerIdentity`.
+- [x] **M4.0** Forensic minimization: recent-task state is memory-only, preview
+      grants are revision/frame/owner/surface bound and never serialized, no
+      task preview is written to disk.
+- [ ] **M4.1** Supervised phone shell and trusted chrome lifecycle — open in
+      PR #28, gates green, not yet merged.
+- [x] **M4.2** Measured resource budget gate. Resident set, time-to-ready and
+      idle wakeups enforced against reviewed ceilings on native x86-64 and
+      native AArch64. `docs/M4_2_RESOURCE_BUDGETS.md`
+- [x] **M4.3** `Result` alternative misuse fails closed. `invariant_violated()`
+      traps unconditionally instead of `assert()`, so the guard survives
+      `NDEBUG`; a fork-based test proves each misuse path terminates.
+- [x] **M4.4** Ancillary rejection closes unadopted descriptors rather than
+      leaving kernel-installed descriptors unowned.
+- [x] **M4.5** Fuzzing depth: seeded corpora, dictionaries and a nightly
+      accumulating corpus, replacing a 1000-execution smoke run that could not
+      clear the `OSIP` magic check. `docs/M4_5_FUZZING_DEPTH.md`
+- [x] **M4.6** Private-storage confinement parser fuzzed, including an
+      idempotence check that catches `parse()`/`view()` divergence — a
+      confinement break with no memory-safety error attached.
+- [x] **M4.7** Budget coverage extended to `system.storage`, ceilings calibrated
+      from measured values, and measurements published as workflow annotations
+      so a gate result is diagnosable without permission to download raw logs.
+- [x] **M4.7** `system.storage` polls only live descriptors. It previously
+      handed `poll()` the full 65-entry table capacity, which fails with EINVAL
+      once `nfds` exceeds `RLIMIT_NOFILE` — and the default sandbox caps open
+      files at 32. The service could not run under its own default hardening
+      profile.
+- [x] **M4.7** `system.storage` and `system.keys` block on a single wait set.
+      Both previously polled control with a zero timeout and then dispatched
+      with a 10 ms timeout; neither wait could block, so an idle service woke
+      roughly 100 times a second forever. Measured 97/s before, 0/s after.
+- [x] **M5.3** Fuzz leak detection enabled, and every target smoke-run. It had
+      been deferred pending triage of `osidlc` allocation behaviour; enabling it
+      found no leaks, so the deferral was unnecessary. Two targets added after
+      the smoke job was written had been built but never executed.
+- [x] **M5.4** Surface capture is an allow-list that fails closed. It was
+      computed as `role != secure_system` � a deny-list that would silently
+      grant capture to any role added later � and `SceneEntry::capture_allowed`
+      defaulted to true across a default-constructed array. Not exploitable
+      (the preview policy independently requires `role == application`), but
+      both are the shape of the Chrome clipboard escape.
+- [x] **M4.8** `system.keys` covered by a measured budget. The harness stages a
+      temporary state directory and passes its descriptor through the private
+      launch channel, so the measurement exercises the real startup path. This
+      converts the keys idle fix from argued-by-symmetry to measured: 0 idle
+      wakeups per second.
+
+- [x] **M4.10** Coercion-resistant unlock authority, in
+      `docs/M4_10_COERCION_RESISTANT_UNLOCK.md`. The reference shows a single
+      panic PIN is "very easily defeated" by an attacker who just asks twice, and
+      warns that locking on receipt of the panic credential lets him screen — the
+      locking event must be invariant to which credential was entered. Its
+      schemes all assume a trusted verifier *elsewhere*, which a phone does not
+      have, so ENML derives its own: the panic reaction is irreversible
+      destruction of the protected key domain rather than a silent alarm nobody
+      will receive; it happens before access is granted and is not conditional on
+      the attempt succeeding; the iteration rule reads a tag and a time and never
+      stores the credential class, so the screening bug is unrepresentable rather
+      than merely absent; there is no separate success value for a duress unlock,
+      so nothing downstream can leak which occurred; and every disposition is
+      released on one uniform deadline, because the attacker is holding the
+      stopwatch. `t2 > t1` is a `static_assert`, since without it one coercion
+      episode would lock the owner out permanently.
+
+### Measured baseline
+
+All three supervised services, both architectures, at the merge candidate:
+
+| Service | Resident (x86-64 / AArch64) | Ready | Idle wakeups |
+| --- | --- | --- | --- |
+| `system.echo` | 3520 / 3008 KiB | 1 ms | 0 /s |
+| `system.storage` | 3552 / 3088 KiB | 1 ms | 0 /s |
+| `system.keys` | 5264 / 4744 KiB | 2 ms | 0 /s |
+
+Storage costs essentially what a bare service costs. Keys costs about 1.7 MiB
+more, which is the provider, hierarchy and durable registry.
+- [x] **M5.6** `KRG1` durable key registry fuzzed. Driven through the
+      filesystem rather than a byte span, because separating decode from I/O
+      would mean modifying a substrate `AGENTS.md` guards purely for
+      testability. It was the last untested parser of attacker-influenced input.
+- [x] **M5.6** The intermittent M2 Service Broker failure diagnosed and fixed:
+      two teardown helpers allowed one second for a child to exit and be reaped
+      before asserting, on runners executing four jobs concurrently.
+
+### M6 - Device access
+
+- [x] **M6.0** Device access policy substrate. Port I/O authority is not
+      representable, MMIO is a canonical allow-list of bounded windows, and an
+      out-of-kernel component whose device has unconfined DMA is refused the
+      isolation claim. The default policy grants nothing.
+- [x] **M6.0a** Security review against the references, recorded in
+      `docs/SECURITY_REVIEW.md` with its gaps stated as gaps. Two were fixed by
+      it: the tree had no constant-time comparison primitive and no runtime
+      binary hardening at all.
+- [x] **M6.2** Time protection, OS half. `PartitionLedger` grants, refuses and
+      reclaims partitioned micro-architectural resources, enforcing that a
+      reservation never consumes the shared remainder and that a dead
+      principal holds nothing. The mechanism itself is a platform port and
+      does not exist yet.
+- [ ] **M6.1** First driver split against the policy, on the emulated reference
+      platform.
+- [ ] **M6.2** IOMMU programming, so `iommu_confined` is enforced rather than
+      recorded.
+- [x] **M6.3** Interrupt authority, with its own threat model, in
+      `docs/M7_1_INTERRUPT.md` - the document M6.0 said this needed before it
+      could be more than half a specification. The OS half is implemented and
+      gated as M7.1d below. The half that needs a controller - turning a real
+      signal into a dispatch - does not exist yet, and neither does binding
+      attach to a capability rather than to a role.
+- [ ] **M6.4** Check-then-commit device reconfiguration: validate a whole batch,
+      then apply all of it or none.
+
+---
+
+## Mission scorecard
+
+`docs/PROJECT_VISION.md` ranks nine priorities. This is where each one actually
+stands, independent of milestone numbering.
+
+| # | Priority | Status | Evidence |
+| --- | --- | --- | --- |
+| 1 | Security by default and strong hardening | Strong, above the hardware line | Capability model, server-side rights, deterministic revocation, sandbox, adversarial tests, fail-closed `Result` |
+| 2 | Low resource consumption, small trusted components | Now measured | M4.2/M4.7 budget gate over echo and storage; zero-allocation hot paths |
+| 3 | Performance, fast startup, responsiveness | Partially measured | Services reach READY in 1–2 ms; no whole-system boot budget yet |
+| 4 | Modular subsystem boundaries with explicit ownership | Strong | Per-subsystem `core/` libraries, typed service boundaries, `AGENTS.md` invariants |
+| 5 | Efficient, secure, developer-friendly APIs | Strong | OSIDL build-time generation, no runtime schema parser |
+| 6 | Hardware portability and clean adaptation boundaries | Partial | Native AArch64 and cross/QEMU gates; no board bring-up or driver model |
+| 7 | Low idle activity and power efficiency | Measured, and it found real regressions | Idle-wakeup ceiling caught storage and keys spinning at ~100 Hz; both now measure 0/s |
+| 8 | Excellent, accessible phone UX | In progress | Semantic UI, accessibility bridge, trusted presentation |
+| 9 | Long-term maintainability and evolvability | Strong | Per-milestone invariant documents, exit criteria, honest non-goal records |
+
+---
+
+---
+
+## M5 — verified boot
+
+`docs/M5_0_VERIFIED_BOOT.md`
+
+- [x] **M5.0** AEAD nonces are provider-owned by invariant, not by accident.
+      A caller cannot influence the IV, no nonce repeats under a key, and a
+      test asserts all three properties whose absence produced CVE-2021-25444.
+- [x] **M5.0** `BootStateV1` � the verified boot state record. Bounded,
+      explicitly little-endian, fail-closed. The default state is unverified,
+      unknown discriminants are rejected rather than defaulted, and coherence
+      (a verified state must measure something; a closed device must measure
+      every link) is enforced at the parser. Fuzzed, and gated on GCC, Clang,
+      sanitizers and native AArch64.
+- [x] **M5.0** Design revised against the boot references: the
+      patched-configuration problem resolved with a signed allow-list, static
+      versus dynamic root of trust made an explicit platform assessment, and
+      update safety (paired slots, rollback as its own step, chosen verity
+      failure policy) added.
+- [x] **M5.5** Platform capabilities in the boot state. ENML records what the
+      platform's root of trust actually provides and refuses two claims it
+      cannot back: a closed verified device with no immutable first stage, and
+      a rollback claim with no monotonic counter. This is what keeps hardware
+      neutrality from meaning "secure only on the hardware we tested".
+- [ ] **M5.0** Verified boot itself. No longer blocked on choosing an SoC - the
+      design is a platform contract with a narrow adaptation boundary and an
+      emulated reference platform. Blocked instead on building that port.
+- [ ] **M5.0** Signed boot state. The record is not self-authenticating; it is
+      trusted because trusted early boot produces it and it crosses no
+      untrusted boundary. Attestation would require a signature and its own
+      threat model.
+
+---
+
+## Not claimed anywhere yet
+
+These are the gap between a hardened userspace and a secure phone. They are
+listed together because each is a whole workstream, and because leaving them
+implicit is how a project starts believing its own marketing.
+
+- [ ] Verified boot and attestation. Everything above it is defense a bootkit
+      walks past.
+- [ ] Production hardware-backed key storage (TPM/TEE/HSM) and hardware-rooted
+      anti-rollback.
+- [ ] Baseband and radio isolation. The modem is the largest remote attack
+      surface on a phone and nothing in the tree addresses it.
+- [ ] Telephony and RCS.
+- [ ] Board bring-up, driver model and power management integration.
+- [ ] Lock-screen authentication. The **coercion-resistant unlock authority**
+      now exists and is gated — see M4.10 below — but the credential rule that
+      decides what counts as a duress credential, the trusted unlock surface,
+      and the wiring from the destruction directive to `system.keys` do not.
+- [ ] Recovery, update and encrypted-backup policy.
+- [ ] Application distribution.
+- [ ] Whole-system boot-to-shell budget.
+- [ ] Independent security review of the crypto and identity paths. Every line
+      of the key hierarchy, `EKEY` envelope and `KRG1` format has had exactly
+      one set of eyes.
+
+---
+
+## Maintaining this file
+
+Check an item in the same change that earns it, and record the gate that proves
+it. If a milestone's exit criteria are relaxed, unchecking here is part of that
+change — a ledger that only ever moves forward stops being evidence.
+
+### M7 - Cookie Kernel
+
+The decision to write a kernel is recorded in `docs/M7_0_KERNEL.md`, reversing
+the position in `PROJECT_VISION.md`. The rationale is that security, stability,
+hardware neutrality, trust and lightweightness cannot be guaranteed on a kernel
+this project does not control. The measure of success is a single number: how
+much code has to be trusted.
+
+- [x] **M7.0a** Names separated in `docs/NAMING.md`: Cookie is the operating
+      system, Cookie Kernel is what it runs on, EMNL is the security
+      architecture both carry. Identifiers deliberately not renamed yet.
+- [x] **M7.0** System call surface fixed as a table, before any implementation,
+      with a hard ceiling enforced by test. Fifteen calls against a permitted
+      sixteen, for reference against the fourteen that carried an entire
+      operating system in the references.
+- [x] **M7.1a** Message passing as a pure state machine, host-testable with no
+      hardware. Reply is bound to a received message rather than a thread id,
+      exiting releases everyone blocked on you, and nothing is queued in the
+      kernel so there is no depth to exhaust.
+- [x] **M7.1b** Priority inheritance: a server runs at the priority of the most
+      urgent thread waiting on it, recomputed rather than adjusted, so a
+      low-priority thread cannot park a shared server and stall threads it
+      outranks. A dead caller stops donating.
+- [x] **M7.1c** Capability transfer as a state machine, in
+      `docs/M7_1_CAPABILITY.md`. The references record two defects as properties
+      of capability systems in general - revocation that is all-or-nothing, and
+      proliferation nothing controls - and ENML cannot inherit either, because
+      M2.3 already claims deterministic revocation one layer up. So a grant
+      derives a child, revoking removes the derivation subtree and nothing else,
+      passing a capability on is itself a right, and attenuation only
+      attenuates. A dead thread holds nothing. Removal is bounded by the
+      delegation ceiling and uses no scratch memory.
+- [x] **M7.1d** Interrupt dispatch as a state machine, in
+      `docs/M7_1_INTERRUPT.md`. The reference design puts a driver's handler in
+      interrupt context to avoid waking it per interrupt; the same references
+      record what that costs - a driver that can disable interrupts can also die
+      there, and dispatching as fast as a device asserts is receive livelock.
+      Cookie keeps the goal and refuses both mechanisms: no user code runs in
+      interrupt context at all, the kernel coalesces and reports the count so a
+      driver still wakes once per burst, and a source stays masked from dispatch
+      until its driver reports the device quiet - so interrupt load is bounded by
+      driver progress rather than by the device. The wakeup-per-burst cost is
+      recorded rather than discovered.
+- [x] **M7.1e** Scheduling, in `docs/M7_1_SCHEDULER.md` - which completes all
+      four kernel responsibilities as host-testable pure logic. Strict priority,
+      round-robin within it, and **no tick**: the scheduler returns the one
+      deadline it next needs, asks for no timer when nothing is competing, and
+      refills slices lazily from monotonic time. A periodic priority boost is a
+      periodic timer, and M4.7's measured idle-wakeup gate is why Cookie cannot
+      have one. Time is charged and never refunded, so the gaming attack the
+      references describe - relinquish just before the slice expires, keep your
+      position, monopolise the processor - has no path here, and `yield`
+      forfeits rather than banks. Starvation is deliberate and argued rather
+      than overlooked.
+- [x] **M7.1f** The four tables composed into one kernel, in
+      `docs/M7_1_KERNEL_COMPOSITION.md`. Four individually correct state
+      machines are not a kernel. A thread's death now reaches all four in one
+      operation that reports what each released - the failure it guards is a
+      forgotten call, which leaves a capability outliving its holder or an
+      interrupt line nobody owns, and neither fails loudly. The scheduler's view
+      of runnability and effective priority is recomputed from the rendezvous
+      after every operation rather than patched along each path, on M7.1b's
+      argument that an adjustment missed once stays wrong. This is what makes
+      priority inheritance actually reach the scheduler: before it, M7.1b
+      computed the right value and nothing carried it across, so a priority-zero
+      server serving a priority-nine client still lost the processor to an
+      unrelated thread at five.
+- [x] **M7.3a** Machine-layer contract defined before implementation, in
+      `docs/M7_3_MACHINE.md`. Assembly may live only behind it; nothing in it
+      makes a policy decision. Device memory is a kind rather than a hint,
+      interrupts mask per source rather than globally, time is nanoseconds
+      rather than ticks, and contexts stay opaque.
+- [x] **M7.3b** Host machine layer. The policy half is implemented for real -
+      alignment, page multiples, wrapping ranges, overlap, exact unmapping -
+      so the W^X and mapping rules are enforced now rather than deferred to
+      hardware. The half that needs a machine reports unsupported rather than
+      pretending. The tests are written against the contract, so the AArch64
+      layer must satisfy the same ones.
+- [ ] **M7.3c** AArch64 implementation, against the ISA reference.
+- [x] **M7.4a** Kernel hardening requirements stated up front, and the
+      migration reframed as replacement rather than subtraction. A subsystem
+      removed without being replaced restartable, capability-scoped and no
+      slower is a regression however clean the header list looks.
+- [x] **M7.4b** W^X kernel mappings, a guard page below every kernel stack and
+      the bounded-work-per-call rule, enforced as the machine layer is written
+      rather than added afterwards. Two of the three needed real mechanism.
+      `MachinePermissions` makes single-mapping W^X unrepresentable, but not
+      **aliasing** - one physical page mapped `read_write` at one address and
+      `read_execute` at another is writable and executable at once through two
+      blameless mappings, and it is now refused on the physical range. Two
+      writable views of one buffer still work, because the rule is the
+      combination and not the aliasing. The guard page moved from an intention
+      to `machine_map_kernel_stack`, the only way to get a stack, which refuses
+      unless the page below is unmapped - and `machine_prepare_context` now
+      refuses a stack that was not established that way, so the rule reaches the
+      operation that would otherwise bypass it. Written against the contract, so
+      M7.3c must satisfy the same tests. Cross-address-space aliasing is
+      recorded as not covered.
+- [ ] **M7.3** Boot on the emulated reference platform.
+- [x] **M7.4c** Anonymous attestation *policy*, in
+      `docs/M7_4_ANONYMOUS_ATTESTATION.md`. The references answer this more
+      kindly than expected: one-time traceable ring signatures give anonymity
+      with **no group manager** - which matters because a group manager is a
+      de-anonymization backdoor and on a phone that party is the vendor - and
+      the construction "only requires a few hash evaluations", is post-quantum
+      resistant for the same reason, and signs in under a second for a ring of
+      2^10. A cryptographic surface whose mandatory primitive count is *one* is
+      the smallest honest answer to "lightweight". The scheme punishes a signer
+      who signs twice under one tag by de-anonymizing them, so ENML's own
+      contribution is the inversion: the OS refuses the second attestation
+      rather than letting the mathematics punish it. Linkage is the user's
+      choice per verifier, never the verifier's, and a grant that reveals
+      continuity says so. Bender-Katz-Morselli's strong definitions - anonymity
+      under full key exposure, unforgeability under insider corruption - are
+      recorded as a requirement, because a fleet of phones will eventually leak
+      a key and the weak definitions would lose anonymity for everyone at the
+      first one.
+- [ ] **M7.4** The attestation signature itself. It is a provider, on the M2.4
+      split. Ring membership - and therefore the actual anonymity set - is
+      undecided, and until it is, no privacy claim should be made from the
+      policy above.

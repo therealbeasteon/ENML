@@ -119,6 +119,26 @@ std::size_t KeyService::live_object_count() const noexcept {
     return count;
 }
 
+std::size_t
+KeyService::collect_wait_descriptors(int* out, std::size_t capacity) const noexcept {
+    if (out == nullptr || capacity == 0U || endpoint_ == nullptr || !endpoint_->valid()) {
+        return 0U;
+    }
+
+    std::size_t count = 0U;
+    out[count] = endpoint_->native_fd();
+    ++count;
+
+    for (std::size_t index = 0U; index < objects_.size() && count < capacity; ++index) {
+        if (!objects_[index].occupied) {
+            continue;
+        }
+        out[count] = objects_[index].endpoint.native_fd();
+        ++count;
+    }
+    return count;
+}
+
 os::core::Result<void>
 KeyService::dispatch_once(os::core::MutableByteSpan receive_buffer, int timeout_ms) noexcept {
     if (endpoint_ == nullptr || identity_resolver_ == nullptr || registry_ == nullptr ||

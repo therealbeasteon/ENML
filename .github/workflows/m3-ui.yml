@@ -1,12 +1,16 @@
 name: M3 Semantic UI
 
 on:
+  # Every branch, not only main. A gate that first runs after a change has
+  # landed is not a gate on that change - the same reasoning fuzz-nightly.yml
+  # already records for its own trigger. The other eight workflows run on
+  # every push; these three did not, and a test could therefore be added,
+  # labelled and merged without ever having been executed.
   push:
-    branches: [main]
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -23,7 +27,7 @@ jobs:
       - name: Build semantic UI gates
         run: >-
           cmake --build --preset host-debug
-          --target ui_semantic_tree_test ui_responsive_layout_test
+          --target ui_semantic_tree_test ui_responsive_layout_test ui_decision_layout_test ui_contrast_test
           ui_render_snapshot_test ui_collection_window_test ui_collection_content_test
           ui_collection_changes_test collection_transport_test collection_session_test
           ui_design_reflow_test ui_renderer_command_test ui_render_damage_test
@@ -51,7 +55,7 @@ jobs:
       - name: Build semantic UI gates with sanitizers
         run: >-
           cmake --build --preset host-asan
-          --target ui_semantic_tree_test ui_responsive_layout_test
+          --target ui_semantic_tree_test ui_responsive_layout_test ui_decision_layout_test ui_contrast_test
           ui_render_snapshot_test ui_collection_window_test ui_collection_content_test
           ui_collection_changes_test collection_transport_test collection_session_test
           ui_design_reflow_test ui_renderer_command_test ui_render_damage_test
@@ -83,7 +87,7 @@ jobs:
       - name: Build semantic UI gates
         run: >-
           cmake --build build/m3-ui-clang
-          --target ui_semantic_tree_test ui_responsive_layout_test
+          --target ui_semantic_tree_test ui_responsive_layout_test ui_decision_layout_test ui_contrast_test
           ui_render_snapshot_test ui_collection_window_test ui_collection_content_test
           ui_collection_changes_test collection_transport_test collection_session_test
           ui_design_reflow_test ui_renderer_command_test ui_render_damage_test
@@ -113,7 +117,7 @@ jobs:
       - name: Build semantic UI gates natively
         run: >-
           cmake --build --preset host-debug
-          --target ui_semantic_tree_test ui_responsive_layout_test
+          --target ui_semantic_tree_test ui_responsive_layout_test ui_decision_layout_test ui_contrast_test
           ui_render_snapshot_test ui_collection_window_test ui_collection_content_test
           ui_collection_changes_test collection_transport_test collection_session_test
           ui_design_reflow_test ui_renderer_command_test ui_render_damage_test

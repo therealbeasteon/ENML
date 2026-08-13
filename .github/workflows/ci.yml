@@ -13,12 +13,37 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      # Added while the count is zero. A gate written after the debt exists
+      # starts life failing and gets suppressed; one written at zero only ever
+      # has to hold a line.
+      - name: Hygiene
+        run: .github/scripts/check-hygiene.sh 'debug'
       - name: Configure
         run: cmake --preset host-debug
       - name: Build
-        run: cmake --build --preset host-debug --parallel 2
+        run: .github/scripts/run-build.sh 'debug' --preset host-debug --parallel 2
       - name: Test M0 only
         run: ctest --preset host-debug --output-on-failure -L '^m0$'
+      # Feature-testing a flag proves the compiler accepted it, not that the
+      # mitigation reached the artifact. Checked against real service binaries
+      # rather than a trivial test, so the stack-protector check is meaningful.
+      # Distinguishes "the flag never reached the compile line" from "the flag
+      # was applied and instrumented nothing", which the ELF alone cannot.
+      - name: Report hardening flags in the build
+        run: |
+          report=""
+          for flag in fstack-protector-strong fstack-clash-protection mbranch-protection fcf-protection _GLIBCXX_ASSERTIONS; do
+            count="$(grep -c -- "$flag" build/host-debug/build.ninja || true)"
+            report="${report}${flag} -> ${count} occurrences%0A"
+          done
+          sample="$(grep -m1 -o -- '-fstack-protector[^ ]*' build/host-debug/build.ninja || echo NONE)"
+          report="${report}first stack-protector token seen: ${sample}"
+          echo "::notice title=hardening flags::${report}"
+      - name: Verify binary hardening
+        run: >-
+          .github/scripts/check-hardening.sh 'host-debug'
+          $(find build/host-debug -type f -perm -u+x
+          \( -name 'system.*' -o -name 'os-supervisor' \) | sort | head -4)
 
   sanitizers:
     runs-on: ubuntu-24.04
@@ -55,15 +80,20 @@ jobs:
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=OFF
           -DEMNL_BUILD_FUZZING=ON -DCMAKE_CXX_COMPILER=clang++
       - name: Build
-        run: cmake --build build/fuzz --parallel 2
-      - name: IPC decoder smoke
-        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/ipc_decoder_fuzz -runs=1000
-      - name: OSIDL compiler smoke
-        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/osidlc_compiler_fuzz -runs=1000
-      - name: RPC error envelope smoke
-        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/rpc_error_fuzz -runs=1000
-      - name: Package manifest analyzer smoke
-        run: ASAN_OPTIONS=detect_leaks=0 ./build/fuzz/fuzz/package_manifest_fuzz -runs=5000
+        run: .github/scripts/run-build.sh 'fuzz-smoke' build/fuzz --parallel 2
+      # Every target, with leak detection on. A leak in a parser reachable from
+      # untrusted input is a denial-of-service surface, not untidiness.
+      - name: Fuzz smoke
+        run: >-
+          .github/scripts/run-fuzz-smoke.sh build/fuzz
+          ipc_decoder_fuzz=1000
+          osidlc_compiler_fuzz=1000
+          rpc_error_fuzz=1000
+          package_manifest_fuzz=5000
+          storage_relative_path_fuzz=5000
+          boot_state_fuzz=5000
+          device_access_fuzz=5000
+          time_protection_fuzz=5000
 
   arm64-native:
     runs-on: ubuntu-24.04-arm

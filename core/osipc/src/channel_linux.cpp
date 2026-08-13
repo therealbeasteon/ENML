@@ -53,6 +53,26 @@ struct AncillaryData final {
     bool has_credentials {false};
 };
 
+// Closes descriptors in [from, count) that this process will not adopt.
+//
+// By the time a SCM_RIGHTS record is visible here the kernel has already
+// installed every descriptor it carries into this process. Rejecting the record
+// therefore does not undo the installation: any descriptor left unadopted stays
+// open with no owner. Closing them is what keeps a peer from walking the process
+// out of its descriptor table by repeatedly sending records we refuse.
+void close_unadopted_descriptors(
+    const std::byte* descriptor_bytes,
+    std::size_t from,
+    std::size_t count) noexcept {
+    for (std::size_t index = from; index < count; ++index) {
+        int fd = -1;
+        std::memcpy(&fd, descriptor_bytes + (index * sizeof(int)), sizeof(fd));
+        if (fd >= 0) {
+            ::close(fd);
+        }
+    }
+}
+
 [[nodiscard]] os::core::Result<void>
 append_rights(AncillaryData& output, const cmsghdr& control) noexcept {
     if (control.cmsg_len < CMSG_LEN(0)) {
@@ -60,18 +80,22 @@ append_rights(AncillaryData& output, const cmsghdr& control) noexcept {
     }
 
     const auto payload_bytes = control.cmsg_len - CMSG_LEN(0);
+    const auto* descriptor_bytes =
+        reinterpret_cast<const std::byte*>(CMSG_DATA(const_cast<cmsghdr*>(&control)));
+
+    // A trailing partial descriptor cannot be interpreted, but the whole ones
+    // preceding it are still installed and still need closing.
+    const auto descriptor_count = payload_bytes / sizeof(int);
     if (payload_bytes == 0U || (payload_bytes % sizeof(int)) != 0U) {
+        close_unadopted_descriptors(descriptor_bytes, 0U, descriptor_count);
         return ipc_error(errors::invalid_ancillary);
     }
 
-    const auto descriptor_count = payload_bytes / sizeof(int);
     const auto available = static_cast<std::size_t>(max_handle_count - output.handle_count);
     if (descriptor_count > available) {
+        close_unadopted_descriptors(descriptor_bytes, 0U, descriptor_count);
         return ipc_error(errors::ancillary_truncated);
     }
-
-    const auto* descriptor_bytes =
-        reinterpret_cast<const std::byte*>(CMSG_DATA(const_cast<cmsghdr*>(&control)));
 
     for (std::size_t index = 0; index < descriptor_count; ++index) {
         int fd = -1;
@@ -81,15 +105,20 @@ append_rights(AncillaryData& output, const cmsghdr& control) noexcept {
             sizeof(fd));
 
         if (fd < 0) {
+            close_unadopted_descriptors(descriptor_bytes, index + 1U, descriptor_count);
             return ipc_error(errors::invalid_native_handle);
         }
 
         auto cloexec_result = set_close_on_exec(fd);
         if (!cloexec_result) {
             ::close(fd);
+            close_unadopted_descriptors(descriptor_bytes, index + 1U, descriptor_count);
             return cloexec_result.error();
         }
 
+        // Adopting into NativeHandle transfers ownership: descriptors already in
+        // `output` are closed by AncillaryData's destructor when a later control
+        // record in the same message is rejected.
         output.handles[output.handle_count] = os::core::NativeHandle{fd};
         ++output.handle_count;
     }

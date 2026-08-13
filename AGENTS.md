@@ -1,10 +1,16 @@
-# ENML OS — Codex Working Instructions
+# Cookie OS — Working Instructions
 
-This repository is an incremental implementation of ENML OS. Continue the existing architecture; do not redesign it into Android, a conventional desktop Linux distribution, a monolithic daemon, or a from-scratch kernel.
+This repository is an incremental implementation of Cookie OS. Continue the existing architecture; do not redesign it into Android, a conventional desktop Linux distribution, or a monolithic daemon.
+
+The operating system is **Cookie**, its microkernel is the **Cookie Kernel**, and the security architecture both carry is **EMNL**. These are three names, not one; `docs/NAMING.md` defines them and `README.md` repeats the table. Source identifiers (`os::` namespaces, `emnl_*` targets) are deliberately not renamed yet.
 
 ## Product direction
 
-ENML aims for appliance-like phone behavior, small trusted components, strong process isolation, bounded IPC, stable public APIs, low idle work, fast boot/resume, and a modern phone UX. Linux is the private hardware/process kernel. ENML services, OSIDL, security identities, package/storage/UI/telephony APIs are the public OS personality.
+Cookie aims for appliance-like phone behavior, small trusted components, strong process isolation, bounded IPC, stable public APIs, low idle work, fast boot/resume, and a modern phone UX. Cookie services, OSIDL, security identities, and package/storage/UI/telephony APIs are the public OS personality.
+
+**Substrate status.** Linux is still the private hardware/process kernel underneath the service layer, but it is no longer the destination. M7.0 reversed that decision: Cookie is acquiring its own microkernel and Linux becomes, at most, a development host. Read `docs/M7_0_KERNEL.md` for the decision and `docs/SUBSTRATE.md` for the position it reverses before touching anything substrate-shaped. A from-scratch kernel is now in scope — but only the four responsibilities M7.0 names, and only while it stays small enough to review completely.
+
+`docs/ROADMAP.md` is the plan of record for phase order and exit criteria.
 
 ## Hard architectural constraints
 
@@ -64,6 +70,13 @@ ENML aims for appliance-like phone behavior, small trusted components, strong pr
 - M2.8: supervised host/CI `system.keys`, trusted private state/control capabilities, application lifecycle key policy, hierarchy-backed persistent key generation/rotation, generation-aware App Manager policy replay, uninstall revocation without implicit key destruction, stale-capability restart semantics, compact live-endpoint polling, and GCC/Clang/ASan/native-AArch64 product gates.
 - M2.9: shared pidfd-backed boot-scoped `ProcessAuthority`, bounded trusted multi-service `ServiceBroker`, application bootstrap v2 typed service-handle transfer, and one `PeerIdentity` across Storage + Keys.
 - M2.10: long-lived private `PlatformServiceSession`, exact runtime credential validation, bootstrap ServiceId allow-listing, explicit fresh endpoint reacquisition after Storage/Key restart, unchanged boot-scoped identity, stale old capabilities, bounded App Manager servicing, and end-to-end restart/recovery gates.
+- M3.0-M3.2: compositor/surface ownership and trusted scene ordering, typed shared buffers and supervised `system.compositor`, and the bounded semantic UI/accessibility/collections/text/input/raster foundation. M3.2 does not claim a final Unicode/font backend, GPU renderer, trust mark or translucent material implementation.
+- M4.0-M4.10g: trusted phone shell foundation, resource budget gates, fail-closed `Result` discipline, ancillary descriptor hygiene, fuzzing depth, obscured-input and consent-prompt handling, text contrast, coercion-resistant unlock and durable duress profile-root erasure.
+- M5.0-M5.6: verified boot state, attestation, sealing, transparency, platform capabilities, CTest diagnostics, fuzz leak detection and `KRG1` fuzzing. M5 designs and tests the boot evidence; no platform produces it yet.
+- M6.0-M6.3: device access policy with confinement that refuses to claim what a platform cannot enforce, time/micro-architectural partition accounting, and the substrate probe. M6 policy is complete; no platform enforces it yet.
+- M7.0-M7.5a: the Cookie Kernel decision and ABI, capability model, scheduler, interrupt dispatch, kernel composition, de-Linux boundary, machine layer, kernel hardening, anonymous attestation, machine-wide W^X ledger and the first real AArch64 machine operations.
+
+**Stranded work — merged on GitHub, absent from `main`.** M4.10h, M7.5b and M7.5c each merged into a stack parent that had *already* been merged to `main` moments earlier, so the content never arrived. PR #32 merged `m4-10g` to `main` at 11:58:17 and PR #33 merged `m4-10h` into `m4-10g` at 11:58:24. The same pattern stranded M7.5b (PR #46) and M7.5c (PR #51). Their commits survive only in the open stack branches — `m4-10i` carries M4.10h, `m7-5d` carries both M7.5b and M7.5c — and are recovered by landing those stacks bottom-up onto `main`. Do not treat a closed PR as evidence that its work is in `main`; check ancestry.
 
 Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_PRIVATE_STORAGE.md`, `docs/M2_1_STORAGE_SERVICE.md`, `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`, `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`, `docs/M2_6_KEY_PERSISTENCE.md`, `docs/M2_7_KEY_HIERARCHY.md`, `docs/M2_8_KEY_SERVICE_PRODUCT_INTEGRATION.md`, `docs/M2_9_SERVICE_BROKER.md`, and `docs/M2_10_RUNTIME_SERVICE_SESSION.md` before changing those substrates.
 
@@ -87,6 +100,7 @@ Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_P
 - Public applications never provide `KeyOwner`, `PrincipalId`, `UserId`, `KeyProtectionScope`, root references, raw provider handles, private control operations or raw long-lived key bytes.
 - A `KeyObjectHandle` is an object capability but its operations are still checked against trusted per-message peer identity.
 - AES-256-GCM-v1 is the current reviewed service profile; do not invent custom crypto or silently switch profiles.
+- The AEAD nonce is provider-owned. `seal()` takes it by non-const reference as an *output*; no caller-supplied or caller-influenced value may ever reach the cipher, and no nonce may repeat under one key. Letting an untrusted caller pin the IV is precisely what made keystream reuse, and then key recovery by XOR alone, possible in CVE-2021-25444. Any future production provider is bound by this, not just the current one.
 - The `EKEY` envelope authenticates canonical metadata plus caller AAD.
 - `PersistentKeyProvider` returns opaque provider-owned durability blobs. A production provider may use TPM/TEE/HSM sealed objects or secure locators; the OpenSSL provider and fixed wrapping root are test-only.
 - `KRG1` persistence is explicit little-endian and bounded. Never serialize `KeyRecord`, `KeyDescriptor`, `ProviderKeyReference`, `RootKeyReference`, or other native C++ layout directly.
@@ -126,24 +140,22 @@ Read `docs/REFERENCE_NOTES_2026_08_08.md` and the milestone-specific design note
 
 For kernel/BSP work, preserve an upstream-first Linux strategy and small reviewable patches. For C++ core code, prefer type-rich lightweight abstractions, RAII, deterministic ownership and moves. For encryption design, borrow key-hierarchy/boot-integrity principles from historical full-disk-encryption systems without copying their obsolete algorithm choices. For service architecture, preserve centralized trusted policy and explicit process/service boundaries rather than exposing cryptographic implementation choices to apps. Symbian Publish-and-Subscribe/system-server material may guide explicit system-state observation and resource ownership, but ENML keeps its own typed bounded IPC and capability model.
 
-## Current next track: display/compositor/UI foundation
+## Current next track: land the backlog, then finish the Cookie Kernel
 
-M0, M1, and the M2 storage/key/multi-service runtime substrate are complete. Do not keep broadening `ServiceBroker` merely because another global service could be added to it.
+M0 through M3 are complete. M4, M5 and M6 have merged foundations. The Cookie Kernel exists through M7.5c. Do not keep broadening `ServiceBroker` merely because another global service could be added to it.
 
-Required direction for the next product track:
+The immediate obstacle is not design, it is integration. A large body of finished work sits in stacked draft PRs whose stack bases fail on small mechanical defects — a missing enum member, a build target absent from a workflow's target list, a base branch behind `main`. `docs/ROADMAP.md` Phase 0 enumerates them.
 
-1. Introduce the minimal compositor/display service foundation with explicit surface ownership and no application direct access to display devices.
-2. Keep compositor, shell/system UI, input routing and application rendering as distinct trust responsibilities where appropriate.
-3. Define bounded typed scene/surface primitives and frame submission rather than exposing DRM/KMS/fbdev or Linux device nodes as public app ABI.
-4. Preserve frame-deadline awareness, bounded buffering and low idle wakeups from the beginning; phone UX and power efficiency are architectural requirements.
-5. Carry trusted application identity into surface ownership and secure-UI decisions without allowing apps to self-claim surface roles.
-6. Begin semantic accessibility metadata at the UI API boundary instead of retrofitting it after visual rendering is frozen.
-7. Use the supplied BlackBerry/One UI/UX references for workflow, reachability, responsive layout, accessibility and predictable standard components, while deliberately avoiding vendor visual-identity copying.
-8. Keep secure lock/permission/system surfaces visually and technically attributable to trusted system principals.
-9. Continue GCC/Clang/sanitizer/native-AArch64 validation and add deterministic compositor protocol/ownership tests before hardware-specific display work.
-10. Keep hardware/BSP display integration behind the private Linux/driver layer and follow upstream-first kernel/driver practice.
+Required direction, in order:
 
-Production TPM/TEE/HSM key providers, verified boot/attestation, hardware monotonic rollback state, telephony/baseband integration and recovery remain separate later tracks; do not fake them in the compositor milestone.
+1. Land the open stacks bottom-up. Never merge a stacked PR out of order to save time; a rebase that skips a link silently rewrites the link beneath it.
+2. Rebase each stack base onto current `main` before pushing the next link.
+3. Finish the AArch64 kernel line: standalone boot image, descriptor teardown and TLBI, first EL0 process and syscall return, GICv3 timer delivery, tickless preemptive scheduling, address-space epochs with ASID quarantine, capability-addressed native IPC with reply seals.
+4. Add the user-space driver framework — interrupt handlers inside driver processes connected to a vector by a kernel call, under M6.0 device access policy. "No drivers in the kernel" is only true once this exists.
+5. Add a kernel line-count gate. `docs/M7_0_KERNEL.md` rests the entire decision on the kernel staying small enough to review; a ceiling nobody enforces is a wish.
+6. Only then move the service layer off `SOCK_SEQPACKET` onto native capability-addressed IPC, and re-establish every existing gate against the new substrate. A gate that only ever ran on Linux proves nothing about Cookie.
+
+Production TPM/TEE/HSM key providers, hardware monotonic rollback state, IOMMU enforcement, verified boot evidence, telephony/baseband integration and recovery remain separate later tracks; do not fake them in a kernel milestone. `docs/ROADMAP.md` Phases 4-6 own them.
 
 ## Build and test
 
@@ -168,3 +180,80 @@ ctest --test-dir build/host-clang --output-on-failure
 ```
 
 Process-sensitive tests must run on GCC, Clang and native AArch64. Do not add them to the M0 qemu-user-safe set unless they are explicitly proven safe there.
+
+### Fast local check on Windows, before pushing
+
+`core/oscore` and `core/oskernel` are portable C++ with header-only `Result` and
+`panic`, so the kernel state machines build and run without CMake, without Linux
+and without CI. On a Windows box with the VS 2022 Build Tools:
+
+```sh
+cmd /c '"C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\VC\Auxiliary\Build\vcvars64.bat" && cl /nologo /std:c++20 /EHsc /W4 /permissive- /I core\oskernel\include /I core\oscore\include /Fe:t.exe tests\unit\kernel\scheduler_test.cpp core\oskernel\src\scheduler.cpp && t.exe'
+```
+
+This is a pre-flight check, not a gate, and it does not replace anything. MSVC
+applies no `-Wconversion`/`-Wsign-conversion` and there are no sanitizers here,
+so a green run means "no syntax error and the logic holds", not "ready to merge".
+Its value is that it costs seconds where a CI round trip costs minutes, and it
+catches the mistakes that are most expensive to learn about remotely - aggregate
+initialisers that do not match their struct, and state machines whose transitions
+were reasoned about rather than executed.
+
+Modules coupled to Linux (`osipc`, `ossandbox`, `osservice`, `osstorage`) will
+not build this way. That is expected and is not a failure to investigate.
+
+## Device authority
+
+Port I/O authority is not representable in `DeviceAccessPolicyV1` and must not
+be added. A bounded MMIO window can be checked; "the I/O port space" cannot, and
+a component holding it is not confined by anything. The microdriver design the
+split is drawn from grants exactly this to its user-mode half, because its goal
+is fault isolation rather than confinement. ENML's boundary is a security
+boundary, so it takes the split and refuses the grant.
+
+A device that masters the bus without an IOMMU reaches all of physical memory
+regardless of where its driver runs. Moving a driver out of the kernel isolates
+it from the kernel's control flow, not from its memory. `parse_device_access_v1`
+therefore rejects any record claiming an `isolated_user` component whose DMA is
+`unconfined`, and callers must ask `confined()` rather than testing the
+execution domain.
+
+Anything crossing the device boundary goes through OSIDL. The reference
+implementation depends on hand-written pointer annotations whose omission
+produces an incorrectly marshaled structure - a memory-safety bug manufactured
+by the boundary meant to contain one. ENML has generated, typed, bounded wire
+formats already; there will be no annotation dialect.
+
+## Secrets and timing
+
+Never compare secret bytes with `==`, `memcmp`, or `std::equal`. All three
+short-circuit at the first differing byte, so the time taken reveals how much of
+the value the caller already has, and an attacker who can submit candidates and
+observe the answer recovers it byte by byte. Use
+`os::core::constant_time_equal`. This covers authentication tags, key material,
+capability tokens and anything else where being wrong should not be
+distinguishable from being nearly right. Digests of public content - package
+content digests, boot stage measurements - are not secrets and may be compared
+normally.
+
+Wipe key material, nonces, tags and plaintexts before they go out of scope,
+using `os::core::secure_zero`. A plain zeroing loop has no observable effect by
+the language's rules and a compiler may delete it, leaving the secret in a stack
+frame that will be reused or a page that may be swapped.
+
+A production cipher implementation must not use secret-indexed lookup tables.
+The table-driven AES construction is precisely the target of the cache attacks
+in the references, which recover a full key from a phone with no privileges at
+all. Use the platform's cryptographic instructions where they exist and a
+data-independent implementation where they do not.
+
+Known gap, recorded rather than papered over: `AeadTag` and `AeadNonce` expose
+their bytes as public `std::array` members, so `a.bytes == b.bytes` still
+compiles and is still variable-time. The rule above is the control; closing it
+properly means wrapping the storage so the naive comparison cannot be written.
+
+Division and modulo are not constant-time instructions on many implementations,
+and neither are unaligned accesses. A secret must never influence a divisor, a
+shift amount taken from data, or an alignment. This is a separate rule from
+avoiding secret-indexed tables and is missed more often, because the code looks
+arithmetic rather than table-driven.

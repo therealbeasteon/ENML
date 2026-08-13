@@ -374,15 +374,31 @@ int main() {
     }
 
     const std::array<std::byte, 1U> key_marker{std::byte{0xB2}};
+
+    // The key service has been reacquired, but this marker is written through
+    // the storage capability acquired before any restart - and this fixture
+    // restarts storage as well. The two restarts are not ordered against each
+    // other, so storage may already be gone by the time this runs.
+    //
+    // That is not a failure. It is the same event the heartbeat loop below
+    // exists to observe, arriving one statement early. Treating it as fatal
+    // made this test fail intermittently: the child exited 32 and the parent
+    // then waited its full timeout for a marker nobody would write. Defer the
+    // marker to the reacquired root instead.
+    bool storage_died = false;
+    bool key_marker_pending = false;
     auto key_marker_written = storage_root.atomic_replace(key_reacquired_path.value(), key_marker, scratch);
     if (!key_marker_written) {
-        report_error("key-marker", 32, key_marker_written.error());
-        return 32;
+        if (!is_peer_died(key_marker_written.error())) {
+            report_error("key-marker", 32, key_marker_written.error());
+            return 32;
+        }
+        storage_died = true;
+        key_marker_pending = true;
     }
 
     const std::array<std::byte, 1U> heartbeat{std::byte{0xC3}};
-    bool storage_died = false;
-    for (std::size_t attempt = 0U; attempt < 1000U; ++attempt) {
+    for (std::size_t attempt = 0U; attempt < 1000U && !storage_died; ++attempt) {
         auto written = storage_root.atomic_replace(heartbeat_path.value(), heartbeat, scratch);
         if (!written) {
             if (!is_peer_died(written.error())) {
@@ -417,6 +433,21 @@ int main() {
         return 36;
     }
     auto fresh_root = std::move(fresh_root_result).value();
+
+    // Written now if the old capability died before it could be. The marker
+    // still means what it meant - the key service was reacquired and used
+    // successfully - and the parent still gets it.
+    if (key_marker_pending) {
+        auto deferred = fresh_root.atomic_replace(
+            key_reacquired_path.value(),
+            key_marker,
+            scratch);
+        if (!deferred) {
+            report_error("key-marker-deferred", 32, deferred.error());
+            return 32;
+        }
+    }
+
     const std::array<std::byte, 1U> storage_marker{std::byte{0xD4}};
     auto storage_marker_written = fresh_root.atomic_replace(
         storage_reacquired_path.value(),

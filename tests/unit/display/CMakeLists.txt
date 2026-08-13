@@ -14,6 +14,14 @@ target_compile_options(display_input_hit_test PRIVATE
 add_test(NAME display_input_hit_test COMMAND display_input_hit_test)
 set_tests_properties(display_input_hit_test PROPERTIES LABELS m3-display)
 
+add_executable(display_obscured_input_test obscured_input_test.cpp)
+target_link_libraries(display_obscured_input_test PRIVATE emnl::osdisplay emnl_warnings)
+target_compile_options(display_obscured_input_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME display_obscured_input_test COMMAND display_obscured_input_test)
+set_tests_properties(display_obscured_input_test PROPERTIES LABELS m3-display)
+
 add_executable(display_input_authority_test input_authority_test.cpp)
 target_link_libraries(display_input_authority_test PRIVATE emnl::osdisplay emnl_warnings)
 target_compile_options(display_input_authority_test PRIVATE

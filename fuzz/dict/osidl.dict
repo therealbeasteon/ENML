@@ -1,0 +1,42 @@
+# libFuzzer dictionary for osidlc_compiler_fuzz.
+#
+# The OSIDL lexer rejects anything that is not one of a small set of keywords,
+# so a mutator working byte-by-byte almost never assembles a token by chance.
+# Supplying the vocabulary lets mutation explore the parser and semantic pass
+# (duplicate ids, non-increasing field numbers, unknown type references, string
+# bound limits) instead of the tokenizer's reject path.
+#
+# Keep in step with the accepted grammar in tools/osidlc/src/compiler.cpp.
+
+keyword_package="package"
+keyword_struct="struct"
+keyword_service="service"
+keyword_operation="operation"
+keyword_request="request"
+keyword_response="response"
+keyword_version="version"
+keyword_id="id"
+
+type_u32="u32"
+type_u64="u64"
+type_string="string"
+
+punct_brace_open="{"
+punct_brace_close="}"
+punct_angle_open="<"
+punct_angle_close=">"
+punct_semicolon=";"
+punct_assign="="
+punct_dot="."
+
+# Bounds and identifiers that appear in real interfaces, so mutation starts from
+# plausible shapes rather than inventing them.
+bound_256="<256>"
+bound_zero="<0>"
+hex_service_id="0x0000F001"
+package_decl="package os.test.echo;"
+struct_decl="struct S {"
+service_decl="service S {"
+field_string="string<256> f = 1;"
+field_u64="u64 f = 1;"
+operation_decl="operation Op = 1 {"

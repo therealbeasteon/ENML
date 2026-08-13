@@ -1,0 +1,60 @@
+# libFuzzer dictionary for boot_state_fuzz.
+#
+# parse_boot_state_v1 rejects on the first four bytes unless they are exactly
+# "EBS1", so without this entry the fuzzer never reaches version, reserved-field,
+# discriminant or coherence checking at all.
+#
+# Keep in step with core/osboot/include/os/boot/state.hpp.
+
+magic_ebs1="EBS1"
+header_size_32="\x20\x00"
+version_1="\x01\x00"
+reserved_zero_u16="\x00\x00"
+reserved_zero_u32="\x00\x00\x00\x00"
+
+# Lifecycle and verification discriminants. Zero is deliberately invalid, and
+# values past the end are what the unknown-discriminant rejection exists for.
+lifecycle_open="\x01"
+lifecycle_closed="\x02"
+lifecycle_invalid_zero="\x00"
+lifecycle_out_of_range="\x03"
+verification_failed="\x01"
+verification_verified="\x02"
+verification_out_of_range="\x03"
+
+# Stage kinds, little-endian u16.
+stage_first_stage="\x01\x00"
+stage_bootloader="\x02\x00"
+stage_kernel="\x03\x00"
+stage_configuration="\x04\x00"
+stage_root_filesystem="\x05\x00"
+stage_out_of_range="\x06\x00"
+
+digest_sha256="\x01"
+digest_out_of_range="\x02"
+
+# Stage counts around the ceiling of 8.
+stage_count_zero="\x00\x00"
+stage_count_one="\x01\x00"
+stage_count_max="\x08\x00"
+stage_count_over_max="\x09\x00"
+
+# Security versions worth straddling: zero, one, and the rollback edge.
+security_version_zero="\x00\x00\x00\x00\x00\x00\x00\x00"
+security_version_one="\x01\x00\x00\x00\x00\x00\x00\x00"
+security_version_max="\xff\xff\xff\xff\xff\xff\xff\xff"
+
+# Platform capability bitmap, little-endian u32 at header offset 24. Bits above
+# the known mask are exactly what the unknown-capability rejection exists for,
+# and the interesting boundaries are a closed device without an immutable first
+# stage and a rollback claim without a monotonic counter.
+capabilities_none="\x00\x00\x00\x00"
+capabilities_immutable_first_stage="\x01\x00\x00\x00"
+capabilities_rot_measurement="\x02\x00\x00\x00"
+capabilities_rot_storage="\x04\x00\x00\x00"
+capabilities_rot_reporting="\x08\x00\x00\x00"
+capabilities_monotonic_counter="\x10\x00\x00\x00"
+capabilities_backed="\x11\x00\x00\x00"
+capabilities_all_known="\x1f\x00\x00\x00"
+capabilities_unknown_bit="\x20\x00\x00\x00"
+capabilities_high_bit="\x00\x00\x00\x80"

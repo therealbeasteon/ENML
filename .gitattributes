@@ -1,0 +1,16 @@
+# Normalize line endings on commit regardless of contributor platform.
+* text=auto
+
+# These are executed by Linux runners and by the build. A CRLF shell script
+# fails with a "bad interpreter" error that reads as a missing file, so the
+# ending is enforced rather than left to each contributor's core.autocrlf.
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.cmake text eol=lf
+CMakeLists.txt text eol=lf
+*.osidl text eol=lf
+
+# Fuzzing dictionaries are parsed by libFuzzer, and seed corpora are compared
+# byte-for-byte against wire formats. Neither may be rewritten by normalization.
+*.dict text eol=lf

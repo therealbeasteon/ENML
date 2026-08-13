@@ -1,0 +1,47 @@
+# libFuzzer dictionary for device_access_fuzz.
+#
+# The header is rejected on the first four bytes unless they are exactly the
+# EDA1 magic, and total_size must equal the real record length, so without the
+# magic and the two valid lengths a run never reaches grant parsing at all.
+#
+# Keep in step with core/osdevice/src/access.cpp.
+
+magic_eda1="EDA1"
+version_1="\x01\x00"
+header_size_32="\x20\x00"
+
+# The only two record lengths a zero- and one-grant policy can have. Later
+# entries cover the rest of the ceiling.
+total_size_header_only="\x20\x00\x00\x00"
+total_size_one_grant="\x38\x00\x00\x00"
+total_size_two_grants="\x50\x00\x00\x00"
+total_size_max_grants="\x80\x00\x00\x00"
+
+# Execution domain and DMA capability, adjacent single bytes at offsets 12/13.
+# The interesting pair is isolated_user with unconfined DMA, which must always
+# be rejected, next to kernel_resident with unconfined DMA, which must not be.
+domain_kernel_resident="\x01"
+domain_isolated_user="\x02"
+dma_none="\x01"
+dma_iommu_confined="\x02"
+dma_unconfined="\x03"
+pair_isolated_unconfined="\x02\x03"
+pair_kernel_unconfined="\x01\x03"
+pair_isolated_confined="\x02\x02"
+
+# Grant counts around the ceiling of four.
+grant_count_zero="\x00\x00"
+grant_count_one="\x01\x00"
+grant_count_max="\x04\x00"
+grant_count_over_max="\x05\x00"
+
+access_read_only="\x01"
+access_read_write="\x02"
+
+# Address and length values that straddle the arithmetic edges: zero length,
+# one byte, a typical register window, and the values where base + length wraps.
+length_zero="\x00\x00\x00\x00\x00\x00\x00\x00"
+length_one="\x01\x00\x00\x00\x00\x00\x00\x00"
+length_page="\x00\x10\x00\x00\x00\x00\x00\x00"
+address_max="\xff\xff\xff\xff\xff\xff\xff\xff"
+address_high_bit="\x00\x00\x00\x00\x00\x00\x00\x80"

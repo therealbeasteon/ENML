@@ -27,7 +27,7 @@ jobs:
           app_manager_runtime_service_session_test
           --parallel 2
       - name: Test broker and runtime gates
-        run: ctest --preset host-debug --output-on-failure -L '^(m2-broker|m2-runtime)$'
+        run: .github/scripts/run-ctest.sh '^(m2-broker|m2-runtime)$' 'broker-gcc' --preset host-debug
 
   broker-sanitizers:
     runs-on: ubuntu-24.04
@@ -47,7 +47,7 @@ jobs:
           app_manager_runtime_service_session_test
           --parallel 2
       - name: Test broker and runtime gates with sanitizers
-        run: ctest --preset host-asan --output-on-failure -L '^(m2-broker|m2-runtime)$'
+        run: .github/scripts/run-ctest.sh '^(m2-broker|m2-runtime)$' 'broker-sanitizers' --preset host-asan
 
   broker-clang:
     runs-on: ubuntu-24.04
@@ -71,7 +71,7 @@ jobs:
           app_manager_runtime_service_session_test
           --parallel 2
       - name: Test broker and runtime gates
-        run: ctest --test-dir build/m2-broker-clang --output-on-failure -L '^(m2-broker|m2-runtime)$'
+        run: .github/scripts/run-ctest.sh '^(m2-broker|m2-runtime)$' 'broker-clang' --test-dir build/m2-broker-clang
 
   broker-arm64-native:
     runs-on: ubuntu-24.04-arm
@@ -93,4 +93,4 @@ jobs:
           app_manager_runtime_service_session_test
           --parallel 2
       - name: Test broker and runtime gates natively
-        run: ctest --preset host-debug --output-on-failure -L '^(m2-broker|m2-runtime)$'
+        run: .github/scripts/run-ctest.sh '^(m2-broker|m2-runtime)$' 'broker-arm64-native' --preset host-debug

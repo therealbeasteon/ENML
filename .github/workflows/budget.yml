@@ -1,0 +1,50 @@
+name: Resource Budgets
+
+on:
+  push:
+  pull_request:
+
+concurrency:
+  group: budget-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # Budget gates read procfs for the real service child, so they are not
+  # qemu-user-safe: under emulation the resident set and context-switch counts
+  # belong to the emulator rather than to the service. Native runners only.
+  #
+  # The OpenSSL test provider is enabled so system.keys exists to be measured.
+  # It is a host/CI fixture and never production key storage.
+  budget-x86:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
+      - name: Configure
+        run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
+      - name: Build
+        run: cmake --build --preset host-debug --parallel 2
+      - name: Enforce resource budgets
+        run: .github/scripts/run-budgets.sh 'x86-64'
+
+  budget-arm64-native:
+    runs-on: ubuntu-24.04-arm
+    steps:
+      - uses: actions/checkout@v4
+      - name: Record machine
+        run: |
+          uname -m
+          test "$(uname -m)" = "aarch64"
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
+      - name: Configure
+        run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
+      - name: Build
+        run: cmake --build --preset host-debug --parallel 2
+      - name: Enforce resource budgets on AArch64
+        run: .github/scripts/run-budgets.sh 'AArch64'

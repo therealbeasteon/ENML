@@ -443,7 +443,20 @@ int main(int argc, char** argv) {
     assert(wait_until_gone(manager, instance.instance));
     assert(broker.process_count() == 0U);
 
-    assert(manager.uninstall_application(application));
+    // uninstall_application collapses several stages - the durable
+    // no-active-generation commit, profile revocation against Storage and
+    // Keys, identity release, child teardown and a final maintain() - into one
+    // first_error. This assertion has failed intermittently in CI and a bare
+    // bool says nothing about which stage. Report before asserting.
+    auto uninstalled = manager.uninstall_application(application);
+    if (!uninstalled) {
+        std::fprintf(
+            stderr,
+            "m2.10 uninstall error domain=%u code=%u\n",
+            static_cast<unsigned>(uninstalled.error().domain),
+            static_cast<unsigned>(uninstalled.error().code));
+    }
+    assert(uninstalled);
     assert(::close(data_fd) == 0);
     key_state_directory.reset();
 

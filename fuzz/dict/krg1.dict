@@ -1,0 +1,41 @@
+# libFuzzer dictionary for keys_registry_snapshot_fuzz.
+#
+# load_snapshot rejects on the first four bytes unless they are exactly the KRG1
+# magic, so without this entry the fuzzer never reaches version, header-size,
+# total-size, reserved-field or record parsing at all.
+#
+# The header additionally requires total_size to equal the real file length,
+# which no random mutation will satisfy. Seeds carry correctly sized records;
+# these tokens are what lets mutation move between valid shapes.
+#
+# Keep in step with core/oskeys/src/persistence_linux.cpp and
+# core/oskeys/include/os/keys/persistence.hpp.
+
+magic_krg1="KRG1"
+version_1="\x01\x00"
+header_size_32="\x20\x00"
+reserved_zero_u16="\x00\x00"
+reserved_zero_u32="\x00\x00\x00\x00"
+reserved_zero_u64="\x00\x00\x00\x00\x00\x00\x00\x00"
+
+# Record counts around the 128 ceiling.
+record_count_zero="\x00\x00"
+record_count_one="\x01\x00"
+record_count_max="\x80\x00"
+record_count_over_max="\x81\x00"
+
+# Total version counts around the 128 * 8 ceiling.
+version_count_zero="\x00\x00\x00\x00"
+version_count_one="\x01\x00\x00\x00"
+version_count_max="\x00\x04\x00\x00"
+version_count_over_max="\x01\x04\x00\x00"
+
+# Total-size values matching the header-only and one-record cases, which are the
+# lengths the seeds actually use.
+total_size_header_only="\x20\x00\x00\x00"
+
+# The binding record covers a logical key id, a full principal, a 64-bit user
+# id, purpose, rights and a retained version, so that provider blobs cannot be
+# transplanted between records. Zero and all-ones straddle those fields.
+zero_u64="\x00\x00\x00\x00\x00\x00\x00\x00"
+ones_u64="\xff\xff\xff\xff\xff\xff\xff\xff"
