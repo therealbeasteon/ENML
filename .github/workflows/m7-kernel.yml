@@ -98,6 +98,18 @@ jobs:
           grep -m 8 -E '^0x40[0-9a-f]{6}' cookie-qemu-debug.log || echo 'NOTHING EXECUTED AT 0x40xxxxxx'
           echo '--- first 40 lines of the trace ---'
           head -n 40 cookie-qemu-debug.log || true
+          # Resolve the executed blocks to symbols. The three checks before the
+          # console is discovered cannot print a stage, so for those the trace
+          # PC is the only evidence there is - and an address is only evidence
+          # once something maps it back to a function.
+          echo '--- executed blocks, resolved ---'
+          elf=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot
+          for pc in $(grep -oE '^0x40[0-9a-f]{6}' cookie-qemu-debug.log | sort -u); do
+            printf '%s  %s\n' "$pc" "$(addr2line -f -C -e "$elf" "$pc" | tr '\n' ' ')"
+          done
+          echo '--- image extent (note: BSS is not in the .bin QEMU loads) ---'
+          readelf -lW "$elf" | sed -n '/Program Head/,/Section to Segment/p'
+          size -A -d "$elf" | head -20
           # Report the stage the kernel rejected before reporting the marker it
           # never printed. A bare grep for the success marker says only that
           # boot did not finish, which is the one thing already known.
