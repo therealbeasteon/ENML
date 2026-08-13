@@ -1,23 +1,13 @@
 #pragma once
 
-#include <cstddef>
-#include <cstdint>
-
 #include <os/core/result.hpp>
 #include <os/core/span.hpp>
 #include <os/display/compositor.hpp>
+#include <os/display/shell_protocol.hpp>
 #include <os/ipc/channel.hpp>
 #include <os/ipc/rpc.hpp>
 
 namespace os::display {
-
-// Private shell→compositor authority namespace. This is intentionally separate
-// from the application-facing compositor service operations. A numeric service
-// id is only a protocol label; caller authority is always resolved from kernel
-// credentials before the expected application owner or SurfaceId are parsed.
-inline constexpr os::core::ServiceId shell_compositor_control_service_id{0x0000F031U};
-inline constexpr std::uint32_t shell_compositor_operation_activate_exact = 1U;
-inline constexpr std::size_t shell_compositor_activate_request_size_v1 = 40U;
 
 using ShellExactActivationFn = os::core::Result<void> (*)(
     void* context,
@@ -33,6 +23,9 @@ struct ShellCompositorBackend final {
 [[nodiscard]] ShellCompositorBackend shell_compositor_backend(
     Compositor& compositor) noexcept;
 
+// Server half remains with system.compositor. Shell client code lives in
+// core/osshell so the trusted shell does not link compositor service/runtime
+// implementation just to issue a bounded exact-activation request.
 class ShellCompositorControlServer final {
 public:
     ShellCompositorControlServer(
@@ -54,20 +47,6 @@ public:
 private:
     ShellCompositorBackend backend_ {};
     os::ipc::PeerIdentityResolver* identity_resolver_ {nullptr};
-};
-
-class ShellCompositorControlClient final {
-public:
-    explicit ShellCompositorControlClient(os::ipc::Channel& channel) noexcept
-        : connection_(channel) {}
-
-    [[nodiscard]] os::core::Result<void> activate_exact(
-        os::core::PeerIdentity expected_owner,
-        SurfaceId application_surface,
-        os::core::MutableByteSpan scratch) noexcept;
-
-private:
-    os::ipc::ClientConnection connection_;
 };
 
 } // namespace os::display
