@@ -22,14 +22,16 @@ target_compile_options(oskernel PRIVATE
 )
 
 # The host machine remains the executable contract implementation while Cookie
-# is migrating off Linux. On a native AArch64 builder, also compile the real
-# architecture backend as a separate archive. It is intentionally not linked
-# into the hosted tests yet: unsupported machine operations fail closed there,
-# and the backend becomes the runtime implementation only once exception entry,
-# address spaces and context switching are complete enough to boot the emulator.
+# is migrating off Linux. On a native AArch64 builder, compile the real machine
+# backend, vector entry and context-switch assembly as a separate archive.
+# Assembly is enabled only here so architecture code cannot leak into portable
+# targets by accident.
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
+    enable_language(ASM)
     add_library(oskernel_machine_aarch64 STATIC
         src/machine_aarch64.cpp
+        src/aarch64_vectors.S
+        src/aarch64_context_switch.S
     )
     add_library(emnl::oskernel_machine_aarch64 ALIAS oskernel_machine_aarch64)
     target_include_directories(oskernel_machine_aarch64
@@ -38,6 +40,6 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     )
     target_link_libraries(oskernel_machine_aarch64 PUBLIC emnl::oscore emnl_warnings)
     target_compile_options(oskernel_machine_aarch64 PRIVATE
-        $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+        $<$<COMPILE_LANGUAGE:CXX>:$<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>>
     )
 endif()

@@ -4,8 +4,8 @@
 #include <limits>
 
 #include <os/core/error.hpp>
-#include <os/core/panic.hpp>
 #include <os/kernel/aarch64.hpp>
+#include <os/kernel/machine_aarch64.hpp>
 
 #if !defined(__aarch64__)
 #error "machine_aarch64.cpp must only be compiled for AArch64"
@@ -50,12 +50,14 @@ os::core::Result<void> machine_release_address_space(MachineAddressSpace& space)
 }
 
 void machine_switch_context(MachineContext& from, MachineContext& to) noexcept {
-    (void)from;
-    (void)to;
-    // A no-op here would be a false kernel implementation. Until the saved
-    // register frame and exception-return path exist, reaching context switch on
-    // the AArch64 backend is an invariant violation and must stop immediately.
-    os::core::invariant_violated();
+    // Unlike the former fail-closed stub, this is now a real AArch64 kernel
+    // context switch. The target must have been prepared by the machine layer;
+    // switching to arbitrary disk/user bytes as a register frame would turn a
+    // corrupted context object directly into control-flow authority.
+    if (!to.prepared) {
+        __builtin_trap();
+    }
+    cookie_aarch64_switch_context(&from, &to);
 }
 
 os::core::Result<void> machine_map_kernel_stack(
@@ -79,6 +81,10 @@ os::core::Result<void> machine_prepare_context(
     (void)space;
     (void)entry;
     (void)stack;
+    // Preparing the first return address is inseparable from proving that the
+    // requested stack belongs to this address space and has its required guard
+    // page. M7.5c supplies that real mapping state; accepting an arbitrary stack
+    // here would defeat the guard-page invariant merely to make switching demo.
     return machine_error(machine_errors::unsupported);
 }
 
@@ -134,8 +140,6 @@ os::core::Result<void> machine_set_timer(std::uint64_t nanoseconds) noexcept {
     }
     const std::uint64_t deadline = now + ticks.value();
 
-    // Program the physical timer compare value before enabling it. The ISB
-    // makes the system-register programming visible before execution continues.
     asm volatile("msr cntp_cval_el0, %0" :: "r"(deadline) : "memory");
     asm volatile("isb" ::: "memory");
     const std::uint64_t enable = 1ULL;

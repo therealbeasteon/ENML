@@ -3,6 +3,7 @@
 #include <limits>
 
 #include <os/kernel/aarch64.hpp>
+#include <os/kernel/aarch64_exception.hpp>
 
 namespace {
 
@@ -52,6 +53,37 @@ int main() {
     require(os::kernel::aarch64::ticks_to_nanoseconds_saturating(12'000'000ULL, 24'000'000U) ==
         500'000'000ULL);
     require(os::kernel::aarch64::ticks_to_nanoseconds_saturating(100ULL, 0U) == 0ULL);
+
+    using namespace os::kernel::aarch64;
+    require(exception_vector_entry_count == 16U);
+    require(exception_vector_entry_bytes == 128U);
+    require(exception_vector_table_bytes == 2048U);
+    require(exception_vector_table_alignment == 2048U);
+    require(sizeof(ExceptionFrame) == 288U);
+
+    const std::uint64_t svc0_esr =
+        (static_cast<std::uint64_t>(exception_class_svc_aarch64) << esr_exception_class_shift) |
+        esr_instruction_length_bit;
+    const auto svc0 = decode_exception_syndrome(svc0_esr);
+    require(is_aarch64_svc(svc0));
+    require(svc_immediate(svc0) == 0U);
+    require(valid_cookie_svc(svc0));
+
+    const auto svc_nonzero = decode_exception_syndrome(svc0_esr | 0x42U);
+    require(is_aarch64_svc(svc_nonzero));
+    require(svc_immediate(svc_nonzero) == 0x42U);
+    require(!valid_cookie_svc(svc_nonzero));
+
+    const auto data_abort = decode_exception_syndrome(
+        (0x24ULL << esr_exception_class_shift) | esr_instruction_length_bit);
+    require(!is_aarch64_svc(data_abort));
+    require(!valid_cookie_svc(data_abort));
+
+    // AArch64 SVC is a 32-bit instruction. A syndrome with the right class but
+    // IL clear cannot be accepted as Cookie's syscall trap.
+    const auto malformed_svc = decode_exception_syndrome(
+        static_cast<std::uint64_t>(exception_class_svc_aarch64) << esr_exception_class_shift);
+    require(!valid_cookie_svc(malformed_svc));
 
     return EXIT_SUCCESS;
 }
