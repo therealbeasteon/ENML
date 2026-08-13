@@ -11,6 +11,8 @@ namespace {
 
 os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
     Scheduler& scheduler,
+    const ProcessTranslationTable& translations,
+    const AddressSpaceEpochAuthority& epochs,
     const Decision& decision,
     std::uint64_t now_nanoseconds,
     ExceptionFrame& live,
@@ -20,17 +22,33 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
         return preemption_error(preemption_errors::no_runnable_thread);
     }
 
-    const ThreadId previous = running_;
-    if (capture_current) {
-        if (previous == invalid_thread || !frames_.contains(previous)) {
-            return preemption_error(preemption_errors::running_thread_missing);
-        }
-        auto captured = frames_.capture(previous, live);
-        if (!captured) return captured.error();
+    // Stage every failure-prone authority before mutating live execution state.
+    auto translation = translations.resolve(decision.thread, epochs);
+    if (!translation) {
+        return preemption_error(preemption_errors::translation_unavailable);
     }
 
-    if (!frames_.contains(decision.thread)) {
-        return preemption_error(preemption_errors::running_thread_missing);
+    const ThreadId previous = running_;
+    if (capture_current) {
+        if (previous == invalid_thread) {
+            return preemption_error(preemption_errors::running_thread_missing);
+        }
+        auto capture_ok = frames_.validate_capture(previous, live);
+        if (!capture_ok) return capture_ok.error();
+    }
+
+    auto restore_ok = frames_.validate_restore(decision.thread);
+    if (!restore_ok) return restore_ok.error();
+
+    auto prepared_deadline = deadlines_.prepare(decision, now_nanoseconds);
+    if (!prepared_deadline) return prepared_deadline.error();
+
+    auto committed_deadline = deadlines_.commit(prepared_deadline.value());
+    if (!committed_deadline) return committed_deadline.error();
+
+    if (capture_current) {
+        auto captured = frames_.capture(previous, live);
+        if (!captured) return captured.error();
     }
 
     const bool switched = previous != decision.thread;
@@ -39,14 +57,13 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
         if (!restored) return restored.error();
     }
 
-    auto deadline = deadlines_.apply(decision, now_nanoseconds);
-    if (!deadline) return deadline.error();
     running_ = decision.thread;
 
     return PreemptionResult{
         .previous = previous,
         .next = decision.thread,
-        .deadline = deadline.value(),
+        .deadline = committed_deadline.value(),
+        .translation = translation.value(),
         .switched = switched,
         .preempted = decision.preempted,
     };
@@ -54,17 +71,36 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
 
 os::core::Result<PreemptionResult> PreemptionCoordinator::start(
     Scheduler& scheduler,
+    const ProcessTranslationTable& translations,
+    const AddressSpaceEpochAuthority& epochs,
     std::uint64_t now_nanoseconds,
     ExceptionFrame& live) noexcept {
     if (running_ != invalid_thread) {
         return preemption_error(preemption_errors::wrong_running_thread);
     }
     const auto decision = scheduler.choose(now_nanoseconds);
-    return apply_decision(scheduler, decision, now_nanoseconds, live, false);
+    return apply_decision(
+        scheduler, translations, epochs, decision, now_nanoseconds, live, false);
+}
+
+os::core::Result<PreemptionResult> PreemptionCoordinator::reschedule(
+    Scheduler& scheduler,
+    const ProcessTranslationTable& translations,
+    const AddressSpaceEpochAuthority& epochs,
+    std::uint64_t now_nanoseconds,
+    ExceptionFrame& live) noexcept {
+    if (running_ == invalid_thread || scheduler.running() != running_) {
+        return preemption_error(preemption_errors::wrong_running_thread);
+    }
+    const auto decision = scheduler.choose(now_nanoseconds);
+    return apply_decision(
+        scheduler, translations, epochs, decision, now_nanoseconds, live, true);
 }
 
 os::core::Result<PreemptionResult> PreemptionCoordinator::on_timer(
     Scheduler& scheduler,
+    const ProcessTranslationTable& translations,
+    const AddressSpaceEpochAuthority& epochs,
     const SchedulerDeadline& delivered,
     std::uint64_t now_nanoseconds,
     ExceptionFrame& live) noexcept {
@@ -75,7 +111,8 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::on_timer(
     }
 
     const auto decision = scheduler.choose(now_nanoseconds);
-    return apply_decision(scheduler, decision, now_nanoseconds, live, true);
+    return apply_decision(
+        scheduler, translations, epochs, decision, now_nanoseconds, live, true);
 }
 
 } // namespace os::kernel::aarch64

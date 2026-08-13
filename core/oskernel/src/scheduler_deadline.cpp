@@ -17,27 +17,49 @@ namespace {
 
 } // namespace
 
-os::core::Result<SchedulerDeadline> SchedulerDeadlineAuthority::apply(
+os::core::Result<PreparedSchedulerDeadline> SchedulerDeadlineAuthority::prepare(
     const Decision& decision,
-    std::uint64_t now_nanoseconds) noexcept {
-    generation_ = next_generation(generation_);
+    std::uint64_t now_nanoseconds) const noexcept {
+    const auto generation = next_generation(generation_);
 
     if (decision.timer_nanoseconds == 0U) {
-        current_ = SchedulerDeadline{.generation = generation_, .active = false};
-        return current_;
+        return PreparedSchedulerDeadline{
+            .deadline = SchedulerDeadline{.generation = generation, .active = false},
+            .base_generation = generation_,
+        };
     }
     if (decision.timer_nanoseconds >
         std::numeric_limits<std::uint64_t>::max() - now_nanoseconds) {
-        current_ = SchedulerDeadline{.generation = generation_, .active = false};
         return deadline_error(scheduler_deadline_errors::overflow);
     }
 
-    current_ = SchedulerDeadline{
-        .generation = generation_,
-        .absolute_nanoseconds = now_nanoseconds + decision.timer_nanoseconds,
-        .active = true,
+    return PreparedSchedulerDeadline{
+        .deadline = SchedulerDeadline{
+            .generation = generation,
+            .absolute_nanoseconds = now_nanoseconds + decision.timer_nanoseconds,
+            .active = true,
+        },
+        .base_generation = generation_,
     };
+}
+
+os::core::Result<SchedulerDeadline> SchedulerDeadlineAuthority::commit(
+    const PreparedSchedulerDeadline& prepared) noexcept {
+    if (!prepared.valid() || prepared.base_generation != generation_ ||
+        prepared.deadline.generation != next_generation(generation_)) {
+        return deadline_error(scheduler_deadline_errors::stale_prepare);
+    }
+    generation_ = prepared.deadline.generation;
+    current_ = prepared.deadline;
     return current_;
+}
+
+os::core::Result<SchedulerDeadline> SchedulerDeadlineAuthority::apply(
+    const Decision& decision,
+    std::uint64_t now_nanoseconds) noexcept {
+    auto prepared = prepare(decision, now_nanoseconds);
+    if (!prepared) return prepared.error();
+    return commit(prepared.value());
 }
 
 os::core::Result<void> SchedulerDeadlineAuthority::accept_interrupt(

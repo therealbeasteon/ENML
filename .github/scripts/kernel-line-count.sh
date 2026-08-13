@@ -123,16 +123,21 @@ END { print count + 0 }
 
 core_files=(
     "core/oskernel/include/os/kernel/abi.hpp"
+    "core/oskernel/include/os/kernel/address_space_epoch.hpp"
     "core/oskernel/include/os/kernel/capability.hpp"
     "core/oskernel/include/os/kernel/interrupt.hpp"
     "core/oskernel/include/os/kernel/kernel.hpp"
+    "core/oskernel/include/os/kernel/process_translation.hpp"
     "core/oskernel/include/os/kernel/rendezvous.hpp"
     "core/oskernel/include/os/kernel/scheduler.hpp"
     "core/oskernel/include/os/kernel/scheduler_deadline.hpp"
+    "core/oskernel/include/os/kernel/translation_root.hpp"
     "core/oskernel/src/abi.cpp"
+    "core/oskernel/src/address_space_epoch.cpp"
     "core/oskernel/src/capability.cpp"
     "core/oskernel/src/interrupt.cpp"
     "core/oskernel/src/kernel.cpp"
+    "core/oskernel/src/process_translation.cpp"
     "core/oskernel/src/rendezvous.cpp"
     "core/oskernel/src/scheduler.cpp"
     "core/oskernel/src/scheduler_deadline.cpp"
@@ -140,18 +145,25 @@ core_files=(
 
 machine_files=(
     "core/oskernel/include/os/kernel/aarch64.hpp"
+    "core/oskernel/include/os/kernel/aarch64_asid.hpp"
     "core/oskernel/include/os/kernel/aarch64_entry.hpp"
     "core/oskernel/include/os/kernel/aarch64_exception.hpp"
+    "core/oskernel/include/os/kernel/aarch64_execution_universe.hpp"
     "core/oskernel/include/os/kernel/aarch64_gic_v3.hpp"
+    "core/oskernel/include/os/kernel/aarch64_kernel_mapping_manifest.hpp"
     "core/oskernel/include/os/kernel/aarch64_mapping_state.hpp"
     "core/oskernel/include/os/kernel/aarch64_page_tables.hpp"
     "core/oskernel/include/os/kernel/aarch64_preemption.hpp"
     "core/oskernel/include/os/kernel/aarch64_translation.hpp"
+    "core/oskernel/include/os/kernel/aarch64_translation_root_sealer.hpp"
     "core/oskernel/include/os/kernel/aarch64_user_frames.hpp"
     "core/oskernel/include/os/kernel/machine.hpp"
     "core/oskernel/include/os/kernel/machine_aarch64.hpp"
+    "core/oskernel/src/aarch64_asid.cpp"
     "core/oskernel/src/aarch64_context_switch.S"
     "core/oskernel/src/aarch64_entry.cpp"
+    "core/oskernel/src/aarch64_execution_universe.cpp"
+    "core/oskernel/src/aarch64_execution_universe_machine.cpp"
     "core/oskernel/src/aarch64_gic_v3.cpp"
     "core/oskernel/src/aarch64_preemption.cpp"
     "core/oskernel/src/aarch64_translation.cpp"
@@ -259,11 +271,44 @@ not_kernel=(
 # deliver a timer IRQ to it (M7.5g) but cannot preempt what it interrupted
 # still only runs one process cooperatively; this is what makes M7.5i's
 # multi-process scheduling meaningful rather than aspirational.
-core_ceiling=1360
-machine_ceiling=1766
+# Raised a sixth time, by M7.5i: core 1360 -> 1674, machine 1766 -> 2174,
+# entry 411 -> 569, total 4758 -> 5638. This is the milestone that makes an
+# address space something the kernel can retire and reissue rather than a
+# single fixed thing the boot image sets up once: generation-bound epochs and
+# process translation as portable policy (core, alongside the scheduler it
+# now cooperates with); ASID assignment, execution-universe composition and
+# the AArch64 side of committing a translation root under it, plus sealing a
+# translation root so it cannot be mutated out from under a running process
+# (machine); wiring two real EL0 processes through that machinery at boot,
+# which is what proves generation-bound epochs against something other than a
+# host test (entry). ASID quarantine exists so a retired generation's
+# translations cannot be observed by a later one that reuses its ASID - a
+# stale entry surviving a generation boundary is the address-space analogue
+# of the stale-TLB-entry defect M7.5e's unmap fixed, and untested here is
+# exactly the kind of gap this ceiling exists to keep visible rather than
+# quietly under-reviewed.
+# Raised a seventh time, not by a milestone but by a defect fix: entry
+# 569 -> 570, total 5638 -> 5639. The M7.5i boot proof's contention check
+# was flaky under QEMU TCG on shared CI - Scheduler::choose() correctly
+# charges all elapsed real time since the last decision even while
+# uncontested (the anti-gaming property that stops a thread dodging its
+# charge by avoiding decision points, which stays exactly as it is), and
+# two EL0/EL1 round trips plus a UART print were measured exceeding 2ms of
+# guest-visible time - kernel-internal servicing cost, not the user
+# thread's own work, and microseconds on real hardware - exhausting
+# process A's round-robin slice before this deliberate contention test
+# ever ran. Fixed by passing the still-current since-start() timestamp to
+# the contention-detecting reschedule() call instead of a fresh clock
+# read, which keeps this decision uncontested-in-effect regardless of
+# emulator speed; machine_set_timer() reads the real hardware counter
+# internally, so the deadline it arms is still correct relative to actual
+# elapsed time. Genuine elapsed time returns for the on_timer() paths,
+# which take their timestamp from the delivered interrupt.
+core_ceiling=1674
+machine_ceiling=2174
 discovery_ceiling=1221
-entry_ceiling=411
-total_ceiling=4758
+entry_ceiling=570
+total_ceiling=5639
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

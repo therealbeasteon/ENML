@@ -11,8 +11,29 @@ namespace os::kernel::aarch64 {
 
 class EarlyPageArena final {
 public:
-    EarlyPageArena(std::uint64_t begin, std::uint64_t end) noexcept
+    constexpr EarlyPageArena() noexcept = default;
+    constexpr EarlyPageArena(std::uint64_t begin, std::uint64_t end) noexcept
         : next_(begin), end_(end) {}
+
+    [[nodiscard]] os::core::Result<void> bind(
+        std::uint64_t begin,
+        std::uint64_t end) noexcept {
+        if (next_ != 0ULL || end_ != 0ULL) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                machine_errors::already_mapped);
+        }
+        next_ = begin;
+        end_ = end;
+        if (!valid()) {
+            next_ = 0ULL;
+            end_ = 0ULL;
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                machine_errors::invalid_range);
+        }
+        return {};
+    }
 
     [[nodiscard]] bool valid() const noexcept {
         return page_aligned(next_) && page_aligned(end_) && next_ < end_ &&
@@ -40,26 +61,81 @@ private:
     std::uint64_t end_ {0ULL};
 };
 
+namespace translation_root_errors {
+inline constexpr std::uint32_t sealed = 100U;
+inline constexpr std::uint32_t not_sealed = 101U;
+inline constexpr std::uint32_t retiring = 102U;
+} // namespace translation_root_errors
+
 // Page-only stage-1 table builder used before the general VM subsystem exists.
 // Intermediate table pages are monotonic in the early regime: leaf mappings can
 // be removed, but empty L2/L3 table pages are not reclaimed until the general
 // physical allocator owns page-table lifetime.
 class EarlyStage1Builder final {
 public:
-    explicit EarlyStage1Builder(EarlyPageArena& arena) noexcept : arena_(&arena) {}
+    enum class Lifecycle : std::uint8_t {
+        uninitialized = 0U,
+        building = 1U,
+        sealed = 2U,
+        retiring = 3U,
+    };
+
+    constexpr EarlyStage1Builder() noexcept = default;
+    explicit constexpr EarlyStage1Builder(EarlyPageArena& arena) noexcept : arena_(&arena) {}
+
+    [[nodiscard]] os::core::Result<void> attach_arena(EarlyPageArena& arena) noexcept {
+        if (arena_ != nullptr || root_ != 0ULL || lifecycle_ != Lifecycle::uninitialized) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                machine_errors::already_mapped);
+        }
+        if (!arena.valid()) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                machine_errors::invalid_range);
+        }
+        arena_ = &arena;
+        return {};
+    }
 
     [[nodiscard]] os::core::Result<std::uint64_t> initialize() noexcept {
         if (arena_ == nullptr || !arena_->valid()) {
             return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::invalid_range);
         }
-        if (root_ != 0ULL) {
+        if (root_ != 0ULL || lifecycle_ != Lifecycle::uninitialized) {
             return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::already_mapped);
         }
         auto page = arena_->allocate_page();
         if (!page) return page.error();
         zero_table(page.value());
         root_ = page.value();
+        lifecycle_ = Lifecycle::building;
         return root_;
+    }
+
+    [[nodiscard]] os::core::Result<void> seal() noexcept {
+        if (lifecycle_ == Lifecycle::sealed) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::sealed);
+        }
+        if (lifecycle_ == Lifecycle::retiring) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::retiring);
+        }
+        if (lifecycle_ != Lifecycle::building || root_ == 0ULL) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
+        lifecycle_ = Lifecycle::sealed;
+        return {};
+    }
+
+    [[nodiscard]] os::core::Result<void> begin_retire() noexcept {
+        if (lifecycle_ == Lifecycle::retiring) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::retiring);
+        }
+        if (lifecycle_ != Lifecycle::sealed) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::not_sealed);
+        }
+        lifecycle_ = Lifecycle::retiring;
+        return {};
     }
 
     [[nodiscard]] os::core::Result<void> map_page(
@@ -67,6 +143,8 @@ public:
         std::uint64_t physical_address,
         MachinePermissions permissions,
         MachineMemoryKind kind) noexcept {
+        auto mutable_result = require_building();
+        if (!mutable_result) return mutable_result.error();
         return install_leaf(
             virtual_address,
             page_descriptor(physical_address, permissions, kind));
@@ -76,6 +154,8 @@ public:
         std::uint64_t virtual_address,
         std::uint64_t physical_address,
         MachinePermissions permissions) noexcept {
+        auto mutable_result = require_building();
+        if (!mutable_result) return mutable_result.error();
         return install_leaf(
             virtual_address,
             user_page_descriptor(physical_address, permissions));
@@ -95,6 +175,12 @@ public:
     // order descriptor writes and TLB invalidation with DSB/ISB. Separating the
     // table mutation from CPU invalidation makes that ordering explicit.
     [[nodiscard]] os::core::Result<void> unmap_page(std::uint64_t virtual_address) noexcept {
+        if (lifecycle_ == Lifecycle::sealed) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::sealed);
+        }
+        if (lifecycle_ != Lifecycle::building && lifecycle_ != Lifecycle::retiring) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
         auto leaf = leaf_pointer(virtual_address);
         if (!leaf) return leaf.error();
         if (((*leaf.value()) & descriptor::valid) == 0ULL) {
@@ -109,10 +195,28 @@ public:
     }
 
     [[nodiscard]] std::uint64_t root_physical() const noexcept { return root_; }
+    [[nodiscard]] Lifecycle lifecycle() const noexcept { return lifecycle_; }
+    [[nodiscard]] bool executable_process_root() const noexcept {
+        return root_ != 0ULL && lifecycle_ == Lifecycle::sealed;
+    }
 
 private:
     EarlyPageArena* arena_ {nullptr};
     std::uint64_t root_ {0ULL};
+    Lifecycle lifecycle_ {Lifecycle::uninitialized};
+
+    [[nodiscard]] os::core::Result<void> require_building() const noexcept {
+        if (lifecycle_ == Lifecycle::sealed) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::sealed);
+        }
+        if (lifecycle_ == Lifecycle::retiring) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::retiring);
+        }
+        if (lifecycle_ != Lifecycle::building) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
+        return {};
+    }
 
     [[nodiscard]] static std::uint64_t* table_pointer(std::uint64_t physical) noexcept {
         return reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(physical));
@@ -195,25 +299,25 @@ private:
         return leaf;
     }
 
-    [[nodiscard]] os::core::Result<std::uint64_t>
-    ensure_next_table(std::uint64_t& entry) noexcept {
+    [[nodiscard]] os::core::Result<std::uint64_t> ensure_next_table(
+        std::uint64_t& entry) noexcept {
         if ((entry & descriptor::valid) != 0ULL) {
             if ((entry & descriptor::table_or_page) == 0ULL) {
                 return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
             }
-            const auto physical = entry & page_address_mask;
-            if (!stage1_physical_address(physical)) {
+            const auto existing = entry & page_address_mask;
+            if (!stage1_physical_address(existing)) {
                 return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::mapping_ledger_inconsistent);
             }
-            return physical;
+            return existing;
+        }
+        if (arena_ == nullptr) {
+            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
         }
         auto page = arena_->allocate_page();
         if (!page) return page.error();
         zero_table(page.value());
-        entry = table_descriptor(page.value());
-        if (entry == 0ULL) {
-            return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::invalid_range);
-        }
+        entry = page.value() | descriptor::valid | descriptor::table_or_page;
         return page.value();
     }
 };

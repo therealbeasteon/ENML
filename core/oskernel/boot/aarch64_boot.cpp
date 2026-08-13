@@ -7,9 +7,14 @@
 #include <os/core/span.hpp>
 #include <os/kernel/abi.hpp>
 #include <os/kernel/aarch64_entry.hpp>
+#include <os/kernel/aarch64_execution_universe.hpp>
 #include <os/kernel/aarch64_gic_v3.hpp>
+#include <os/kernel/aarch64_kernel_mapping_manifest.hpp>
 #include <os/kernel/aarch64_page_tables.hpp>
+#include <os/kernel/aarch64_preemption.hpp>
 #include <os/kernel/aarch64_translation.hpp>
+#include <os/kernel/aarch64_translation_root_sealer.hpp>
+#include <os/kernel/address_space_epoch.hpp>
 #include <os/kernel/arch_timer_discovery.hpp>
 #include <os/kernel/boot_memory.hpp>
 #include <os/kernel/boot_memory_plan.hpp>
@@ -18,6 +23,8 @@
 #include <os/kernel/hardware_inventory.hpp>
 #include <os/kernel/machine.hpp>
 #include <os/kernel/machine_aarch64.hpp>
+#include <os/kernel/process_translation.hpp>
+#include <os/kernel/scheduler.hpp>
 
 #if !defined(__aarch64__)
 #error "aarch64_boot.cpp must only be compiled for AArch64"
@@ -39,22 +46,33 @@ using os::kernel::MachinePermissions;
 
 constexpr std::uint64_t page_size = os::kernel::aarch64::architectural_page_size;
 constexpr std::size_t max_boot_dtb_bytes = 2U * 1024U * 1024U;
-constexpr std::size_t early_page_table_pages = 96U;
+constexpr std::size_t early_page_table_pages = 128U;
 constexpr std::size_t runtime_stack_pages = 8U;
 constexpr std::uint64_t runtime_stack_virtual = 0x0000'007F'FEF0'0000ULL;
 constexpr std::uint64_t user_code_virtual = 0x0000'0000'1000'0000ULL;
 constexpr std::uint64_t user_stack_virtual = 0x0000'0000'1001'0000ULL;
 constexpr std::uint64_t syscall_return_cookie = 0xC00CULL;
-constexpr std::uint64_t timer_period_ns = 2'000'000ULL;
+constexpr std::uint64_t process_a_marker = 0xA11AULL;
+constexpr std::uint64_t process_b_marker = 0xB22BULL;
+constexpr os::kernel::ThreadId process_a_thread = 1U;
+constexpr os::kernel::ThreadId process_b_thread = 2U;
+constexpr os::kernel::Priority process_priority = 4U;
 
 volatile std::uint32_t* boot_uart = nullptr;
+std::uint64_t boot_start_now = 0U;
 std::uint32_t el0_yield_count = 0U;
 std::uint32_t timer_irq_count = 0U;
 os::kernel::aarch64::GicV3PrimaryCpu boot_gic{};
 
-// Persistent machine authority belongs in BSS, not on the 16 KiB bootstrap stack.
+// Long-lived authority belongs in BSS, not on the bootstrap stack.
 os::kernel::MachinePhysicalLedger boot_physical_ledger{};
 os::kernel::MachineAddressSpace boot_kernel_space{};
+os::kernel::MachineAddressSpace process_space_a{};
+os::kernel::MachineAddressSpace process_space_b{};
+os::kernel::AddressSpaceEpochAuthority boot_epochs{};
+os::kernel::ProcessTranslationTable boot_translations{};
+os::kernel::Scheduler boot_scheduler{};
+os::kernel::aarch64::PreemptionCoordinator boot_preemption{};
 
 [[noreturn]] void halt() noexcept {
     asm volatile("msr daifset, #0xf" ::: "memory");
@@ -108,26 +126,28 @@ find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
     return nullptr;
 }
 
-[[nodiscard]] bool map_machine_range(
-    os::kernel::MachineAddressSpace& space,
+[[nodiscard]] bool add_manifest_range(
+    os::kernel::aarch64::KernelMappingManifest& manifest,
     std::uint64_t virtual_begin,
     std::uint64_t physical_begin,
     std::uint64_t length,
     MachinePermissions permissions,
-    MachineMemoryKind kind) noexcept {
+    MachineMemoryKind kind,
+    os::kernel::aarch64::KernelMappingRole role =
+        os::kernel::aarch64::KernelMappingRole::ordinary) noexcept {
     if (length == 0ULL || length > static_cast<std::uint64_t>(SIZE_MAX)) return false;
-    auto mapped = os::kernel::machine_map(
-        space,
-        static_cast<std::uintptr_t>(virtual_begin),
-        static_cast<std::uintptr_t>(physical_begin),
-        static_cast<std::size_t>(length),
-        permissions,
-        kind);
-    return static_cast<bool>(mapped);
+    return static_cast<bool>(manifest.add({
+        .virtual_base = virtual_begin,
+        .physical_base = physical_begin,
+        .length = length,
+        .permissions = permissions,
+        .kind = kind,
+        .role = role,
+    }));
 }
 
-[[nodiscard]] bool map_identity_symbols(
-    os::kernel::MachineAddressSpace& space,
+[[nodiscard]] bool add_identity_symbols(
+    os::kernel::aarch64::KernelMappingManifest& manifest,
     const char* begin,
     const char* end,
     MachinePermissions permissions) noexcept {
@@ -136,26 +156,36 @@ find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
     if (finish < start || (start & (page_size - 1ULL)) != 0ULL ||
         (finish & (page_size - 1ULL)) != 0ULL) return false;
     if (finish == start) return true;
-    return map_machine_range(
-        space, start, start, finish - start,
+    return add_manifest_range(
+        manifest, start, start, finish - start,
         permissions, MachineMemoryKind::normal);
 }
 
-[[nodiscard]] bool map_device_range(os::kernel::MachineAddressSpace& space, HardwareRange range) noexcept {
+[[nodiscard]] bool add_device_manifest(
+    os::kernel::aarch64::KernelMappingManifest& manifest,
+    HardwareRange range) noexcept {
     if (!range.valid()) return false;
     const auto begin = align_down(range.base);
     std::uint64_t end = 0ULL;
     if (range.base > UINT64_MAX - range.size ||
         !align_up(range.base + range.size, end) || end <= begin) return false;
-    return map_machine_range(
-        space, begin, begin, end - begin,
+    return add_manifest_range(
+        manifest, begin, begin, end - begin,
         MachinePermissions::read_write, MachineMemoryKind::device);
 }
 
-void install_first_user_program(std::uint64_t physical_page) noexcept {
+void zero_page(std::uint64_t physical_page) noexcept {
+    auto* words = reinterpret_cast<volatile std::uint64_t*>(
+        static_cast<std::uintptr_t>(physical_page));
+    for (std::size_t i = 0U; i < page_size / sizeof(std::uint64_t); ++i) words[i] = 0ULL;
+}
+
+void install_process_a_program(std::uint64_t physical_page) noexcept {
+    zero_page(physical_page);
     auto* words = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(physical_page));
     constexpr std::uint32_t movz_x8_base = 0xD2800008U;
+    constexpr std::uint32_t movz_x19_base = 0xD2800013U;
     constexpr std::uint32_t svc_zero = 0xD4000001U;
     constexpr std::uint32_t branch_self = 0x14000000U;
     constexpr std::uint32_t yield_number =
@@ -164,21 +194,61 @@ void install_first_user_program(std::uint64_t physical_page) noexcept {
     words[1] = svc_zero;
     words[2] = movz_x8_base | (yield_number << 5U);
     words[3] = svc_zero;
-    words[4] = branch_self;
+    words[4] = movz_x19_base | (static_cast<std::uint32_t>(process_a_marker) << 5U);
+    words[5] = movz_x8_base | (yield_number << 5U);
+    words[6] = svc_zero;
+    words[7] = branch_self;
+}
+
+void install_process_b_program(std::uint64_t physical_page) noexcept {
+    zero_page(physical_page);
+    auto* words = reinterpret_cast<volatile std::uint32_t*>(
+        static_cast<std::uintptr_t>(physical_page));
+    constexpr std::uint32_t movz_x19_base = 0xD2800013U;
+    constexpr std::uint32_t branch_self = 0x14000000U;
+    words[0] = movz_x19_base | (static_cast<std::uint32_t>(process_b_marker) << 5U);
+    words[1] = branch_self;
+}
+
+[[nodiscard]] bool commit_result(
+    const os::kernel::aarch64::PreemptionResult& result,
+    std::uint64_t now_nanoseconds) noexcept {
+    auto plan = os::kernel::aarch64::prepare_execution_universe(result);
+    if (!plan) return false;
+    return static_cast<bool>(
+        os::kernel::aarch64::commit_execution_universe(plan.value(), now_nanoseconds));
 }
 
 [[noreturn]] void guarded_runtime_main() noexcept {
     uart_write("COOKIE:M7.5d:GUARDED\n");
+
     const auto user_stack_top = user_stack_virtual + page_size;
-    auto valid = os::kernel::aarch64_validate_user_context(
-        boot_kernel_space,
-        static_cast<std::uintptr_t>(user_code_virtual),
-        static_cast<std::uintptr_t>(user_stack_top));
-    if (!valid || !boot_gic.initialized || !os::kernel::machine_set_timer(timer_period_ns)) {
+    if (!os::kernel::aarch64_validate_user_context(
+            process_space_a,
+            static_cast<std::uintptr_t>(user_code_virtual),
+            static_cast<std::uintptr_t>(user_stack_top)) ||
+        !os::kernel::aarch64_validate_user_context(
+            process_space_b,
+            static_cast<std::uintptr_t>(user_code_virtual),
+            static_cast<std::uintptr_t>(user_stack_top)) ||
+        !boot_gic.initialized) {
         uart_write("COOKIE:PANIC:EL0_CONTEXT\n");
         halt();
     }
-    os::kernel::cookie_aarch64_enter_el0(user_code_virtual, user_stack_top);
+
+    os::kernel::aarch64::ExceptionFrame live{};
+    const auto now = os::kernel::machine_monotonic_nanoseconds();
+    boot_start_now = now;
+    auto start = boot_preemption.start(
+        boot_scheduler, boot_translations, boot_epochs, now, live);
+    if (!start || start.value().next != process_a_thread ||
+        start.value().switched == false || start.value().deadline.active ||
+        !commit_result(start.value(), now)) {
+        uart_write("COOKIE:PANIC:EL0_START\n");
+        halt();
+    }
+
+    os::kernel::cookie_aarch64_enter_el0(live.elr_el1, live.sp_el0);
 }
 
 } // namespace
@@ -194,7 +264,8 @@ extern "C" void cookie_kernel_syscall_entry(
     auto call = os::kernel::decode_call(static_cast<std::uint16_t>(frame->x[8]));
     if (!call || call.value().call != os::kernel::KernelCall::yield ||
         call.value().authority != os::kernel::CallAuthority::unprivileged ||
-        call.value().argument_count != 0U) {
+        call.value().argument_count != 0U ||
+        boot_preemption.running() != process_a_thread) {
         uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
         halt();
     }
@@ -207,6 +278,45 @@ extern "C" void cookie_kernel_syscall_entry(
     if (el0_yield_count == 1U && frame->x[0] == syscall_return_cookie) {
         el0_yield_count = 2U;
         uart_write("COOKIE:M7.5f:EL0_SVC_RETURN\n");
+        return;
+    }
+    if (el0_yield_count == 2U && frame->x[19] == process_a_marker) {
+        el0_yield_count = 3U;
+        if (!boot_scheduler.update(process_b_thread, true, process_priority)) {
+            uart_write("COOKIE:PANIC:SCHED_WAKE\n");
+            halt();
+        }
+
+        // Deliberately boot_start_now, not a fresh machine_monotonic_nanoseconds()
+        // read, as the basis for this decision.
+        //
+        // Scheduler::choose() charges all elapsed real time since the last
+        // decision even while uncontested - the anti-gaming property that
+        // stops a thread dodging its charge by avoiding decision points - and
+        // that charging is correct and stays exactly as it is. The problem is
+        // narrower: the kernel-internal cost of servicing two EL0/EL1 round
+        // trips and a UART print is not the user thread's own work, and on
+        // real hardware it is microseconds, well inside
+        // default_slice_nanoseconds (2ms, a deliberate product constant - see
+        // its own comment - not a value to loosen for a bring-up proof). Under
+        // QEMU TCG on shared CI it was measured exceeding 2ms from the round
+        // trips and print alone, exhausting process A's slice before this
+        // deliberate contention test ever ran, on every attempt to shrink
+        // that window including the round trip itself in isolation. Passing
+        // the still-current since-start() timestamp keeps this decision
+        // uncontested-in-effect regardless of how long the emulator actually
+        // took, matching the real-hardware case this proof is meant to
+        // establish. Genuine elapsed time returns for the on_timer() paths
+        // below, which take their timestamp from the delivered interrupt.
+        auto rescheduled = boot_preemption.reschedule(
+            boot_scheduler, boot_translations, boot_epochs, boot_start_now, *frame);
+        if (!rescheduled || rescheduled.value().next != process_a_thread ||
+            rescheduled.value().switched || !rescheduled.value().deadline.active ||
+            !commit_result(rescheduled.value(), boot_start_now)) {
+            uart_write("COOKIE:PANIC:SCHED_EVENT\n");
+            halt();
+        }
+        uart_write("COOKIE:M7.5i:CONTENTION_ARMED\n");
         return;
     }
 
@@ -224,36 +334,51 @@ extern "C" void cookie_aarch64_irq_dispatch(
         halt();
     }
 
-    ++timer_irq_count;
-    // Move the compare value into the future before EOI so the level-triggered
-    // timer PPI is deasserted when the GIC reevaluates it.
-    if (!os::kernel::machine_set_timer(timer_period_ns)) {
-        uart_write("COOKIE:PANIC:TIMER_REARM\n");
+    const auto running = boot_preemption.running();
+    if ((running == process_a_thread && frame->x[19] != process_a_marker) ||
+        (running == process_b_thread && frame->x[19] != process_b_marker) ||
+        (running != process_a_thread && running != process_b_thread)) {
+        uart_write("COOKIE:PANIC:UNIVERSE_MARKER\n");
         halt();
     }
+
+    ++timer_irq_count;
+    const auto delivered = boot_preemption.current_deadline();
+    const auto now = os::kernel::machine_monotonic_nanoseconds();
+    auto next = boot_preemption.on_timer(
+        boot_scheduler, boot_translations, boot_epochs, delivered, now, *frame);
+    if (!next || !commit_result(next.value(), now)) {
+        uart_write("COOKIE:PANIC:PREEMPT\n");
+        halt();
+    }
+
     os::kernel::aarch64::gic_v3_end_interrupt(intid);
 
     if (timer_irq_count == 1U) {
+        if (running != process_a_thread || next.value().next != process_b_thread ||
+            !next.value().switched) halt();
         uart_write("COOKIE:M7.5g:TIMER_IRQ\n");
+        uart_write("COOKIE:M7.5i:A_TO_B\n");
     } else if (timer_irq_count == 2U) {
-        // A second interrupt proves the first handler returned through ERET and
-        // IRQ delivery resumed in EL0 rather than leaving execution stranded at EL1.
+        if (running != process_b_thread || next.value().next != process_a_thread ||
+            !next.value().switched) halt();
         uart_write("COOKIE:M7.5g:TIMER_IRQ_RETURN\n");
+        uart_write("COOKIE:M7.5i:B_TO_A\n");
+    } else if (timer_irq_count == 3U) {
+        if (running != process_a_thread || next.value().next != process_b_thread) halt();
+        uart_write("COOKIE:M7.5i:ISOLATED_A_B_A\n");
     }
 }
 
 extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physical) noexcept {
     // Vectors first, before any code that can fault. VBAR_EL1 has no
-    // architectural reset value, so until this runs a synchronous exception
-    // vectors to whatever base the implementation happens to start with - on
-    // this board zero, where 0x200 is flash rather than a handler. The machine
-    // then executes flash and the failure presents as a hang with no handler
-    // having run and no halt having been reached, which is exactly how the
-    // M7.5d boot fault hid for as long as it did.
+    // architectural reset value, so before this write a synchronous fault
+    // vectors to physical 0x200 - flash on this board, not a handler - and the
+    // machine executes flash. That is how the M7.5d boot fault stayed
+    // invisible: nothing halted, because nothing reached a halt.
     //
-    // Installing them here costs one system register write. They stay valid
-    // across the MMU transition because the identity mapping below keeps the
-    // address they point at.
+    // They stay valid across the MMU transition because the identity mapping
+    // built below keeps the address they point at.
     if (!os::kernel::aarch64::install_exception_vectors()) halt();
 
     const auto dtb_blob = bounded_dtb(dtb_physical);
@@ -288,92 +413,153 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         early_page_table_pages, runtime_stack_pages, page_size);
     if (!plan || !plan.value().valid()) halt();
 
-    const std::array<HardwareRange, 4U> user_code_protected{
+    const std::array<HardwareRange, 4U> a_code_protected{
         image_range, dtb_range, plan.value().page_tables, plan.value().kernel_stack};
-    auto user_code = os::kernel::select_early_ram(
+    auto a_code = os::kernel::select_early_ram(
         inventory.value(), page_size, page_size,
-        std::span<const HardwareRange>{user_code_protected});
-    if (!user_code) halt();
+        std::span<const HardwareRange>{a_code_protected});
+    if (!a_code) halt();
 
-    const std::array<HardwareRange, 5U> user_stack_protected{
-        image_range, dtb_range, plan.value().page_tables,
-        plan.value().kernel_stack, user_code.value()};
-    auto user_stack = os::kernel::select_early_ram(
+    const std::array<HardwareRange, 5U> a_stack_protected{
+        image_range, dtb_range, plan.value().page_tables, plan.value().kernel_stack,
+        a_code.value()};
+    auto a_stack = os::kernel::select_early_ram(
         inventory.value(), page_size, page_size,
-        std::span<const HardwareRange>{user_stack_protected});
-    if (!user_stack) halt();
+        std::span<const HardwareRange>{a_stack_protected});
+    if (!a_stack) halt();
 
-    install_first_user_program(user_code.value().base);
+    const std::array<HardwareRange, 6U> b_code_protected{
+        image_range, dtb_range, plan.value().page_tables, plan.value().kernel_stack,
+        a_code.value(), a_stack.value()};
+    auto b_code = os::kernel::select_early_ram(
+        inventory.value(), page_size, page_size,
+        std::span<const HardwareRange>{b_code_protected});
+    if (!b_code) halt();
+
+    const std::array<HardwareRange, 7U> b_stack_protected{
+        image_range, dtb_range, plan.value().page_tables, plan.value().kernel_stack,
+        a_code.value(), a_stack.value(), b_code.value()};
+    auto b_stack = os::kernel::select_early_ram(
+        inventory.value(), page_size, page_size,
+        std::span<const HardwareRange>{b_stack_protected});
+    if (!b_stack) halt();
+
+    install_process_a_program(a_code.value().base);
+    install_process_b_program(b_code.value().base);
+    zero_page(a_stack.value().base);
+    zero_page(b_stack.value().base);
 
     os::kernel::aarch64::EarlyPageArena arena{
         plan.value().page_tables.base,
         plan.value().page_tables.end_exclusive()};
     if (!arena.valid()) halt();
-    os::kernel::aarch64::EarlyStage1Builder builder{arena};
-    auto root = builder.initialize();
-    if (!root) halt();
+    os::kernel::aarch64::EarlyStage1Builder boot_builder{arena};
+    os::kernel::aarch64::EarlyStage1Builder builder_a{arena};
+    os::kernel::aarch64::EarlyStage1Builder builder_b{arena};
+    auto boot_root = boot_builder.initialize();
+    if (!boot_root || !builder_a.initialize() || !builder_b.initialize()) halt();
 
-    if (!os::kernel::machine_bind_address_space(
-            boot_kernel_space, boot_physical_ledger) ||
-        !os::kernel::aarch64_attach_early_stage1(boot_kernel_space, builder)) halt();
+    if (!os::kernel::machine_bind_address_space(boot_kernel_space, boot_physical_ledger) ||
+        !os::kernel::machine_bind_address_space(process_space_a, boot_physical_ledger) ||
+        !os::kernel::machine_bind_address_space(process_space_b, boot_physical_ledger) ||
+        !os::kernel::aarch64_attach_early_stage1(boot_kernel_space, boot_builder) ||
+        !os::kernel::aarch64_attach_early_stage1(process_space_a, builder_a) ||
+        !os::kernel::aarch64_attach_early_stage1(process_space_b, builder_b)) halt();
 
-    if (!map_identity_symbols(
-            boot_kernel_space, __cookie_text_start, __cookie_text_end,
+    const auto* uart = find_pl011(inventory.value());
+    if (uart == nullptr || !uart->registers.valid()) halt();
+
+    os::kernel::aarch64::KernelMappingManifest kernel_manifest{};
+    if (!add_identity_symbols(
+            kernel_manifest, __cookie_text_start, __cookie_text_end,
             MachinePermissions::read_execute) ||
-        !map_identity_symbols(
-            boot_kernel_space, __cookie_rodata_start, __cookie_rodata_end,
+        !add_identity_symbols(
+            kernel_manifest, __cookie_rodata_start, __cookie_rodata_end,
             MachinePermissions::read) ||
-        !map_identity_symbols(
-            boot_kernel_space, __cookie_data_start, __bss_end,
+        !add_identity_symbols(
+            kernel_manifest, __cookie_data_start, __bss_end,
             MachinePermissions::read_write) ||
-        !map_machine_range(
+        !add_manifest_range(
+            kernel_manifest,
+            runtime_stack_virtual,
+            plan.value().kernel_stack.base,
+            plan.value().kernel_stack.size,
+            MachinePermissions::read_write,
+            MachineMemoryKind::normal,
+            os::kernel::aarch64::KernelMappingRole::guarded_stack) ||
+        !add_device_manifest(kernel_manifest, gic_topology.value().distributor) ||
+        !add_device_manifest(kernel_manifest, uart->registers)) halt();
+
+    for (std::size_t i = 0U; i < gic_topology.value().redistributor_count; ++i) {
+        if (!add_device_manifest(kernel_manifest, gic_topology.value().redistributors[i])) halt();
+    }
+
+    if (!os::kernel::aarch64::replay_kernel_mapping_manifest(kernel_manifest, boot_kernel_space) ||
+        !os::kernel::aarch64::replay_kernel_mapping_manifest(kernel_manifest, process_space_a) ||
+        !os::kernel::aarch64::replay_kernel_mapping_manifest(kernel_manifest, process_space_b) ||
+        !os::kernel::machine_map(
             boot_kernel_space,
-            plan.value().page_tables.base,
-            plan.value().page_tables.base,
-            plan.value().page_tables.size,
+            static_cast<std::uintptr_t>(plan.value().page_tables.base),
+            static_cast<std::uintptr_t>(plan.value().page_tables.base),
+            static_cast<std::size_t>(plan.value().page_tables.size),
             MachinePermissions::read_write,
             MachineMemoryKind::normal) ||
-        !map_machine_range(
+        !os::kernel::machine_map(
             boot_kernel_space,
-            dtb_range.base,
-            dtb_range.base,
-            dtb_range.size,
+            static_cast<std::uintptr_t>(dtb_range.base),
+            static_cast<std::uintptr_t>(dtb_range.base),
+            static_cast<std::size_t>(dtb_range.size),
             MachinePermissions::read,
             MachineMemoryKind::normal) ||
-        !os::kernel::machine_map_kernel_stack(
-            boot_kernel_space,
-            static_cast<std::uintptr_t>(runtime_stack_virtual),
-            static_cast<std::uintptr_t>(plan.value().kernel_stack.base),
-            static_cast<std::size_t>(plan.value().kernel_stack.size)) ||
         !os::kernel::aarch64_map_user(
-            boot_kernel_space,
+            process_space_a,
             static_cast<std::uintptr_t>(user_code_virtual),
-            static_cast<std::uintptr_t>(user_code.value().base),
+            static_cast<std::uintptr_t>(a_code.value().base),
             static_cast<std::size_t>(page_size),
             MachinePermissions::read_execute) ||
         !os::kernel::aarch64_map_user_stack(
-            boot_kernel_space,
+            process_space_a,
             static_cast<std::uintptr_t>(user_stack_virtual),
-            static_cast<std::uintptr_t>(user_stack.value().base),
+            static_cast<std::uintptr_t>(a_stack.value().base),
             static_cast<std::size_t>(page_size)) ||
-        !map_device_range(boot_kernel_space, gic_topology.value().distributor)) halt();
+        !os::kernel::aarch64_map_user(
+            process_space_b,
+            static_cast<std::uintptr_t>(user_code_virtual),
+            static_cast<std::uintptr_t>(b_code.value().base),
+            static_cast<std::size_t>(page_size),
+            MachinePermissions::read_execute) ||
+        !os::kernel::aarch64_map_user_stack(
+            process_space_b,
+            static_cast<std::uintptr_t>(user_stack_virtual),
+            static_cast<std::uintptr_t>(b_stack.value().base),
+            static_cast<std::size_t>(page_size))) halt();
 
-    for (std::size_t i = 0U; i < gic_topology.value().redistributor_count; ++i) {
-        if (!map_device_range(boot_kernel_space, gic_topology.value().redistributors[i])) halt();
-    }
+    auto sealed_a = os::kernel::aarch64::TranslationRootSealer::seal(builder_a);
+    auto sealed_b = os::kernel::aarch64::TranslationRootSealer::seal(builder_b);
+    auto epoch_a = boot_epochs.acquire();
+    auto epoch_b = boot_epochs.acquire();
+    if (!sealed_a || !sealed_b || !epoch_a || !epoch_b ||
+        !boot_translations.bind(process_a_thread, epoch_a.value(), sealed_a.value(), boot_epochs) ||
+        !boot_translations.bind(process_b_thread, epoch_b.value(), sealed_b.value(), boot_epochs) ||
+        !boot_scheduler.admit(process_a_thread, process_priority) ||
+        !boot_scheduler.admit(process_b_thread, process_priority) ||
+        !boot_scheduler.update(process_b_thread, false, process_priority)) halt();
 
-    const auto* uart = find_pl011(inventory.value());
-    if (uart == nullptr || !uart->registers.valid() ||
-        !map_device_range(boot_kernel_space, uart->registers)) halt();
+    os::kernel::aarch64::ExceptionFrame initial_a{};
+    initial_a.elr_el1 = user_code_virtual;
+    initial_a.sp_el0 = user_stack_virtual + page_size;
+    initial_a.spsr_el1 = 0x340ULL;
+    os::kernel::aarch64::ExceptionFrame initial_b = initial_a;
+    if (!boot_preemption.admit_frame(process_a_thread, initial_a) ||
+        !boot_preemption.admit_frame(process_b_thread, initial_b)) halt();
+
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
 
-    // Vectors were installed at entry and survive the transition: VBAR_EL1
-    // holds an address the identity mapping above keeps valid. Reinstalling
-    // here would be harmless but misleading - it would suggest the activation
-    // on the line above ran without a handler, which is the arrangement that
-    // made the M7.5d fault unreportable.
-    if (!os::kernel::aarch64::activate_stage1_translation(root.value())) halt();
+    // Vectors already installed at entry; reinstalling here would imply the
+    // activation on this line ran without a handler, which is the arrangement
+    // that made the M7.5d fault unreportable.
+    if (!os::kernel::aarch64::activate_stage1_translation(boot_root.value())) halt();
     uart_write("COOKIE:M7.5d:MMU\n");
 
     auto gic = os::kernel::aarch64::initialize_gic_v3_primary_cpu(

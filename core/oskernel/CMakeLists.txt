@@ -5,8 +5,11 @@ add_library(oskernel STATIC
     src/interrupt.cpp
     src/scheduler.cpp
     src/scheduler_deadline.cpp
+    src/address_space_epoch.cpp
+    src/process_translation.cpp
     src/aarch64_user_frames.cpp
     src/aarch64_preemption.cpp
+    src/aarch64_execution_universe.cpp
     src/kernel.cpp
     src/fdt.cpp
     src/hardware_inventory.cpp
@@ -39,6 +42,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     add_library(oskernel_machine_aarch64 STATIC
         src/machine_aarch64.cpp
         src/aarch64_translation.cpp
+        src/aarch64_asid.cpp
+        src/aarch64_execution_universe_machine.cpp
         src/aarch64_entry.cpp
         src/aarch64_gic_v3.cpp
         src/aarch64_vectors.S
@@ -68,8 +73,11 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/abi.cpp
             src/scheduler.cpp
             src/scheduler_deadline.cpp
+            src/address_space_epoch.cpp
+            src/process_translation.cpp
             src/aarch64_user_frames.cpp
             src/aarch64_preemption.cpp
+            src/aarch64_execution_universe.cpp
             src/fdt.cpp
             src/hardware_inventory.cpp
             src/gic_v3_discovery.cpp
@@ -78,6 +86,8 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/boot_memory_plan.cpp
             src/machine_aarch64.cpp
             src/aarch64_translation.cpp
+            src/aarch64_asid.cpp
+            src/aarch64_execution_universe_machine.cpp
             src/aarch64_entry.cpp
             src/aarch64_gic_v3.cpp
             src/aarch64_vectors.S

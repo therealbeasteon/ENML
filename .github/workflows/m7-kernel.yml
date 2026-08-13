@@ -21,9 +21,10 @@ jobs:
         run: >-
           .github/scripts/run-build.sh 'kernel-gcc' --preset host-debug --target
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
+          kernel_process_translation_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -49,9 +50,10 @@ jobs:
         run: >-
           .github/scripts/run-build.sh 'kernel-sanitizers' --preset host-asan --target
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
+          kernel_process_translation_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -73,9 +75,10 @@ jobs:
         run: >-
           .github/scripts/run-build.sh 'kernel-clang' build/m5-kernel-clang --target
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
+          kernel_process_translation_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -103,9 +106,10 @@ jobs:
         run: >-
           .github/scripts/run-build.sh 'kernel-arm64-native' build/m7-arm64-native --target
           kernel_abi_test kernel_rendezvous_test kernel_machine_host_test
+          kernel_process_translation_test
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
-          kernel_aarch64_translation_test kernel_aarch64_page_tables_test
+          kernel_aarch64_translation_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
@@ -114,7 +118,7 @@ jobs:
           oskernel_machine_aarch64 cookie_kernel_aarch64_boot --parallel 2
       - name: Test kernel gates natively
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --test-dir build/m7-arm64-native
-      - name: Boot Cookie Kernel, EL0, and timer IRQs under QEMU virt GICv3
+      - name: Boot Cookie Kernel and prove isolated EL0 A-B-A preemption under QEMU virt GICv3
         shell: bash
         run: |
           set -euo pipefail
@@ -141,3 +145,7 @@ jobs:
           grep -F 'COOKIE:M7.5g:GICV3' cookie-qemu.log
           grep -F 'COOKIE:M7.5g:TIMER_IRQ' cookie-qemu.log
           grep -F 'COOKIE:M7.5g:TIMER_IRQ_RETURN' cookie-qemu.log
+          grep -F 'COOKIE:M7.5i:CONTENTION_ARMED' cookie-qemu.log
+          grep -F 'COOKIE:M7.5i:A_TO_B' cookie-qemu.log
+          grep -F 'COOKIE:M7.5i:B_TO_A' cookie-qemu.log
+          grep -F 'COOKIE:M7.5i:ISOLATED_A_B_A' cookie-qemu.log
