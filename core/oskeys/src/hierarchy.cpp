@@ -175,6 +175,42 @@ KeyHierarchy::generate_application_data_key(
     return generated.value();
 }
 
+os::core::Result<ProfileRootErasureReport>
+KeyHierarchy::destroy_profile(os::core::UserId user) noexcept {
+    if (provider_ == nullptr || !system_.occupied) {
+        return key_error(errors::hierarchy_not_initialized);
+    }
+
+    RootSlot* profile = find_profile(user);
+    if (profile == nullptr) return key_error(errors::hierarchy_root_not_found);
+
+    std::size_t destroyed_children = 0U;
+
+    // Destruction follows the hierarchy downward-to-upward. A profile root must
+    // not disappear while descendant root references remain live in this
+    // process. Each successful child is cleared immediately: if the provider
+    // fails on a later child, retrying cannot recreate an already-destroyed
+    // authority and the parent remains available solely to finish teardown.
+    for (auto& application : applications_) {
+        if (!application.occupied || application.binding.owner.user != user) continue;
+
+        auto destroyed = provider_->destroy_root(application.reference, application.binding);
+        if (!destroyed) return destroyed.error();
+
+        application = RootSlot{};
+        ++destroyed_children;
+    }
+
+    auto destroyed_profile = provider_->destroy_root(profile->reference, profile->binding);
+    if (!destroyed_profile) return destroyed_profile.error();
+
+    *profile = RootSlot{};
+    return ProfileRootErasureReport{
+        .application_roots_destroyed = destroyed_children,
+        .assurance = provider_->root_erasure_assurance(),
+    };
+}
+
 std::size_t KeyHierarchy::profile_count() const noexcept {
     std::size_t count = 0U;
     for (const auto& slot : profiles_) {

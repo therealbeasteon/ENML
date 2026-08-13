@@ -79,6 +79,24 @@ struct RootKeyReference final {
         const RootKeyReference&) = default;
 };
 
+// How strongly a provider can truthfully claim one root is erased. This is not
+// itself a whole-user-data forensic guarantee: that additionally requires every
+// durable user-data byte to be encrypted beneath the destroyed profile domain,
+// no plaintext recovery path, and rollback-resistant destruction state.
+enum class RootErasureAssurance : std::uint8_t {
+    logical_only = 1U,
+    effaceable_key_storage = 2U,
+};
+
+struct ProfileRootErasureReport final {
+    std::size_t application_roots_destroyed {0U};
+    RootErasureAssurance assurance {RootErasureAssurance::logical_only};
+
+    [[nodiscard]] friend constexpr bool operator==(
+        const ProfileRootErasureReport&,
+        const ProfileRootErasureReport&) = default;
+};
+
 // A production implementation may map these operations to a TPM/TEE/HSM. The
 // interface deliberately has no method that exports raw root-key bytes.
 //
@@ -107,6 +125,13 @@ public:
 
     [[nodiscard]] virtual os::core::Result<void>
     destroy_root(RootKeyReference root, KeyProtectionBinding binding) noexcept = 0;
+
+    // Conservative by default. A software provider or unknown secure element
+    // must never inherit a forensic-erasure claim merely because destroy_root()
+    // returned success.
+    [[nodiscard]] virtual RootErasureAssurance root_erasure_assurance() const noexcept {
+        return RootErasureAssurance::logical_only;
+    }
 };
 
 // Fixed-capacity core policy object. It pairs provider references with trusted
@@ -131,6 +156,17 @@ public:
     generate_application_data_key(
         KeyProtectionBinding application_binding,
         KeyPurpose purpose) noexcept;
+
+    // Destroy all application roots belonging to one profile, then the profile
+    // root itself. Successfully destroyed child slots are cleared immediately,
+    // so a provider failure is retryable and cannot resurrect authority already
+    // removed. The profile root is only destroyed once all descendants are gone.
+    //
+    // The caller must already have durably entered a destruction-pending state.
+    // This operation removes cryptographic authority; it does not claim that
+    // plaintext Storage data is covered until profile storage encryption exists.
+    [[nodiscard]] os::core::Result<ProfileRootErasureReport>
+    destroy_profile(os::core::UserId user) noexcept;
 
     [[nodiscard]] bool initialized() const noexcept { return system_.occupied; }
     [[nodiscard]] std::size_t profile_count() const noexcept;
