@@ -25,9 +25,9 @@ jobs:
           kernel_aarch64_translation_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
-          kernel_boot_memory_test kernel_boot_memory_plan_test
-          kernel_capability_test kernel_interrupt_test kernel_scheduler_test
-          kernel_composition_test --parallel 2
+          kernel_arch_timer_discovery_test kernel_boot_memory_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
+          kernel_scheduler_test kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-gcc' --preset host-debug
 
@@ -52,9 +52,9 @@ jobs:
           kernel_aarch64_translation_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
-          kernel_boot_memory_test kernel_boot_memory_plan_test
-          kernel_capability_test kernel_interrupt_test kernel_scheduler_test
-          kernel_composition_test --parallel 2
+          kernel_arch_timer_discovery_test kernel_boot_memory_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
+          kernel_scheduler_test kernel_composition_test --parallel 2
       - name: Test kernel gates with sanitizers
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-sanitizers' --preset host-asan
 
@@ -75,9 +75,9 @@ jobs:
           kernel_aarch64_translation_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
-          kernel_boot_memory_test kernel_boot_memory_plan_test
-          kernel_capability_test kernel_interrupt_test kernel_scheduler_test
-          kernel_composition_test --parallel 2
+          kernel_arch_timer_discovery_test kernel_boot_memory_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
+          kernel_scheduler_test kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-clang' --test-dir build/m5-kernel-clang
 
@@ -104,13 +104,13 @@ jobs:
           kernel_aarch64_translation_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
-          kernel_boot_memory_test kernel_boot_memory_plan_test
-          kernel_capability_test kernel_interrupt_test kernel_scheduler_test
-          kernel_composition_test oskernel_machine_aarch64
+          kernel_arch_timer_discovery_test kernel_boot_memory_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_interrupt_test
+          kernel_scheduler_test kernel_composition_test oskernel_machine_aarch64
           cookie_kernel_aarch64_boot --parallel 2
       - name: Test kernel gates natively
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --test-dir build/m7-arm64-native
-      - name: Boot Cookie Kernel and EL0 process under QEMU virt
+      - name: Boot Cookie Kernel, EL0, and timer IRQs under QEMU virt GICv3
         shell: bash
         run: |
           set -euo pipefail
@@ -118,7 +118,7 @@ jobs:
           test -s "$image"
           set +e
           timeout 12s qemu-system-aarch64 \
-            -machine virt,virtualization=off \
+            -machine virt,gic-version=3,virtualization=off \
             -cpu cortex-a72 \
             -m 512M \
             -nographic \
@@ -134,3 +134,6 @@ jobs:
           grep -F 'COOKIE:M7.5d:MMU' cookie-qemu.log
           grep -F 'COOKIE:M7.5d:GUARDED' cookie-qemu.log
           grep -F 'COOKIE:M7.5f:EL0_SVC_RETURN' cookie-qemu.log
+          grep -F 'COOKIE:M7.5g:GICV3' cookie-qemu.log
+          grep -F 'COOKIE:M7.5g:TIMER_IRQ' cookie-qemu.log
+          grep -F 'COOKIE:M7.5g:TIMER_IRQ_RETURN' cookie-qemu.log

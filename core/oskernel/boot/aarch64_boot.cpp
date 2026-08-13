@@ -7,11 +7,14 @@
 #include <os/core/span.hpp>
 #include <os/kernel/abi.hpp>
 #include <os/kernel/aarch64_entry.hpp>
+#include <os/kernel/aarch64_gic_v3.hpp>
 #include <os/kernel/aarch64_page_tables.hpp>
 #include <os/kernel/aarch64_translation.hpp>
+#include <os/kernel/arch_timer_discovery.hpp>
 #include <os/kernel/boot_memory.hpp>
 #include <os/kernel/boot_memory_plan.hpp>
 #include <os/kernel/fdt.hpp>
+#include <os/kernel/gic_v3_discovery.hpp>
 #include <os/kernel/hardware_inventory.hpp>
 #include <os/kernel/machine.hpp>
 #include <os/kernel/machine_aarch64.hpp>
@@ -42,13 +45,14 @@ constexpr std::uint64_t runtime_stack_virtual = 0x0000'007F'FEF0'0000ULL;
 constexpr std::uint64_t user_code_virtual = 0x0000'0000'1000'0000ULL;
 constexpr std::uint64_t user_stack_virtual = 0x0000'0000'1001'0000ULL;
 constexpr std::uint64_t syscall_return_cookie = 0xC00CULL;
+constexpr std::uint64_t timer_period_ns = 2'000'000ULL;
 
 volatile std::uint32_t* boot_uart = nullptr;
 std::uint32_t el0_yield_count = 0U;
+std::uint32_t timer_irq_count = 0U;
+os::kernel::aarch64::GicV3PrimaryCpu boot_gic{};
 
-// These are persistent kernel authorities, not temporary bootstrap locals.
-// Keeping them in BSS avoids consuming most of the 16 KiB bootstrap stack with
-// the 256-entry physical ledger and per-address-space mapping table.
+// Persistent machine authority belongs in BSS, not on the 16 KiB bootstrap stack.
 os::kernel::MachinePhysicalLedger boot_physical_ledger{};
 os::kernel::MachineAddressSpace boot_kernel_space{};
 
@@ -137,6 +141,17 @@ find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
         permissions, MachineMemoryKind::normal);
 }
 
+[[nodiscard]] bool map_device_range(os::kernel::MachineAddressSpace& space, HardwareRange range) noexcept {
+    if (!range.valid()) return false;
+    const auto begin = align_down(range.base);
+    std::uint64_t end = 0ULL;
+    if (range.base > UINT64_MAX - range.size ||
+        !align_up(range.base + range.size, end) || end <= begin) return false;
+    return map_machine_range(
+        space, begin, begin, end - begin,
+        MachinePermissions::read_write, MachineMemoryKind::device);
+}
+
 void install_first_user_program(std::uint64_t physical_page) noexcept {
     auto* words = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(physical_page));
@@ -159,7 +174,7 @@ void install_first_user_program(std::uint64_t physical_page) noexcept {
         boot_kernel_space,
         static_cast<std::uintptr_t>(user_code_virtual),
         static_cast<std::uintptr_t>(user_stack_top));
-    if (!valid) {
+    if (!valid || !boot_gic.initialized || !os::kernel::machine_set_timer(timer_period_ns)) {
         uart_write("COOKIE:PANIC:EL0_CONTEXT\n");
         halt();
     }
@@ -199,6 +214,34 @@ extern "C" void cookie_kernel_syscall_entry(
     halt();
 }
 
+extern "C" void cookie_aarch64_irq_dispatch(
+    os::kernel::aarch64::ExceptionFrame* frame) noexcept {
+    if (frame == nullptr || !boot_gic.initialized) halt();
+    const auto intid = os::kernel::aarch64::gic_v3_acknowledge();
+    if (intid >= 1020U && intid <= 1023U) return;
+    if (intid != boot_gic.timer_intid) {
+        uart_write("COOKIE:PANIC:UNEXPECTED_IRQ\n");
+        halt();
+    }
+
+    ++timer_irq_count;
+    // Move the compare value into the future before EOI so the level-triggered
+    // timer PPI is deasserted when the GIC reevaluates it.
+    if (!os::kernel::machine_set_timer(timer_period_ns)) {
+        uart_write("COOKIE:PANIC:TIMER_REARM\n");
+        halt();
+    }
+    os::kernel::aarch64::gic_v3_end_interrupt(intid);
+
+    if (timer_irq_count == 1U) {
+        uart_write("COOKIE:M7.5g:TIMER_IRQ\n");
+    } else if (timer_irq_count == 2U) {
+        // A second interrupt proves the first handler returned through ERET and
+        // IRQ delivery resumed in EL0 rather than leaving execution stranded at EL1.
+        uart_write("COOKIE:M7.5g:TIMER_IRQ_RETURN\n");
+    }
+}
+
 extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physical) noexcept {
     // Vectors first, before any code that can fault. VBAR_EL1 has no
     // architectural reset value, so until this runs a synchronous exception
@@ -219,7 +262,11 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     auto fdt = os::kernel::FdtView::parse(dtb_blob);
     if (!fdt) halt();
     auto inventory = os::kernel::discover_hardware(fdt.value());
-    if (!inventory || inventory.value().memory_count == 0U) halt();
+    auto gic_topology = os::kernel::discover_gic_v3(fdt.value());
+    auto timer = os::kernel::discover_architected_timer(fdt.value());
+    if (!inventory || inventory.value().memory_count == 0U ||
+        !gic_topology || !timer ||
+        (timer.value().trigger_flags & 0xFU) != 4U) halt();
 
     const auto image_begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(__cookie_image_start));
@@ -308,17 +355,16 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             boot_kernel_space,
             static_cast<std::uintptr_t>(user_stack_virtual),
             static_cast<std::uintptr_t>(user_stack.value().base),
-            static_cast<std::size_t>(page_size))) halt();
+            static_cast<std::size_t>(page_size)) ||
+        !map_device_range(boot_kernel_space, gic_topology.value().distributor)) halt();
+
+    for (std::size_t i = 0U; i < gic_topology.value().redistributor_count; ++i) {
+        if (!map_device_range(boot_kernel_space, gic_topology.value().redistributors[i])) halt();
+    }
 
     const auto* uart = find_pl011(inventory.value());
-    if (uart == nullptr || !uart->registers.valid()) halt();
-    const auto uart_begin = align_down(uart->registers.base);
-    std::uint64_t uart_end = 0ULL;
-    if (uart->registers.base > UINT64_MAX - uart->registers.size ||
-        !align_up(uart->registers.base + uart->registers.size, uart_end) ||
-        !map_machine_range(
-            boot_kernel_space, uart_begin, uart_begin, uart_end - uart_begin,
-            MachinePermissions::read_write, MachineMemoryKind::device)) halt();
+    if (uart == nullptr || !uart->registers.valid() ||
+        !map_device_range(boot_kernel_space, uart->registers)) halt();
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
 
@@ -329,6 +375,15 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // made the M7.5d fault unreportable.
     if (!os::kernel::aarch64::activate_stage1_translation(root.value())) halt();
     uart_write("COOKIE:M7.5d:MMU\n");
+
+    auto gic = os::kernel::aarch64::initialize_gic_v3_primary_cpu(
+        gic_topology.value(), timer.value().nonsecure_physical_intid);
+    if (!gic) {
+        uart_write("COOKIE:PANIC:GICV3\n");
+        halt();
+    }
+    boot_gic = gic.value();
+    uart_write("COOKIE:M7.5g:GICV3\n");
 
     os::kernel::MachineContext bootstrap_context{};
     os::kernel::MachineContext runtime_context{};

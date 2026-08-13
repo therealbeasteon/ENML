@@ -25,10 +25,10 @@ so that lines cannot be moved between categories to get under a ceiling:
 | Category | Lines | Ceiling | What it is |
 | --- | --- | --- | --- |
 | core | 1,280 | 1,280 | The privileged portable runtime - address spaces and threads, the rendezvous, interrupt dispatch, capability transfer, the ABI |
-| machine | 1,362 | 1,362 | The AArch64 port and the `machine.hpp` contract it satisfies |
-| discovery | 996 | 996 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, boot memory planning |
-| entry | 362 | 362 | Reset vector, freestanding memory primitives, the boot routine |
-| **total** | **4,000** | **4,000** | |
+| machine | 1,545 | 1,545 | The AArch64 port and the `machine.hpp` contract it satisfies |
+| discovery | 1,221 | 1,221 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, architected timer discovery, boot memory planning |
+| entry | 411 | 411 | Reset vector, freestanding memory primitives, the boot routine |
+| **total** | **4,457** | **4,457** | |
 
 `core` is the number comparable to QNX's 605. The others are trusted but are not
 what that figure described.
@@ -80,7 +80,7 @@ The script prints this on every run, pass or fail, so the distance stays visible
 rather than becoming something the project stopped mentioning:
 
 - `core` is **2.1x** the QNX microkernel. It must shed **675 lines** to reach 605.
-- The whole trusted image is **4,000 lines**, against 15,930 for the entire QNX
+- The whole trusted image is **4,457 lines**, against 15,930 for the entire QNX
   operating system including filesystem, device manager, networking and drivers.
 
 The second comparison is the uncomfortable one and it is the honest one. Cookie

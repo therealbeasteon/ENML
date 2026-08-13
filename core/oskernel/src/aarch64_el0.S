@@ -5,17 +5,17 @@
 
 // [[noreturn]] void cookie_aarch64_enter_el0(uint64_t entry, uint64_t stack)
 //
-// M7.5f enters AArch64 EL0t with DAIF masked until GIC/timer delivery is a
-// separately reviewed milestone. x0-x30 begin zeroed so the first userspace
-// instruction cannot inherit kernel register contents. ELR_EL1 and SP_EL0 are
-// the only caller-provided execution state.
+// M7.5g enters AArch64 EL0t with IRQ delivery enabled only after Cookie has
+// initialized the GICv3 CPU interface and armed the architected timer. Debug,
+// SError and FIQ remain masked. x0-x30 begin zeroed so userspace inherits no
+// kernel register contents.
 cookie_aarch64_enter_el0:
     msr sp_el0, x1
     msr elr_el1, x0
 
     // SPSR_EL1.M[3:0] = 0000 -> EL0t.
-    // D/A/I/F are masked for this first controlled syscall proof.
-    mov x2, #0x3c0
+    // D/A/F masked, I clear: normal IRQ delivery is enabled after ERET.
+    mov x2, #0x340
     msr spsr_el1, x2
     isb
 

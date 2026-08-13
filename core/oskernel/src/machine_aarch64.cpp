@@ -66,12 +66,8 @@ os::core::Result<void> machine_bind_address_space(
 os::core::Result<void> aarch64_attach_early_stage1(
     MachineAddressSpace& space,
     aarch64::EarlyStage1Builder& builder) noexcept {
-    if (space.physical_ledger == nullptr) {
-        return machine_error(machine_errors::address_space_unbound);
-    }
-    if (space.early_builder != nullptr) {
-        return machine_error(machine_errors::address_space_already_bound);
-    }
+    if (space.physical_ledger == nullptr) return machine_error(machine_errors::address_space_unbound);
+    if (space.early_builder != nullptr) return machine_error(machine_errors::address_space_already_bound);
     auto bound = space.mappings.bind(space.physical_ledger->mappings, builder);
     if (!bound) return bound.error();
     space.early_builder = &builder;
@@ -84,9 +80,7 @@ os::core::Result<void> aarch64_map_user(
     std::uintptr_t physical_base,
     std::size_t length,
     MachinePermissions permissions) noexcept {
-    if (space.early_builder == nullptr) {
-        return machine_error(machine_errors::address_space_unbound);
-    }
+    if (space.early_builder == nullptr) return machine_error(machine_errors::address_space_unbound);
     return space.mappings.map_user(
         static_cast<std::uint64_t>(virtual_base),
         static_cast<std::uint64_t>(physical_base),
@@ -99,9 +93,7 @@ os::core::Result<void> aarch64_map_user_stack(
     std::uintptr_t virtual_base,
     std::uintptr_t physical_base,
     std::size_t length) noexcept {
-    if (space.early_builder == nullptr) {
-        return machine_error(machine_errors::address_space_unbound);
-    }
+    if (space.early_builder == nullptr) return machine_error(machine_errors::address_space_unbound);
     return space.mappings.map_user_stack(
         static_cast<std::uint64_t>(virtual_base),
         static_cast<std::uint64_t>(physical_base),
@@ -112,9 +104,7 @@ os::core::Result<void> aarch64_validate_user_context(
     MachineAddressSpace& space,
     std::uintptr_t entry,
     std::uintptr_t stack) noexcept {
-    if (space.early_builder == nullptr) {
-        return machine_error(machine_errors::address_space_unbound);
-    }
+    if (space.early_builder == nullptr) return machine_error(machine_errors::address_space_unbound);
     if (entry == 0U || stack == 0U ||
         !aarch64::stage1_virtual_address(static_cast<std::uint64_t>(entry)) ||
         !aarch64::page_aligned(static_cast<std::uint64_t>(stack))) {
@@ -147,9 +137,7 @@ os::core::Result<void> machine_map_kernel_stack(
     std::uintptr_t virtual_base,
     std::uintptr_t physical_base,
     std::size_t length) noexcept {
-    if (space.early_builder == nullptr) {
-        return machine_error(machine_errors::address_space_unbound);
-    }
+    if (space.early_builder == nullptr) return machine_error(machine_errors::address_space_unbound);
     return space.mappings.map_kernel_stack(
         static_cast<std::uint64_t>(virtual_base),
         static_cast<std::uint64_t>(physical_base),
@@ -161,9 +149,7 @@ os::core::Result<void> machine_prepare_context(
     MachineAddressSpace& space,
     std::uintptr_t entry,
     std::uintptr_t stack) noexcept {
-    if (space.early_builder == nullptr) {
-        return machine_error(machine_errors::address_space_unbound);
-    }
+    if (space.early_builder == nullptr) return machine_error(machine_errors::address_space_unbound);
     if (entry == 0U || stack == 0U ||
         !aarch64::stage1_virtual_address(static_cast<std::uint64_t>(entry)) ||
         !aarch64::page_aligned(static_cast<std::uint64_t>(stack))) {
@@ -172,7 +158,6 @@ os::core::Result<void> machine_prepare_context(
     if (!space.mappings.valid_kernel_stack_top(static_cast<std::uint64_t>(stack))) {
         return machine_error(machine_errors::not_a_kernel_stack);
     }
-
     context = MachineContext{};
     context.x30 = static_cast<std::uint64_t>(entry);
     context.sp = static_cast<std::uint64_t>(stack);
@@ -187,9 +172,7 @@ os::core::Result<void> machine_map(
     std::size_t length,
     MachinePermissions permissions,
     MachineMemoryKind kind) noexcept {
-    if (space.early_builder == nullptr) {
-        return machine_error(machine_errors::address_space_unbound);
-    }
+    if (space.early_builder == nullptr) return machine_error(machine_errors::address_space_unbound);
     return space.mappings.map(
         static_cast<std::uint64_t>(virtual_base),
         static_cast<std::uint64_t>(physical_base),
@@ -210,7 +193,6 @@ os::core::Result<void> machine_unmap(
         !aarch64::page_aligned(static_cast<std::uint64_t>(length))) {
         return machine_error(machine_errors::invalid_range);
     }
-
     const auto exact = space.mappings.exact_mapping(
         static_cast<std::uint64_t>(virtual_base),
         static_cast<std::uint64_t>(length));
@@ -220,8 +202,7 @@ os::core::Result<void> machine_unmap(
         static_cast<std::uint64_t>(length) / aarch64::architectural_page_size;
     for (std::uint64_t page = 0ULL; page < page_count; ++page) {
         auto state = space.early_builder->mapped(
-            static_cast<std::uint64_t>(virtual_base) +
-            page * aarch64::architectural_page_size);
+            static_cast<std::uint64_t>(virtual_base) + page * aarch64::architectural_page_size);
         if (!state) return state.error();
         if (!state.value()) return machine_error(machine_errors::mapping_ledger_inconsistent);
     }
@@ -231,13 +212,10 @@ os::core::Result<void> machine_unmap(
     // ledger; returning would expose a partially retired mapping.
     for (std::uint64_t page = 0ULL; page < page_count; ++page) {
         auto cleared = space.early_builder->unmap_page(
-            static_cast<std::uint64_t>(virtual_base) +
-            page * aarch64::architectural_page_size);
+            static_cast<std::uint64_t>(virtual_base) + page * aarch64::architectural_page_size);
         if (!cleared) os::core::invariant_violated();
     }
-
     invalidate_stage1_pages(static_cast<std::uint64_t>(virtual_base), page_count);
-
     auto retired = space.mappings.retire_unmapped(
         static_cast<std::uint64_t>(virtual_base),
         static_cast<std::uint64_t>(length));
@@ -264,17 +242,22 @@ os::core::Result<void> machine_set_timer(std::uint64_t nanoseconds) noexcept {
     const std::uint32_t frequency = counter_frequency_hz();
     auto ticks = aarch64::nanoseconds_to_ticks(nanoseconds, frequency);
     if (!ticks) return ticks.error();
-
     const std::uint64_t now = physical_counter();
     if (ticks.value() > (std::numeric_limits<std::uint64_t>::max() - now)) {
         return aarch64::error(aarch64::errors::timer_out_of_range);
     }
     const std::uint64_t deadline = now + ticks.value();
-
     asm volatile("msr cntp_cval_el0, %0" :: "r"(deadline) : "memory");
     asm volatile("isb" ::: "memory");
     const std::uint64_t enable = 1ULL;
     asm volatile("msr cntp_ctl_el0, %0" :: "r"(enable) : "memory");
+    asm volatile("isb" ::: "memory");
+    return {};
+}
+
+os::core::Result<void> machine_cancel_timer() noexcept {
+    const std::uint64_t disabled = 0ULL;
+    asm volatile("msr cntp_ctl_el0, %0" :: "r"(disabled) : "memory");
     asm volatile("isb" ::: "memory");
     return {};
 }

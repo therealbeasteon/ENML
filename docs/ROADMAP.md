@@ -302,7 +302,7 @@ no branch, no document; M7.10 is built and enforced by this change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 4,000 lines, a ratchet rather than the 605-line
+  ceiling is the measured 4,457 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -332,10 +332,10 @@ cannot be laundered between them:
 | Category | Lines |
 | --- | --- |
 | core — privileged portable runtime | 1,280 |
-| machine — the AArch64 port | 1,362 |
-| discovery — FDT, inventory, GICv3 topology, boot memory | 996 |
-| entry — reset vector, freestanding memory | 362 |
-| **total** | **4,000** |
+| machine — the AArch64 port | 1,545 |
+| discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,221 |
+| entry — reset vector, freestanding memory | 411 |
+| **total** | **4,457** |
 
 `core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -345,12 +345,26 @@ relabelling at the time the gate was set. The one exclusion, `machine_host.*`,
 is a test double that never enters the image, and it is listed by name rather
 than silently dropped.
 
-The ceiling moved once already, by M7.5e's unmap/TLBI work, and again by
-M7.5f: 1,151 → 1,362 in `machine` for EL0 entry/exit assembly and the guard-
+The ceiling moved once already, by M7.5e's unmap/TLBI work, again by M7.5f:
+1,151 → 1,362 in `machine` for EL0 entry/exit assembly and the guard-
 page/W^X machinery needed to hand control to EL0 at all; 723 → 996 in
 `discovery` for bounded GICv3 topology discovery, needed before an interrupt
 can be routed to an EL0 handler; 352 → 362 in `entry` for validating the
-guarded EL0 context before `eret`. None of it is discretionary — see
+guarded EL0 context before `eret`. And again by M7.5g, the first milestone
+that delivers a real hardware interrupt to EL0 and returns from it:
+1,362 → 1,545 in `machine` for GICv3 redistributor/CPU-interface programming
+and the lower-EL IRQ entry/return path; 996 → 1,217 in `discovery` for
+bounded DT discovery of the architected timer PPI; 362 → 411 in `entry` for
+wiring interrupt admission and the timer into the boot sequence. A fourth
+raise followed within the same milestone, not from new capability but from
+fixing a defect the M7.5g reland surfaced: `gic_v3_discovery.cpp` failed its
+*entire* device-tree walk whenever any unrelated sibling node (real QEMU virt
+always has one — `/cpus` declares `#size-cells = <0>`) used a cells value
+outside what the parser could represent, producing a 100%-reproducible
+silent boot hang with a completely empty serial log. `hardware_inventory.cpp`
+had already carried the fix for this exact class of defect since M7.5d;
+this walker hadn't inherited it. discovery 1,217 → 1,221, total 4,453 →
+4,457. None of it is discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 

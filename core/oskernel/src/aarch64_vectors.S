@@ -3,9 +3,6 @@
 .global cookie_aarch64_vector_table
 .type cookie_aarch64_vector_table, %function
 
-// Cookie's EL1 vector table. Each architecturally selected slot is exactly
-// 128 bytes. Only lower-EL AArch64 synchronous entry is enabled in this slice;
-// every other vector fails closed through the unhandled exception entry.
 .macro VECTOR target
     b \target
     .space 124
@@ -21,7 +18,7 @@ cookie_aarch64_vector_table:
     VECTOR cookie_aarch64_unhandled_vector   // current EL, SPx, FIQ
     VECTOR cookie_aarch64_unhandled_vector   // current EL, SPx, SError
     VECTOR cookie_aarch64_sync_lower_a64     // lower EL, AArch64, sync
-    VECTOR cookie_aarch64_unhandled_vector   // lower EL, AArch64, IRQ
+    VECTOR cookie_aarch64_irq_lower_a64      // lower EL, AArch64, IRQ
     VECTOR cookie_aarch64_unhandled_vector   // lower EL, AArch64, FIQ
     VECTOR cookie_aarch64_unhandled_vector   // lower EL, AArch64, SError
     VECTOR cookie_aarch64_unhandled_vector   // lower EL, AArch32, sync
@@ -30,7 +27,6 @@ cookie_aarch64_vector_table:
     VECTOR cookie_aarch64_unhandled_vector   // lower EL, AArch32, SError
 .size cookie_aarch64_vector_table, . - cookie_aarch64_vector_table
 
-// Keep these offsets synchronized with aarch64_exception.hpp::ExceptionFrame.
 .equ COOKIE_FRAME_SIZE,    288
 .equ COOKIE_X30,           240
 .equ COOKIE_SP_EL0,        248
@@ -39,8 +35,7 @@ cookie_aarch64_vector_table:
 .equ COOKIE_ESR_EL1,       272
 .equ COOKIE_FAR_EL1,       280
 
-.type cookie_aarch64_sync_lower_a64, %function
-cookie_aarch64_sync_lower_a64:
+.macro COOKIE_SAVE_FRAME
     sub sp, sp, #COOKIE_FRAME_SIZE
     stp x0,  x1,  [sp, #0]
     stp x2,  x3,  [sp, #16]
@@ -69,10 +64,9 @@ cookie_aarch64_sync_lower_a64:
     str x9, [sp, #COOKIE_ESR_EL1]
     mrs x9, far_el1
     str x9, [sp, #COOKIE_FAR_EL1]
+.endm
 
-    mov x0, sp
-    bl cookie_aarch64_sync_exception_dispatch
-
+.macro COOKIE_RESTORE_FRAME
     ldr x9, [sp, #COOKIE_SP_EL0]
     msr sp_el0, x9
     ldr x9, [sp, #COOKIE_ELR_EL1]
@@ -98,7 +92,23 @@ cookie_aarch64_sync_lower_a64:
     ldr x30, [sp, #COOKIE_X30]
     add sp, sp, #COOKIE_FRAME_SIZE
     eret
+.endm
+
+.type cookie_aarch64_sync_lower_a64, %function
+cookie_aarch64_sync_lower_a64:
+    COOKIE_SAVE_FRAME
+    mov x0, sp
+    bl cookie_aarch64_sync_exception_dispatch
+    COOKIE_RESTORE_FRAME
 .size cookie_aarch64_sync_lower_a64, . - cookie_aarch64_sync_lower_a64
+
+.type cookie_aarch64_irq_lower_a64, %function
+cookie_aarch64_irq_lower_a64:
+    COOKIE_SAVE_FRAME
+    mov x0, sp
+    bl cookie_aarch64_irq_dispatch
+    COOKIE_RESTORE_FRAME
+.size cookie_aarch64_irq_lower_a64, . - cookie_aarch64_irq_lower_a64
 
 .type cookie_aarch64_unhandled_vector, %function
 cookie_aarch64_unhandled_vector:
