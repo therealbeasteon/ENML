@@ -86,6 +86,85 @@ void uart_write(std::string_view text) noexcept {
     for (char c : text) uart_write_char(c);
 }
 
+// Early boot has roughly fifteen ways to stop and, until this existed, one
+// observable outcome for all of them: a silent WFE loop that CI could only
+// report as a timeout. The stage name costs a string literal and turns "the
+// kernel hung" into "the kernel rejected the memory plan".
+[[noreturn]] void fail(std::string_view stage) noexcept {
+    uart_write("COOKIE:PANIC:");
+    uart_write(stage);
+    uart_write("\n");
+    halt();
+}
+
+// The four checks that run before the console is discovered cannot print a
+// stage, so the QEMU trace address is the only evidence. One shared halt()
+// destroys that evidence: every early failure folds onto a single address and
+// addr2line attributes them all to whichever call site the compiler outlined
+// first, which is how a failing parse came to look like a failing DTB probe.
+//
+// Each gets its own address. The distinct register write is not diagnostic in
+// itself - nothing reads x20 - it exists so the bodies are not identical, and
+// therefore cannot be folded back together by the linker.
+[[gnu::noinline]] [[noreturn]] void halt_no_dtb() noexcept {
+    asm volatile("mov x20, #1" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_unparsable_fdt() noexcept {
+    asm volatile("mov x20, #2" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_no_inventory() noexcept {
+    asm volatile("mov x20, #3" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_no_console() noexcept {
+    asm volatile("mov x20, #4" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_no_vectors() noexcept {
+    asm volatile("mov x20, #5" ::: "x20");
+    halt();
+}
+
+// discover_hardware has five distinct ways to fail and, reported through one
+// halt, they were indistinguishable - which is how two successive guesses at
+// which one was firing both turned out to be wrong. The console is not up yet
+// (finding it requires the inventory this call did not produce), so the halt
+// address is the only channel available, and it carries one bit of
+// information unless there is one address per cause.
+[[gnu::noinline]] [[noreturn]] void halt_inv_cells() noexcept {
+    asm volatile("mov x20, #70" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_inv_reg() noexcept {
+    asm volatile("mov x20, #71" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_inv_depth() noexcept {
+    asm volatile("mov x20, #72" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_inv_exhausted() noexcept {
+    asm volatile("mov x20, #73" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_inv_property() noexcept {
+    asm volatile("mov x20, #74" ::: "x20");
+    halt();
+}
+
+[[noreturn]] void halt_inventory_error(os::core::Error error) noexcept {
+    switch (error.code) {
+    case os::kernel::hardware_inventory_errors::unsupported_cells: halt_inv_cells();
+    case os::kernel::hardware_inventory_errors::malformed_reg: halt_inv_reg();
+    case os::kernel::hardware_inventory_errors::depth_exhausted: halt_inv_depth();
+    case os::kernel::hardware_inventory_errors::inventory_exhausted: halt_inv_exhausted();
+    case os::kernel::hardware_inventory_errors::invalid_property: halt_inv_property();
+    default: halt_no_inventory();
+    }
+}
+
 [[nodiscard]] const os::kernel::DiscoveredDevice*
 find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
     for (std::size_t i = 0U; i < inventory.device_count; ++i) {
@@ -151,13 +230,43 @@ extern "C" void cookie_kernel_syscall_entry(
 }
 
 extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physical) noexcept {
+    // Vectors first, before any code that can fault. VBAR_EL1 has no
+    // architectural reset value, so until this runs a synchronous exception
+    // vectors to whatever base the implementation happens to start with - on
+    // this board zero, where 0x200 is flash rather than a handler. The machine
+    // then executes flash contents and the failure presents as a hang with no
+    // handler having run and no halt having been reached.
+    //
+    // Installing them here costs one system register write and makes every
+    // fault below land somewhere that identifies itself.
+    if (!os::kernel::aarch64::install_exception_vectors()) halt_no_vectors();
+
     const auto dtb_blob = bounded_dtb(dtb_physical);
-    if (dtb_blob.empty()) halt();
+    if (dtb_blob.empty()) halt_no_dtb();
 
     auto fdt = os::kernel::FdtView::parse(dtb_blob);
-    if (!fdt) halt();
+    if (!fdt) halt_unparsable_fdt();
     auto inventory = os::kernel::discover_hardware(fdt.value());
-    if (!inventory || inventory.value().memory_count == 0U) halt();
+    if (!inventory) halt_inventory_error(inventory.error());
+
+    // Publish the UART the moment the device tree names it. Translation is
+    // still off, so the physical address is directly addressable, and every
+    // failure from here on becomes a reportable stage rather than a silent
+    // halt. Only the checks above remain mute, which is unavoidable: until the
+    // device tree has been read there is no discovered console to report
+    // through, and hardware neutrality forbids assuming one.
+    const auto* uart = find_pl011(inventory.value());
+    if (uart == nullptr || !uart->registers.valid()) halt_no_console();
+    boot_uart = reinterpret_cast<volatile std::uint32_t*>(
+        static_cast<std::uintptr_t>(uart->registers.base));
+
+    // Checked after the console rather than beside the discovery call. A walk
+    // that succeeds but yields no usable RAM is a different failure from a
+    // walk that could not complete, and it is the one that can be reported:
+    // finding the UART proves the device tree was traversed and that node
+    // discovery works, which narrows the fault to how memory nodes in
+    // particular are recognised.
+    if (inventory.value().memory_count == 0U) fail("NO_MEMORY_NODE");
 
     const auto image_begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(__cookie_image_start));
@@ -165,76 +274,78 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         reinterpret_cast<std::uintptr_t>(__cookie_image_end));
     std::uint64_t dtb_end = 0ULL;
     if (dtb_physical > UINT64_MAX - dtb_blob.size() ||
-        !align_up(static_cast<std::uint64_t>(dtb_physical) + dtb_blob.size(), dtb_end)) halt();
+        !align_up(static_cast<std::uint64_t>(dtb_physical) + dtb_blob.size(), dtb_end)) {
+        fail("DTB_RANGE");
+    }
 
     const HardwareRange image_range{align_down(image_begin), image_end - align_down(image_begin)};
     const HardwareRange dtb_range{
         align_down(static_cast<std::uint64_t>(dtb_physical)),
         dtb_end - align_down(static_cast<std::uint64_t>(dtb_physical))};
-    if (!image_range.valid() || !dtb_range.valid()) halt();
+    if (!image_range.valid() || !dtb_range.valid()) fail("IMAGE_RANGE");
 
     const std::array<HardwareRange, 2U> protected_ranges{image_range, dtb_range};
     auto plan = os::kernel::plan_early_boot_memory(
         inventory.value(), std::span<const HardwareRange>{protected_ranges},
         early_page_table_pages, runtime_stack_pages, page_size);
-    if (!plan || !plan.value().valid()) halt();
+    if (!plan || !plan.value().valid()) fail("MEMORY_PLAN");
 
     os::kernel::aarch64::EarlyPageArena arena{
         plan.value().page_tables.base,
         plan.value().page_tables.end_exclusive()};
-    if (!arena.valid()) halt();
+    if (!arena.valid()) fail("PAGE_ARENA");
     os::kernel::aarch64::EarlyStage1Builder builder{arena};
     auto root = builder.initialize();
-    if (!root) halt();
+    if (!root) fail("TABLE_ROOT");
 
     if (!map_identity_symbols(
             builder, __cookie_text_start, __cookie_text_end,
-            MachinePermissions::read_execute) ||
-        !map_identity_symbols(
+            MachinePermissions::read_execute)) fail("MAP_TEXT");
+    if (!map_identity_symbols(
             builder, __cookie_rodata_start, __cookie_rodata_end,
-            MachinePermissions::read) ||
-        !map_identity_symbols(
+            MachinePermissions::read)) fail("MAP_RODATA");
+    if (!map_identity_symbols(
             builder, __cookie_data_start, __bss_end,
-            MachinePermissions::read_write) ||
-        !map_range(
+            MachinePermissions::read_write)) fail("MAP_DATA");
+    if (!map_range(
             builder,
             plan.value().page_tables.base,
             plan.value().page_tables.base,
             plan.value().page_tables.size,
             MachinePermissions::read_write,
-            MachineMemoryKind::normal) ||
-        !map_range(
+            MachineMemoryKind::normal)) fail("MAP_TABLES");
+    if (!map_range(
             builder,
             dtb_range.base,
             dtb_range.base,
             dtb_range.size,
             MachinePermissions::read,
-            MachineMemoryKind::normal)) halt();
+            MachineMemoryKind::normal)) fail("MAP_DTB");
 
-    const auto* uart = find_pl011(inventory.value());
-    if (uart == nullptr || !uart->registers.valid()) halt();
     const auto uart_begin = align_down(uart->registers.base);
     std::uint64_t uart_end = 0ULL;
     if (uart->registers.base > UINT64_MAX - uart->registers.size ||
         !align_up(uart->registers.base + uart->registers.size, uart_end) ||
         !map_range(
             builder, uart_begin, uart_begin, uart_end - uart_begin,
-            MachinePermissions::read_write, MachineMemoryKind::device)) halt();
-    boot_uart = reinterpret_cast<volatile std::uint32_t*>(
-        static_cast<std::uintptr_t>(uart->registers.base));
+            MachinePermissions::read_write, MachineMemoryKind::device)) fail("MAP_UART");
 
     os::kernel::MachinePhysicalLedger physical_ledger{};
     os::kernel::MachineAddressSpace kernel_space{};
-    if (!os::kernel::machine_bind_address_space(kernel_space, physical_ledger) ||
-        !os::kernel::aarch64_attach_early_stage1(kernel_space, builder) ||
-        !os::kernel::machine_map_kernel_stack(
+    if (!os::kernel::machine_bind_address_space(kernel_space, physical_ledger)) fail("BIND_SPACE");
+    if (!os::kernel::aarch64_attach_early_stage1(kernel_space, builder)) fail("ATTACH_STAGE1");
+    if (!os::kernel::machine_map_kernel_stack(
             kernel_space,
             static_cast<std::uintptr_t>(runtime_stack_virtual),
             static_cast<std::uintptr_t>(plan.value().kernel_stack.base),
-            static_cast<std::size_t>(plan.value().kernel_stack.size))) halt();
+            static_cast<std::size_t>(plan.value().kernel_stack.size))) fail("MAP_STACK");
 
-    if (!os::kernel::aarch64::activate_stage1_translation(root.value())) halt();
-    if (!os::kernel::aarch64::install_exception_vectors()) halt();
+    // Vectors were installed at entry and stay installed across the MMU
+    // transition: VBAR_EL1 holds a virtual address that the identity mapping
+    // above keeps valid, so enabling translation does not invalidate them.
+    // This matters most for the activation itself, which is the single most
+    // likely instruction here to fault.
+    if (!os::kernel::aarch64::activate_stage1_translation(root.value())) fail("ACTIVATE_MMU");
     uart_write("COOKIE:M7.5d:MMU\n");
 
     os::kernel::MachineContext bootstrap_context{};
@@ -244,7 +355,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             runtime_context,
             kernel_space,
             reinterpret_cast<std::uintptr_t>(&guarded_runtime_main),
-            static_cast<std::uintptr_t>(stack_top))) halt();
+            static_cast<std::uintptr_t>(stack_top))) fail("PREPARE_CONTEXT");
 
     os::kernel::machine_switch_context(bootstrap_context, runtime_context);
     halt();

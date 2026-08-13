@@ -72,8 +72,22 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             ${CMAKE_CURRENT_SOURCE_DIR}/include
             ${PROJECT_SOURCE_DIR}/core/oscore/include)
         target_compile_features(cookie_kernel_aarch64_boot PRIVATE cxx_std_20)
+        # -mstrict-align is required, not a hardening preference.
+        #
+        # This image runs with translation disabled from _start until
+        # activate_stage1_translation. While it is off, every data access takes
+        # the Device-nGnRnE attribute regardless of what the page tables will
+        # later say, and Device memory does not permit unaligned access. SCTLR
+        #_EL1.A is irrelevant here: that bit governs alignment checking for
+        # Normal memory, so clearing it does not buy tolerance the memory type
+        # never had.
+        #
+        # Without this flag the compiler is free to emit an unaligned load or a
+        # multi-register copy for an ordinary struct assignment, and one did -
+        # inside FdtView::parse, building its Result return value. The fault
+        # was taken before any of this code could report it.
         target_compile_options(cookie_kernel_aarch64_boot PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie>
+            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie -mstrict-align>
             $<$<COMPILE_LANGUAGE:ASM>:-ffreestanding -fno-pie>)
         target_link_options(cookie_kernel_aarch64_boot PRIVATE
             -nostdlib

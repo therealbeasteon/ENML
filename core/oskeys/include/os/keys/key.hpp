@@ -29,7 +29,24 @@ struct ProviderKeyReference final {
 
 enum class KeyPurpose : std::uint32_t {
     application_data_aead = 1U,
+    // system.storage-owned bulk-data keys. These may only be generated under a
+    // user-profile root and are never exposed as application key authority.
+    profile_storage_aead = 2U,
+    // Dedicated key domain for authenticated/encrypted Storage namespace
+    // metadata. Keeping it separate from bulk object data prevents a metadata
+    // parser or nonce lifecycle bug from sharing key material with user files.
+    profile_storage_metadata_aead = 3U,
 };
+
+[[nodiscard]] constexpr bool valid_purpose(KeyPurpose purpose) noexcept {
+    switch (purpose) {
+    case KeyPurpose::application_data_aead:
+    case KeyPurpose::profile_storage_aead:
+    case KeyPurpose::profile_storage_metadata_aead:
+        return true;
+    }
+    return false;
+}
 
 using RightsMask = std::uint32_t;
 
@@ -49,7 +66,7 @@ struct KeyDescriptor final {
     RightsMask rights {0U};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
-        return id.valid() && version != 0U && rights != 0U &&
+        return id.valid() && version != 0U && valid_purpose(purpose) && rights != 0U &&
             (rights & ~key_rights::all) == 0U;
     }
 
@@ -64,10 +81,6 @@ struct KeyOwner final {
 
     [[nodiscard]] friend constexpr auto operator<=>(const KeyOwner&, const KeyOwner&) = default;
 };
-
-[[nodiscard]] constexpr bool valid_purpose(KeyPurpose purpose) noexcept {
-    return purpose == KeyPurpose::application_data_aead;
-}
 
 [[nodiscard]] constexpr bool valid_rights(RightsMask value) noexcept {
     return value != 0U && (value & ~key_rights::all) == 0U;
