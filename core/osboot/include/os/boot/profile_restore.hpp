@@ -28,7 +28,9 @@ inline constexpr std::uint32_t unlock_refused = 7U;
 } // namespace profile_restore_errors
 
 [[nodiscard]] constexpr os::core::Error profile_restore_error(std::uint32_t code) noexcept {
-    return os::core::make_error(os::core::ErrorDomain::boot, 0x600U + code);
+    // Same domain and rationale as profile_unlock_error and
+    // profile_protector_error; 0x600 keeps this module's codes distinct.
+    return os::core::make_error(os::core::ErrorDomain::security, 0x600U + code);
 }
 
 // Final policy gate before an opaque provider blob may be presented to a
