@@ -13,14 +13,14 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      # The migration off Linux only finishes if the surface can only shrink.
       - name: Linux coupling ceiling
         run: .github/scripts/check-linux-coupling.sh 'kernel-gcc'
       - name: Configure
         run: cmake --preset host-debug
-      - name: Build kernel ABI gates
-        run: .github/scripts/run-build.sh 'kernel-gcc' --preset host-debug --parallel 2
-      - name: Test kernel ABI gates
+      - name: Build kernel gates
+        run: >-
+          .github/scripts/run-build.sh 'kernel-gcc' --preset host-debug --parallel 2
+      - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-gcc' --preset host-debug
 
   kernel-sanitizers:
@@ -29,9 +29,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Configure
         run: cmake --preset host-asan
-      - name: Build kernel ABI gates with sanitizers
-        run: .github/scripts/run-build.sh 'kernel-sanitizers' --preset host-asan --parallel 2
-      - name: Test kernel ABI gates with sanitizers
+      - name: Build kernel gates with sanitizers
+        run: >-
+          .github/scripts/run-build.sh 'kernel-sanitizers' --preset host-asan --parallel 2
+      - name: Test kernel gates with sanitizers
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-sanitizers' --preset host-asan
 
   kernel-clang:
@@ -43,15 +44,12 @@ jobs:
           cmake -S . -B build/m5-kernel-clang -G Ninja
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
           -DCMAKE_CXX_COMPILER=clang++
-      - name: Build kernel ABI gates
-        run: .github/scripts/run-build.sh 'kernel-clang' build/m5-kernel-clang --parallel 2
-      - name: Test kernel ABI gates
+      - name: Build kernel gates
+        run: >-
+          .github/scripts/run-build.sh 'kernel-clang' build/m5-kernel-clang --parallel 2
+      - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-clang' --test-dir build/m5-kernel-clang
 
-  # The real AArch64 machine backend is compiled here in addition to the hosted
-  # contract tests. It is not yet linked into a boot image: unsupported machine
-  # operations must remain visibly unsupported until their hardware mechanism is
-  # implemented rather than being hidden behind a host stub.
   kernel-arm64-native:
     runs-on: ubuntu-24.04-arm
     steps:
@@ -60,9 +58,90 @@ jobs:
         run: |
           uname -m
           test "$(uname -m)" = "aarch64"
-      - name: Configure
-        run: cmake --preset host-debug
-      - name: Build kernel ABI gates and real AArch64 machine slice natively
-        run: .github/scripts/run-build.sh 'kernel-arm64-native' --preset host-debug --parallel 2
-      - name: Test kernel ABI gates natively
-        run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --preset host-debug
+      - name: Install QEMU system emulator
+        run: sudo apt-get update && sudo apt-get install -y qemu-system-arm
+      - name: Configure native kernel and freestanding image
+        run: >-
+          cmake -S . -B build/m7-arm64-native -G Ninja
+          -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DEMNL_BUILD_AARCH64_BOOT_IMAGE=ON
+      - name: Build all kernel gates and standalone image
+        run: >-
+          .github/scripts/run-build.sh 'kernel-arm64-native' build/m7-arm64-native --parallel 2
+      - name: Test kernel gates natively
+        run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-arm64-native' --test-dir build/m7-arm64-native
+      - name: Boot Cookie Kernel under QEMU virt
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot.bin
+          test -s "$image"
+          set +e
+          timeout 12s qemu-system-aarch64 \
+            -machine virt,virtualization=off \
+            -cpu cortex-a72 \
+            -m 512M \
+            -nographic \
+            -monitor none \
+            -d cpu_reset,guest_errors,int,in_asm \
+            -D cookie-qemu-debug.log \
+            -kernel "$image" >cookie-qemu.log 2>&1
+          status=$?
+          set -e
+          if [[ $status -ne 0 && $status -ne 124 ]]; then
+            cat cookie-qemu.log
+            exit "$status"
+          fi
+          cat cookie-qemu.log
+          echo '--- executed blocks, and whether any are in the linked image ---'
+          grep -c '^IN: ' cookie-qemu-debug.log || true
+          grep -m 8 -E '^0x40[0-9a-f]{6}' cookie-qemu-debug.log || echo 'NOTHING EXECUTED AT 0x40xxxxxx'
+          echo '--- first 40 lines of the trace ---'
+          head -n 40 cookie-qemu-debug.log || true
+          # Resolve the executed blocks to symbols. The three checks before the
+          # console is discovered cannot print a stage, so for those the trace
+          # PC is the only evidence there is - and an address is only evidence
+          # once something maps it back to a function.
+          # Every executed block, not only those inside the image. Filtering to
+          # 0x40xxxxxx hides the one thing most worth seeing: execution that
+          # left the kernel entirely. A fault taken before VBAR_EL1 is set goes
+          # to whatever the reset value points at, and on this board that is
+          # not an address the image occupies.
+          echo '--- blocks executed OUTSIDE the kernel image ---'
+          grep -oE '^0x[0-9a-f]+' cookie-qemu-debug.log | sort -u \
+            | grep -vE '^0x40[0-9a-f]{6}$' || echo 'none - execution stayed in the image'
+          echo '--- last 30 blocks in execution order ---'
+          grep -oE '^0x[0-9a-f]+' cookie-qemu-debug.log | tail -30 | uniq -c
+          echo '--- executed blocks, resolved ---'
+          elf=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot
+          for pc in $(grep -oE '^0x40[0-9a-f]{6}' cookie-qemu-debug.log | sort -u); do
+            printf '%s  %s\n' "$pc" "$(addr2line -f -C -e "$elf" "$pc" | tr '\n' ' ')"
+          done
+          # The bootstrap stack is fixed at link time and the frames that have
+          # to fit in it are not, so print the largest ones. A frame that
+          # overruns this stack does not fault - translation is off and
+          # .rodata/.text lie below it - so the failure appears as corrupted
+          # code rather than as a stack error.
+          echo '--- largest stack frames in the boot image ---'
+          objdump -d "$elf" | awk '
+            /^[0-9a-f]+ </ { fn=$2 }
+            /sub[ \t]+sp, sp, #/ {
+              n=$NF; sub(/^#/,"",n); sub(/,.*/,"",n);
+              if (n+0 > 512) printf "%8d  %s\n", n, fn
+            }' | sort -rn | head -10
+          echo "bootstrap stack bytes: $(nm "$elf" | awk '
+            /__cookie_bootstrap_stack_start/ { s=strtonum("0x" $1) }
+            /__cookie_bootstrap_stack_top/   { t=strtonum("0x" $1) }
+            END { print t-s }')"
+          echo '--- image extent (note: BSS is not in the .bin QEMU loads) ---'
+          readelf -lW "$elf" | sed -n '/Program Head/,/Section to Segment/p'
+          size -A -d "$elf" | head -20
+          # Report the stage the kernel rejected before reporting the marker it
+          # never printed. A bare grep for the success marker says only that
+          # boot did not finish, which is the one thing already known.
+          if grep -F 'COOKIE:PANIC:' cookie-qemu.log; then
+            echo '--- kernel reported the stage above and halted ---'
+            exit 1
+          fi
+          grep -F 'COOKIE:M7.5d:MMU' cookie-qemu.log
+          grep -F 'COOKIE:M7.5d:GUARDED' cookie-qemu.log
