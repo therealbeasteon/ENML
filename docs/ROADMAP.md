@@ -302,7 +302,7 @@ no branch, no document; M7.10 is built and enforced by this change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 3,506 lines, a ratchet rather than the 605-line
+  ceiling is the measured 4,000 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -332,17 +332,27 @@ cannot be laundered between them:
 | Category | Lines |
 | --- | --- |
 | core — privileged portable runtime | 1,280 |
-| machine — the AArch64 port | 1,151 |
-| discovery — FDT, inventory, boot memory | 723 |
-| entry — reset vector, freestanding memory | 352 |
-| **total** | **3,506** |
+| machine — the AArch64 port | 1,362 |
+| discovery — FDT, inventory, GICv3 topology, boot memory | 996 |
+| entry — reset vector, freestanding memory | 362 |
+| **total** | **4,000** |
 
 `core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
 against a firmware-supplied blob, so a defect in it is a defect in the most
 privileged code on the machine, and excluding it would have shed 723 lines by
-relabelling. The one exclusion, `machine_host.*`, is a test double that never
-enters the image, and it is listed by name rather than silently dropped.
+relabelling at the time the gate was set. The one exclusion, `machine_host.*`,
+is a test double that never enters the image, and it is listed by name rather
+than silently dropped.
+
+The ceiling moved once already, by M7.5e's unmap/TLBI work, and again by
+M7.5f: 1,151 → 1,362 in `machine` for EL0 entry/exit assembly and the guard-
+page/W^X machinery needed to hand control to EL0 at all; 723 → 996 in
+`discovery` for bounded GICv3 topology discovery, needed before an interrupt
+can be routed to an EL0 handler; 352 → 362 in `entry` for validating the
+guarded EL0 context before `eret`. None of it is discretionary — see
+`.github/scripts/kernel-line-count.sh` for the full justification recorded
+beside each raise.
 
 The ceilings are the measured values, not the aspiration — a ratchet. A gate set
 at 605 would be red on arrival and switched off within a week; one set
