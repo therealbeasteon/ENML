@@ -41,7 +41,7 @@ enum class BrokerRefusal : std::uint8_t {
 
 struct ConnectionRequest final {
     DestinationCapability destination {};
-    PrivacyMode privacy {PrivacyMode::protected};
+    PrivacyMode privacy {PrivacyMode::protected_transport};
     FlowPriority priority {FlowPriority::interactive};
     bool require_encryption {true};
 };

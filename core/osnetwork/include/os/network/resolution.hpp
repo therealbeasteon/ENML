@@ -16,7 +16,7 @@ namespace os::network {
 struct ResolutionGrant final {
     std::uint64_t id {0U};
     std::uint64_t generation {0U};
-    PrivacyMode privacy {PrivacyMode::protected};
+    PrivacyMode privacy {PrivacyMode::protected_transport};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
         return id != 0U && generation != 0U;

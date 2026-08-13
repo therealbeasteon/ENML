@@ -16,7 +16,7 @@ enum class LinkClass : std::uint8_t {
 };
 
 enum class PrivacyMode : std::uint8_t {
-    protected = 1U,
+    protected_transport = 1U,
     private_relay = 2U,
     zero_tracking = 3U,
 };

@@ -42,7 +42,7 @@ int main() {
         .downlink_kbps = 120'000U,
         .uplink_kbps = 40'000U,
     };
-    auto broadband = plan_transport(fast, PrivacyMode::protected);
+    auto broadband = plan_transport(fast, PrivacyMode::protected_transport);
     require(broadband.link_class == LinkClass::broadband);
     require(broadband.max_interactive_flows > constrained.max_interactive_flows);
     require(broadband.require_encrypted_transport);
