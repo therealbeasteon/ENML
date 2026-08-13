@@ -21,8 +21,13 @@ int main() {
     assert(!oversized_parent);
     assert(leaf);
 
+    // Grow to the largest parent that still parses, so that adding a
+    // separator and a one-byte leaf must overflow. The previous bound stopped
+    // two bytes early and produced a 1021-byte parent, which joins to 1023 and
+    // fits inside the 1024-byte ceiling - so this case asserted an overflow
+    // that the arithmetic could never reach.
     std::string segmented;
-    while (segmented.size() + 2U <= os::storage::max_relative_path_bytes - 2U) {
+    while (segmented.size() + 2U <= os::storage::max_relative_path_bytes) {
         if (!segmented.empty()) segmented.push_back('/');
         segmented.push_back('a');
     }

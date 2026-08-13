@@ -99,7 +99,11 @@ OpenSslTestKeyProvider::generate_under_root(
         (purpose == KeyPurpose::profile_storage_aead ||
          purpose == KeyPurpose::profile_storage_metadata_aead);
     if (!application_ok && !profile_storage_ok) return key_error(errors::access_denied);
-    return generate(purpose);
+    // The scope/purpose pairing above is this path's admission rule, and it
+    // has just been applied. Calling generate() here would re-check against
+    // the flat path's rule, which is application-only by design and rejected
+    // every profile storage key this function had already authorised.
+    return generate_material();
 }
 
 os::core::Result<void>
