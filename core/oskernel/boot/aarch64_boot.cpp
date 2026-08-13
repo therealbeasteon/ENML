@@ -200,6 +200,19 @@ extern "C" void cookie_kernel_syscall_entry(
 }
 
 extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physical) noexcept {
+    // Vectors first, before any code that can fault. VBAR_EL1 has no
+    // architectural reset value, so until this runs a synchronous exception
+    // vectors to whatever base the implementation happens to start with - on
+    // this board zero, where 0x200 is flash rather than a handler. The machine
+    // then executes flash and the failure presents as a hang with no handler
+    // having run and no halt having been reached, which is exactly how the
+    // M7.5d boot fault hid for as long as it did.
+    //
+    // Installing them here costs one system register write. They stay valid
+    // across the MMU transition because the identity mapping below keeps the
+    // address they point at.
+    if (!os::kernel::aarch64::install_exception_vectors()) halt();
+
     const auto dtb_blob = bounded_dtb(dtb_physical);
     if (dtb_blob.empty()) halt();
 
@@ -309,8 +322,12 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
 
+    // Vectors were installed at entry and survive the transition: VBAR_EL1
+    // holds an address the identity mapping above keeps valid. Reinstalling
+    // here would be harmless but misleading - it would suggest the activation
+    // on the line above ran without a handler, which is the arrangement that
+    // made the M7.5d fault unreportable.
     if (!os::kernel::aarch64::activate_stage1_translation(root.value())) halt();
-    if (!os::kernel::aarch64::install_exception_vectors()) halt();
     uart_write("COOKIE:M7.5d:MMU\n");
 
     os::kernel::MachineContext bootstrap_context{};

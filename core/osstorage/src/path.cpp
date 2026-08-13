@@ -1,6 +1,7 @@
 #include <os/storage/path.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cstddef>
 #include <string_view>
 
@@ -54,6 +55,25 @@ RelativePath::parse(std::string_view text) noexcept {
     std::copy(text.begin(), text.end(), result.storage_.begin());
     result.size_ = static_cast<std::uint16_t>(text.size());
     return result;
+}
+
+os::core::Result<RelativePath>
+join_relative_paths(const RelativePath& parent, const RelativePath& child) noexcept {
+    if (!parent.valid() || !child.valid()) {
+        return storage_error(errors::invalid_path);
+    }
+    const auto parent_view = parent.view();
+    const auto child_view = child.view();
+    if (parent_view.size() + 1U + child_view.size() > max_relative_path_bytes) {
+        return storage_error(errors::path_too_long);
+    }
+
+    std::array<char, max_relative_path_bytes> storage{};
+    std::size_t cursor = 0U;
+    for (char value : parent_view) storage[cursor++] = value;
+    storage[cursor++] = '/';
+    for (char value : child_view) storage[cursor++] = value;
+    return RelativePath::parse(std::string_view(storage.data(), cursor));
 }
 
 } // namespace os::storage
