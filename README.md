@@ -32,18 +32,23 @@ holds the full reference policy.
 | Package and application lifecycle (M1) | Complete |
 | Storage, keys, service broker, runtime session (M2) | Complete |
 | Display, compositor, semantic UI and accessibility (M3) | Complete |
-| Trusted phone shell and product security (M4) | Through M4.10g merged, remainder in flight |
+| Trusted phone shell and product security (M4) | Through M4.15 merged — profile encryption, recovery domains, network blindness, connection admission. Not every M4 exit criterion is verified |
 | Verified boot evidence (M5) | Designed and tested; no platform produces the evidence yet |
 | Device access policy, time protection (M6) | Policy complete; no platform enforces it yet |
-| Cookie Kernel (M7) | Through M7.5a merged — ABI, host-testable core, first real AArch64 machine operations |
+| Cookie Kernel (M7) | Through M7.5d merged — boots on AArch64 under QEMU virt: exception vectors, device tree, hardware discovery, page tables, stage-1 translation, guarded runtime stack |
 
 `docs/ROADMAP.md` is the plan of record from here to a shippable device.
 
-**A caution about "merged".** M4.10h, M7.5b and M7.5c report as merged on GitHub
-but are absent from `main`. Each was merged into a stack parent that had already
-been merged to `main` moments earlier, so the content never arrived. Their
-commits survive in the open stack branches and are recovered by landing those
-stacks. Check ancestry rather than PR state.
+**A caution about "merged".** M4.10h, M7.5b and M7.5c are now in `main`. They
+were not when this file previously said they were: each had been merged into a
+stack parent that had itself reached `main` moments earlier, so the content
+never arrived, and landing the stacks bottom-up is what recovered it. The
+incident is closed; the rule it produced is not, because the same race recurred
+later the same day. **A closed PR is not evidence that its work is in `main`.**
+Check ancestry —
+`git merge-base --is-ancestor origin/<branch> origin/main` settles it in one
+command — because code that never arrived cannot fail a gate, and a green
+workflow will not notice its absence.
 
 Three statements that belong with any claim about Cookie:
 
