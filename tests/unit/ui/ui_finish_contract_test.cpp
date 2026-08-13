@@ -4,11 +4,7 @@
 #include <os/ui/frame_scheduler.hpp>
 #include <os/ui/switcher_composition.hpp>
 
-namespace {
-void require(bool condition) {
-    if (!condition) std::abort();
-}
-} // namespace
+namespace { void require(bool condition) { if (!condition) std::abort(); } }
 
 int main() {
     using namespace os::ui;
@@ -47,14 +43,21 @@ int main() {
     const RenderPressure nominal {};
     const auto smooth_frame = schedule_frame(smooth_120hz, nominal);
 
-    const auto phone_switcher = compose_switcher_scene(tall_phone, smooth_frame);
+    const auto phone_switcher = compose_switcher_scene(tall_phone, smooth_frame, false);
     require(switcher_preview_composition_valid(phone_switcher, tall_phone));
     require(phone_switcher.scene.lanes == 1U);
     require(phone_switcher.visible_previews == 3U);
     require(phone_switcher.selected_task_centered);
     require(phone_switcher.preserve_task_order);
+    require(phone_switcher.return_mode == TaskReturnMode::live_preview);
 
-    const auto fold_switcher = compose_switcher_scene(foldable, smooth_frame);
+    const auto pressured_switcher = compose_switcher_scene(tall_phone, smooth_frame, true);
+    require(switcher_preview_composition_valid(pressured_switcher, tall_phone));
+    require(pressured_switcher.visible_previews == 1U);
+    require(pressured_switcher.return_mode == TaskReturnMode::spatial_handoff);
+    require(pressured_switcher.preserve_task_order);
+
+    const auto fold_switcher = compose_switcher_scene(foldable, smooth_frame, false);
     require(switcher_preview_composition_valid(fold_switcher, foldable));
     require(fold_switcher.scene.lanes == 2U);
     require(fold_switcher.scene.split_around_hinge);
