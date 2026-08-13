@@ -147,9 +147,6 @@ bool end_node(void* opaque, std::size_t depth) noexcept {
         return false;
     }
     if (node.interrupts.empty() || (node.interrupts.size() % 12U) != 0U) {
-        // Initial Cookie GICv3 bring-up supports the standard 3-cell GIC
-        // interrupt specifier. Four-cell PPI partitions remain a later SMP
-        // topology feature and are rejected rather than misdecoded.
         fail(context, arch_timer_discovery_errors::unsupported_interrupt_cells);
         return false;
     }
@@ -162,19 +159,11 @@ bool end_node(void* opaque, std::size_t depth) noexcept {
 
     std::size_t physical_index = 0U;
     if (!node.interrupt_names.empty()) {
-        if (!name_index(node.interrupt_names, "phys", physical_index)) {
-            fail(context, arch_timer_discovery_errors::malformed);
-            return false;
-        }
-        if (physical_index >= count) {
+        if (!name_index(node.interrupt_names, "phys", physical_index) || physical_index >= count) {
             fail(context, arch_timer_discovery_errors::malformed);
             return false;
         }
     } else {
-        // The binding orders secure-physical, non-secure physical, virtual,
-        // hypervisor timers when the secure entry is present. QEMU and common
-        // arm64 firmware use that form. With only two entries the first is the
-        // non-secure physical timer followed by virtual timer.
         physical_index = count >= 3U ? 1U : 0U;
     }
 
@@ -200,13 +189,18 @@ bool end_node(void* opaque, std::size_t depth) noexcept {
             fail(context, arch_timer_discovery_errors::malformed);
             return false;
         }
-        // Extended PPIs begin at INTID 1056 in GICv3.1+.
         context.result.nonsecure_physical_intid = 1056U + number;
     } else {
         fail(context, arch_timer_discovery_errors::unsupported_interrupt_type);
         return false;
     }
-    context.result.trigger_flags = flags;
+
+    if (!architected_timer_trigger_supported(flags)) {
+        fail(context, arch_timer_discovery_errors::unsupported_trigger);
+        return false;
+    }
+    context.result.raw_trigger_flags = flags;
+    context.result.trigger_flags = dt_irq_level_high;
     return true;
 }
 
