@@ -140,6 +140,7 @@ machine_files=(
     "core/oskernel/include/os/kernel/aarch64.hpp"
     "core/oskernel/include/os/kernel/aarch64_entry.hpp"
     "core/oskernel/include/os/kernel/aarch64_exception.hpp"
+    "core/oskernel/include/os/kernel/aarch64_gic_v3.hpp"
     "core/oskernel/include/os/kernel/aarch64_mapping_state.hpp"
     "core/oskernel/include/os/kernel/aarch64_page_tables.hpp"
     "core/oskernel/include/os/kernel/aarch64_translation.hpp"
@@ -147,6 +148,7 @@ machine_files=(
     "core/oskernel/include/os/kernel/machine_aarch64.hpp"
     "core/oskernel/src/aarch64_context_switch.S"
     "core/oskernel/src/aarch64_entry.cpp"
+    "core/oskernel/src/aarch64_gic_v3.cpp"
     "core/oskernel/src/aarch64_translation.cpp"
     "core/oskernel/src/aarch64_vectors.S"
     "core/oskernel/src/aarch64_el0.S"
@@ -154,11 +156,13 @@ machine_files=(
 )
 
 discovery_files=(
+    "core/oskernel/include/os/kernel/arch_timer_discovery.hpp"
     "core/oskernel/include/os/kernel/boot_memory.hpp"
     "core/oskernel/include/os/kernel/boot_memory_plan.hpp"
     "core/oskernel/include/os/kernel/fdt.hpp"
     "core/oskernel/include/os/kernel/gic_v3_discovery.hpp"
     "core/oskernel/include/os/kernel/hardware_inventory.hpp"
+    "core/oskernel/src/arch_timer_discovery.cpp"
     "core/oskernel/src/boot_memory.cpp"
     "core/oskernel/src/boot_memory_plan.cpp"
     "core/oskernel/src/fdt.cpp"
@@ -216,11 +220,22 @@ not_kernel=(
 # forever (entry). None of it is discretionary - a kernel that cannot prove
 # the context it is about to drop into is safe has no business dropping into
 # it.
+#
+# Raised again, by M7.5g: machine 1362 -> 1545, discovery 996 -> 1217,
+# entry 362 -> 411, total 4000 -> 4453. This is the first milestone that
+# delivers a real hardware interrupt to EL0 and returns from it: GICv3
+# redistributor/CPU-interface programming and the lower-EL IRQ entry/return
+# path (machine); bounded DT discovery of the architected timer PPI, needed
+# so the kernel knows which interrupt line to arm without trusting a
+# hardcoded number (discovery); and wiring interrupt admission and the timer
+# into the boot sequence so a return from IRQ has somewhere defined to go
+# (entry). A kernel that can enter EL0 but never preempt it cannot schedule
+# more than one process, so this is load-bearing for M7.5h.
 core_ceiling=1280
-machine_ceiling=1362
-discovery_ceiling=996
-entry_ceiling=362
-total_ceiling=4000
+machine_ceiling=1545
+discovery_ceiling=1217
+entry_ceiling=411
+total_ceiling=4453
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
