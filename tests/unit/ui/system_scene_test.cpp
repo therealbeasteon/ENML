@@ -180,6 +180,40 @@ int main() {
     forged_lock.nodes[1].trusted = false;
     require(!system_scene_composition_valid(forged_lock, tall_phone));
 
+    const auto controls_composition = compose_quick_controls_scene(tall_phone, smooth_frame);
+    require(system_scene_composition_valid(controls_composition, tall_phone));
+    require(controls_composition.columns == 2U);
+    require(controls_composition.lanes == 1U);
+    require(controls_composition.lower_weighted);
+    require(!controls_composition.split_around_hinge);
+    require(controls_composition.nodes[1].role == SystemRegionRole::reachable_actions);
+    require(controls_composition.nodes[1].plane == PlaneRole::control);
+    require(controls_composition.nodes[1].interactive);
+
+    const auto wide_notifications = compose_notification_scene(wide_phone, smooth_frame);
+    require(system_scene_composition_valid(wide_notifications, wide_phone));
+    require(wide_notifications.columns == 2U);
+    require(wide_notifications.lanes == 2U);
+    require(!wide_notifications.newest_near_reach_zone);
+
+    const auto phone_notifications = compose_notification_scene(tall_phone, smooth_frame, true);
+    require(system_scene_composition_valid(phone_notifications, tall_phone));
+    require(phone_notifications.columns == 1U);
+    require(phone_notifications.newest_near_reach_zone);
+    require(phone_notifications.nodes[0].capture_protected);
+    require(phone_notifications.nodes[1].capture_protected);
+
+    const auto fold_controls_composition = compose_quick_controls_scene(foldable, smooth_frame);
+    require(system_scene_composition_valid(fold_controls_composition, foldable));
+    require(fold_controls_composition.columns == 4U);
+    require(fold_controls_composition.lanes == 2U);
+    require(fold_controls_composition.split_around_hinge);
+
+    auto forged_split = controls_composition;
+    forged_split.split_around_hinge = true;
+    forged_split.lanes = 2U;
+    require(!system_scene_composition_valid(forged_split, tall_phone));
+
     FrameTelemetry dragging = smooth_120hz;
     dragging.direct_manipulation_active = true;
     const auto drag_frame = schedule_frame(dragging, nominal);
