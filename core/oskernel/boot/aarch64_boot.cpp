@@ -209,18 +209,26 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     auto fdt = os::kernel::FdtView::parse(dtb_blob);
     if (!fdt) halt_unparsable_fdt();
     auto inventory = os::kernel::discover_hardware(fdt.value());
-    if (!inventory || inventory.value().memory_count == 0U) halt_no_inventory();
+    if (!inventory) halt_no_inventory();
 
     // Publish the UART the moment the device tree names it. Translation is
     // still off, so the physical address is directly addressable, and every
     // failure from here on becomes a reportable stage rather than a silent
-    // halt. Only the three checks above remain mute, which is unavoidable:
-    // until the device tree has been read there is no discovered console to
-    // report through, and hardware neutrality forbids assuming one.
+    // halt. Only the checks above remain mute, which is unavoidable: until the
+    // device tree has been read there is no discovered console to report
+    // through, and hardware neutrality forbids assuming one.
     const auto* uart = find_pl011(inventory.value());
     if (uart == nullptr || !uart->registers.valid()) halt_no_console();
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
+
+    // Checked after the console rather than beside the discovery call. A walk
+    // that succeeds but yields no usable RAM is a different failure from a
+    // walk that could not complete, and it is the one that can be reported:
+    // finding the UART proves the device tree was traversed and that node
+    // discovery works, which narrows the fault to how memory nodes in
+    // particular are recognised.
+    if (inventory.value().memory_count == 0U) fail("NO_MEMORY_NODE");
 
     const auto image_begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(__cookie_image_start));
