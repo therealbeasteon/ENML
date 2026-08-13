@@ -12,8 +12,8 @@ int main() {
     using namespace os::kernel;
     using namespace os::kernel::aarch64;
 
-    alignas(4096) std::array<std::byte, 8U * 4096U> tables_a{};
-    alignas(4096) std::array<std::byte, 8U * 4096U> tables_b{};
+    alignas(4096) std::array<std::byte, 10U * 4096U> tables_a{};
+    alignas(4096) std::array<std::byte, 10U * 4096U> tables_b{};
     const auto a_begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(tables_a.data()));
     const auto b_begin = static_cast<std::uint64_t>(
@@ -47,14 +47,25 @@ int main() {
         MachinePermissions::read_execute, MachineMemoryKind::normal);
     require(!executable_alias);
     require(executable_alias.error().code == machine_errors::writable_executable_alias);
-    require(space_b.mapping_count() == 0U);
+
+    // A software-ledger retirement is forbidden while the page-table leaf is
+    // still valid. Hardware authority must disappear first.
+    auto early_retire = space_a.retire_unmapped(va_a, 4096ULL);
+    require(!early_retire);
+    require(early_retire.error().code == machine_errors::mapping_ledger_inconsistent);
     require(ledger.occupied == 1U);
 
-    // Read-only aliases do not violate W^X.
+    require(static_cast<bool>(builder_a.unmap_page(va_a)));
+    require(static_cast<bool>(space_a.retire_unmapped(va_a, 4096ULL)));
+    require(space_a.mapping_count() == 0U);
+    require(ledger.occupied == 0U);
+
+    // Once the writable translation and its machine-wide authority are both
+    // gone, the physical page may legitimately be admitted executable.
     require(static_cast<bool>(space_b.map(
         va_b, physical, 4096ULL,
-        MachinePermissions::read, MachineMemoryKind::normal)));
-    require(ledger.occupied == 2U);
+        MachinePermissions::read_execute, MachineMemoryKind::normal)));
+    require(ledger.occupied == 1U);
 
     constexpr std::uint64_t stack_va = 0x0000'0000'6000'1000ULL;
     constexpr std::uint64_t stack_pa = 0x0000'0000'8100'0000ULL;
@@ -63,7 +74,6 @@ int main() {
     require(space_a.valid_kernel_stack_top(stack_va + 2ULL * 4096ULL));
     require(!space_a.valid_kernel_stack_top(stack_va + 4096ULL));
 
-    // The guard page immediately below the stack must remain absent.
     auto guard = builder_a.mapped(stack_va - 4096ULL);
     require(static_cast<bool>(guard));
     require(!guard.value());

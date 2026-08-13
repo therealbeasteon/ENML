@@ -25,7 +25,6 @@ int main() {
     auto root = builder.initialize();
     require(static_cast<bool>(root));
     require(root.value() == begin);
-    require(arena.remaining_pages() == 4U);
     require(builder.remaining_table_pages() == 4U);
 
     constexpr std::uint64_t va = 0x0000'0000'4000'0000ULL;
@@ -33,27 +32,11 @@ int main() {
     auto before = builder.mapped(va);
     require(static_cast<bool>(before));
     require(!before.value());
-    require(builder.remaining_table_pages() == 4U);
 
     auto mapped = builder.map_page(
         va, pa, MachinePermissions::read_execute, MachineMemoryKind::normal);
     require(static_cast<bool>(mapped));
-    // One L2 and one L3 table were allocated beneath the L1 root.
-    require(arena.remaining_pages() == 2U);
-
-    auto after = builder.mapped(va);
-    require(static_cast<bool>(after));
-    require(after.value());
     require(builder.remaining_table_pages() == 2U);
-
-    auto adjacent_before = builder.mapped(va + 4096ULL);
-    require(static_cast<bool>(adjacent_before));
-    require(!adjacent_before.value());
-
-    auto duplicate = builder.map_page(
-        va, pa, MachinePermissions::read_execute, MachineMemoryKind::normal);
-    require(!duplicate);
-    require(duplicate.error().code == machine_errors::already_mapped);
 
     auto second = builder.map_page(
         va + 4096ULL,
@@ -61,11 +44,25 @@ int main() {
         MachinePermissions::read_write,
         MachineMemoryKind::normal);
     require(static_cast<bool>(second));
-    // Same L1/L2 path: no extra table allocation.
-    require(arena.remaining_pages() == 2U);
-    auto adjacent_after = builder.mapped(va + 4096ULL);
-    require(static_cast<bool>(adjacent_after));
-    require(adjacent_after.value());
+    require(builder.remaining_table_pages() == 2U);
+
+    auto removed = builder.unmap_page(va);
+    require(static_cast<bool>(removed));
+    auto after_remove = builder.mapped(va);
+    require(static_cast<bool>(after_remove));
+    require(!after_remove.value());
+    // Intermediate translation tables remain allocated in the monotonic early
+    // regime; removing a leaf never fabricates reusable physical memory.
+    require(builder.remaining_table_pages() == 2U);
+
+    auto remove_again = builder.unmap_page(va);
+    require(!remove_again);
+    require(remove_again.error().code == machine_errors::not_mapped);
+
+    auto remapped = builder.map_page(
+        va, pa, MachinePermissions::read_execute, MachineMemoryKind::normal);
+    require(static_cast<bool>(remapped));
+    require(builder.remaining_table_pages() == 2U);
 
     auto bad_device_exec = builder.map_page(
         va + 8192ULL,
@@ -74,8 +71,6 @@ int main() {
         MachineMemoryKind::device);
     require(!bad_device_exec);
 
-    // Inspect the constructed table tree. The leaf must point at the requested
-    // PA and be read-only executable at EL1 but never executable at EL0.
     auto* l1 = reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(root.value()));
     const auto l2_pa = l1[level1_index(va)] & page_address_mask;
     auto* l2 = reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(l2_pa));

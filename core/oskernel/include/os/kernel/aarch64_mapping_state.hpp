@@ -107,9 +107,6 @@ public:
             if (state.value()) return error(machine_errors::already_mapped);
         }
 
-        // All failure-prone admission checks are complete. From here a mapping
-        // failure means the table state changed underneath this single-threaded
-        // early-boot authority or an invariant in the builder was violated.
         for (std::uint64_t page = 0ULL; page < page_count; ++page) {
             auto mapped = builder_->map_page(
                 virtual_base + page * architectural_page_size,
@@ -166,6 +163,67 @@ public:
         return false;
     }
 
+    [[nodiscard]] os::core::Result<NativeMapping> exact_mapping(
+        std::uint64_t virtual_base,
+        std::uint64_t length) const noexcept {
+        if (ledger_ == nullptr || builder_ == nullptr) {
+            return error(machine_errors::address_space_unbound);
+        }
+        for (const auto& mapping : mappings_) {
+            if (mapping.occupied && mapping.virtual_base == virtual_base && mapping.length == length) {
+                return mapping;
+            }
+        }
+        return error(machine_errors::not_mapped);
+    }
+
+    // Retires software authority only after the caller has cleared the hardware
+    // descriptors and completed the architectural TLB invalidation sequence.
+    // Every leaf is re-read here so ordering bugs cannot silently leave a valid
+    // translation after the physical W^X ledger says the mapping is gone.
+    [[nodiscard]] os::core::Result<void> retire_unmapped(
+        std::uint64_t virtual_base,
+        std::uint64_t length) noexcept {
+        if (ledger_ == nullptr || builder_ == nullptr) {
+            return error(machine_errors::address_space_unbound);
+        }
+
+        NativeMapping* local = nullptr;
+        for (auto& mapping : mappings_) {
+            if (mapping.occupied && mapping.virtual_base == virtual_base && mapping.length == length) {
+                local = &mapping;
+                break;
+            }
+        }
+        if (local == nullptr) return error(machine_errors::not_mapped);
+
+        NativePhysicalMapping* physical = nullptr;
+        for (auto& mapping : ledger_->mappings) {
+            if (!mapping.occupied || mapping.owner != this) continue;
+            if (mapping.physical_base == local->physical_base &&
+                mapping.length == local->length &&
+                mapping.permissions == local->permissions) {
+                physical = &mapping;
+                break;
+            }
+        }
+        if (physical == nullptr) return error(machine_errors::mapping_ledger_inconsistent);
+
+        const auto pages = local->length / architectural_page_size;
+        for (std::uint64_t page = 0ULL; page < pages; ++page) {
+            auto still_mapped = builder_->mapped(
+                local->virtual_base + page * architectural_page_size);
+            if (!still_mapped) return still_mapped.error();
+            if (still_mapped.value()) return error(machine_errors::mapping_ledger_inconsistent);
+        }
+
+        *physical = NativePhysicalMapping{};
+        *local = NativeMapping{};
+        --ledger_->occupied;
+        --occupied_;
+        return {};
+    }
+
     [[nodiscard]] std::size_t mapping_count() const noexcept { return occupied_; }
 
 private:
@@ -199,9 +257,6 @@ private:
         return nullptr;
     }
 
-    // Conservative upper bound on translation-table pages needed by a
-    // contiguous mapping: one L2 table per L1 region touched and one L3 table
-    // per L2 region touched. Existing tables only reduce the actual demand.
     [[nodiscard]] static std::size_t required_table_pages(
         std::uint64_t virtual_base,
         std::uint64_t page_count) noexcept {
