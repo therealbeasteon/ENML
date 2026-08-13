@@ -282,7 +282,15 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     debug_checkpoint('6');
     if (!inventory) debug_checkpoint('a');
     if (inventory && inventory.value().memory_count == 0U) debug_checkpoint('b');
-    if (!gic_topology) debug_checkpoint('c');
+    if (!gic_topology) {
+        debug_checkpoint('c');
+        const auto code = gic_topology.error().code;
+        if (code >= 90U && code <= 99U) {
+            debug_checkpoint(static_cast<char>('0' + (code - 90U)));
+        } else {
+            debug_checkpoint('?');
+        }
+    }
     if (!timer) debug_checkpoint('d');
     if (timer && (timer.value().trigger_flags & 0xFU) != 4U) debug_checkpoint('e');
     if (!inventory || inventory.value().memory_count == 0U ||
