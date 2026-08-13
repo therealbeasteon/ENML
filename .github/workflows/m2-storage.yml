@@ -13,31 +13,60 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
       - name: Configure
-        run: cmake --preset host-debug
+        run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
       - name: Build storage gates
         run: >-
           cmake --build --preset host-debug
-          --target storage_private_storage_test storage_protected_format_test storage_service_integration_test storage_service_identity_test
+          --target storage_private_storage_test storage_protected_path_composition_test storage_protected_format_test storage_protected_publication_test storage_protected_atomic_replace_test storage_protected_namespace_test storage_protected_namespace_snapshot_test storage_protected_namespace_crypto_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
           storage_service_quota_test storage_app_manager_restart_test storage_root_revocation_test
           storage_app_uninstall_revocation_test system.storage
           --parallel 2
       - name: Test storage gates
         run: ctest --preset host-debug --output-on-failure -R '^storage_'
 
+  storage-sanitizers:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
+      - name: Configure
+        run: cmake --preset host-asan -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
+      - name: Build storage gates with sanitizers
+        run: >-
+          cmake --build --preset host-asan
+          --target storage_private_storage_test storage_protected_path_composition_test storage_protected_format_test storage_protected_publication_test storage_protected_atomic_replace_test storage_protected_namespace_test storage_protected_namespace_snapshot_test storage_protected_namespace_crypto_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
+          storage_service_quota_test storage_app_manager_restart_test storage_root_revocation_test
+          storage_app_uninstall_revocation_test system.storage
+          --parallel 2
+      - name: Test storage gates with sanitizers
+        run: ctest --preset host-asan --output-on-failure -R '^storage_'
+
   storage-clang:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
-      - name: Configure
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
+      - name: Configure with Clang
         run: >-
           cmake -S . -B build/m2-storage-clang -G Ninja
           -DCMAKE_BUILD_TYPE=Debug -DBUILD_TESTING=ON
+          -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
           -DCMAKE_CXX_COMPILER=clang++
       - name: Build storage gates
         run: >-
           cmake --build build/m2-storage-clang
-          --target storage_private_storage_test storage_protected_format_test storage_service_integration_test storage_service_identity_test
+          --target storage_private_storage_test storage_protected_path_composition_test storage_protected_format_test storage_protected_publication_test storage_protected_atomic_replace_test storage_protected_namespace_test storage_protected_namespace_snapshot_test storage_protected_namespace_crypto_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
           storage_service_quota_test storage_app_manager_restart_test storage_root_revocation_test
           storage_app_uninstall_revocation_test system.storage
           --parallel 2
@@ -50,12 +79,16 @@ jobs:
       - uses: actions/checkout@v4
       - name: Confirm AArch64
         run: test "$(uname -m)" = "aarch64"
+      - name: Install crypto test dependency
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libssl-dev
       - name: Configure
-        run: cmake --preset host-debug
+        run: cmake --preset host-debug -DEMNL_BUILD_OPENSSL_TEST_PROVIDER=ON
       - name: Build storage gates natively
         run: >-
           cmake --build --preset host-debug
-          --target storage_private_storage_test storage_protected_format_test storage_service_integration_test storage_service_identity_test
+          --target storage_private_storage_test storage_protected_path_composition_test storage_protected_format_test storage_protected_publication_test storage_protected_atomic_replace_test storage_protected_namespace_test storage_protected_namespace_snapshot_test storage_protected_namespace_crypto_test storage_protected_crypto_test storage_protected_key_record_test storage_service_integration_test storage_service_identity_test
           storage_service_quota_test storage_app_manager_restart_test storage_root_revocation_test
           storage_app_uninstall_revocation_test system.storage
           --parallel 2
