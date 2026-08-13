@@ -5,7 +5,7 @@ on:
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -32,6 +32,13 @@ jobs:
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-gcc' --preset host-debug
+
+  kernel-line-count:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kernel line-count ceiling
+        run: .github/scripts/kernel-line-count.sh 'kernel-line-count'
 
   kernel-sanitizers:
     runs-on: ubuntu-24.04
@@ -170,6 +177,53 @@ jobs:
           tail -n 80 cookie-qemu-debug.log || true
           if [[ $status -ne 0 && $status -ne 124 ]]; then
             exit "$status"
+          fi
+          cat cookie-qemu.log
+          echo '--- executed blocks, and whether any are in the linked image ---'
+          grep -c '^IN: ' cookie-qemu-debug.log || true
+          grep -m 8 -E '^0x40[0-9a-f]{6}' cookie-qemu-debug.log || echo 'NOTHING EXECUTED AT 0x40xxxxxx'
+          echo '--- first 40 lines of the trace ---'
+          head -n 40 cookie-qemu-debug.log || true
+          # Every executed block, not only those inside the image. Filtering to
+          # 0x40xxxxxx hides the one thing most worth seeing: execution that
+          # left the kernel entirely. A fault taken before VBAR_EL1 is set goes
+          # to whatever the reset value points at, and on this board that is
+          # not an address the image occupies.
+          echo '--- blocks executed OUTSIDE the kernel image ---'
+          grep -oE '^0x[0-9a-f]+' cookie-qemu-debug.log | sort -u \
+            | grep -vE '^0x40[0-9a-f]{6}$' || echo 'none - execution stayed in the image'
+          echo '--- last 30 blocks in execution order ---'
+          grep -oE '^0x[0-9a-f]+' cookie-qemu-debug.log | tail -30 | uniq -c
+          echo '--- executed blocks, resolved ---'
+          elf=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot
+          for pc in $(grep -oE '^0x40[0-9a-f]{6}' cookie-qemu-debug.log | sort -u); do
+            printf '%s  %s\n' "$pc" "$(addr2line -f -C -e "$elf" "$pc" | tr '\n' ' ')"
+          done
+          # The bootstrap stack is fixed at link time and the frames that have
+          # to fit in it are not, so print the largest ones. A frame that
+          # overruns this stack does not fault - translation is off and
+          # .rodata/.text lie below it - so the failure appears as corrupted
+          # code rather than as a stack error.
+          echo '--- largest stack frames in the boot image ---'
+          objdump -d "$elf" | awk '
+            /^[0-9a-f]+ </ { fn=$2 }
+            /sub[ \t]+sp, sp, #/ {
+              n=$NF; sub(/^#/,"",n); sub(/,.*/,"",n);
+              if (n+0 > 512) printf "%8d  %s\n", n, fn
+            }' | sort -rn | head -10
+          echo "bootstrap stack bytes: $(nm "$elf" | awk '
+            /__cookie_bootstrap_stack_start/ { s=strtonum("0x" $1) }
+            /__cookie_bootstrap_stack_top/   { t=strtonum("0x" $1) }
+            END { print t-s }')"
+          echo '--- image extent (note: BSS is not in the .bin QEMU loads) ---'
+          readelf -lW "$elf" | sed -n '/Program Head/,/Section to Segment/p'
+          size -A -d "$elf" | head -20
+          # Report the stage the kernel rejected before reporting the marker it
+          # never printed. A bare grep for the success marker says only that
+          # boot did not finish, which is the one thing already known.
+          if grep -F 'COOKIE:PANIC:' cookie-qemu.log; then
+            echo '--- kernel reported the stage above and halted ---'
+            exit 1
           fi
           grep -F 'COOKIE:M7.5d:MMU' cookie-qemu.log
           grep -F 'COOKIE:M7.5d:GUARDED' cookie-qemu.log

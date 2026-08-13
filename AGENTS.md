@@ -71,12 +71,20 @@ Cookie aims for appliance-like phone behavior, small trusted components, strong 
 - M2.9: shared pidfd-backed boot-scoped `ProcessAuthority`, bounded trusted multi-service `ServiceBroker`, application bootstrap v2 typed service-handle transfer, and one `PeerIdentity` across Storage + Keys.
 - M2.10: long-lived private `PlatformServiceSession`, exact runtime credential validation, bootstrap ServiceId allow-listing, explicit fresh endpoint reacquisition after Storage/Key restart, unchanged boot-scoped identity, stale old capabilities, bounded App Manager servicing, and end-to-end restart/recovery gates.
 - M3.0-M3.2: compositor/surface ownership and trusted scene ordering, typed shared buffers and supervised `system.compositor`, and the bounded semantic UI/accessibility/collections/text/input/raster foundation. M3.2 does not claim a final Unicode/font backend, GPU renderer, trust mark or translucent material implementation.
-- M4.0-M4.10g: trusted phone shell foundation, resource budget gates, fail-closed `Result` discipline, ancillary descriptor hygiene, fuzzing depth, obscured-input and consent-prompt handling, text contrast, coercion-resistant unlock and durable duress profile-root erasure.
+- M4.0-M4.15: trusted phone shell foundation, resource budget gates, fail-closed `Result` discipline, ancillary descriptor hygiene, fuzzing depth, obscured-input and consent-prompt handling, text contrast, coercion-resistant unlock and durable duress profile-root erasure; then boot-bound encrypted profile storage through the protected Storage cutover seam (M4.10i-M4.10t), user-restartable recovery domains, private adaptive networking, demand-driven subsystem leases, the network blindness layer and authenticated connection admission. The M4 code is merged; `docs/ROADMAP.md` Phase 1 records which of its exit criteria are *not* yet met, and the coercion-resistance label remains unearned until its threat model is reviewed.
 - M5.0-M5.6: verified boot state, attestation, sealing, transparency, platform capabilities, CTest diagnostics, fuzz leak detection and `KRG1` fuzzing. M5 designs and tests the boot evidence; no platform produces it yet.
 - M6.0-M6.3: device access policy with confinement that refuses to claim what a platform cannot enforce, time/micro-architectural partition accounting, and the substrate probe. M6 policy is complete; no platform enforces it yet.
-- M7.0-M7.5a: the Cookie Kernel decision and ABI, capability model, scheduler, interrupt dispatch, kernel composition, de-Linux boundary, machine layer, kernel hardening, anonymous attestation, machine-wide W^X ledger and the first real AArch64 machine operations.
+- M7.0-M7.5d: the Cookie Kernel decision and ABI, capability model, scheduler, interrupt dispatch, kernel composition, de-Linux boundary, machine layer, kernel hardening, anonymous attestation, machine-wide W^X ledger, the first real AArch64 machine operations, real exception entry, stage-1 translation, and a standalone boot image. **The kernel boots on QEMU `virt`** — vectors installed, device tree parsed, hardware discovered, page tables built, translation enabled, context switch onto the guarded stack — and the boot gate greps for `COOKIE:M7.5d:MMU` and `COOKIE:M7.5d:GUARDED`. It has never run on physical hardware, has no EL0 process, and is not yet the substrate: Linux is still under the service layer.
 
-**Stranded work — merged on GitHub, absent from `main`.** M4.10h, M7.5b and M7.5c each merged into a stack parent that had *already* been merged to `main` moments earlier, so the content never arrived. PR #32 merged `m4-10g` to `main` at 11:58:17 and PR #33 merged `m4-10h` into `m4-10g` at 11:58:24. The same pattern stranded M7.5b (PR #46) and M7.5c (PR #51). Their commits survive only in the open stack branches — `m4-10i` carries M4.10h, `m7-5d` carries both M7.5b and M7.5c — and are recovered by landing those stacks bottom-up onto `main`. Do not treat a closed PR as evidence that its work is in `main`; check ancestry.
+**A closed PR is not evidence that its work is in `main`. Check ancestry.**
+
+```sh
+git merge-base --is-ancestor origin/<branch> origin/main
+```
+
+This project develops in long stacked PR chains, and merging a child into a parent that has *already* merged to `main` strands the child silently. It has happened five times. M4.10h (PR #33), M7.5b (#46) and M7.5c (#51) each merged into a parent that had just left — PR #32 merged `m4-10g` to `main` at 11:58:17 and PR #33 merged `m4-10h` into `m4-10g` at 11:58:24, so seven seconds decided whether a milestone shipped. All three were recovered by landing the stacks bottom-up and are now genuinely in `main`. The variant is the same defect from the other end: PR #53 (M7.5e) was closed unmerged when its base branch was deleted on merge, and PR #67 was opened against a base that had already merged.
+
+Green CI cannot catch any of this, because code that never arrived cannot fail a gate. **Land stacks bottom-up, and check ancestry before believing a milestone shipped.**
 
 Read `docs/M0_STATUS.md`, `docs/M1_STATUS.md`, `docs/M2_STATUS.md`, `docs/M2_0_PRIVATE_STORAGE.md`, `docs/M2_1_STORAGE_SERVICE.md`, `docs/M2_2_STORAGE_PRODUCT_INTEGRATION.md`, `docs/M2_3_STORAGE_REVOCATION_AND_QUOTAS.md`, `docs/M2_6_KEY_PERSISTENCE.md`, `docs/M2_7_KEY_HIERARCHY.md`, `docs/M2_8_KEY_SERVICE_PRODUCT_INTEGRATION.md`, `docs/M2_9_SERVICE_BROKER.md`, and `docs/M2_10_RUNTIME_SERVICE_SESSION.md` before changing those substrates.
 
@@ -142,9 +150,9 @@ For kernel/BSP work, preserve an upstream-first Linux strategy and small reviewa
 
 ## Current next track: land the backlog, then finish the Cookie Kernel
 
-M0 through M3 are complete. M4, M5 and M6 have merged foundations. The Cookie Kernel exists through M7.5c. Do not keep broadening `ServiceBroker` merely because another global service could be added to it.
+M0 through M3 are complete. M4, M5 and M6 have merged foundations. The Cookie Kernel exists through M7.5d and boots on QEMU `virt`. Do not keep broadening `ServiceBroker` merely because another global service could be added to it.
 
-The immediate obstacle is not design, it is integration. A large body of finished work sits in stacked draft PRs whose stack bases fail on small mechanical defects — a missing enum member, a build target absent from a workflow's target list, a base branch behind `main`. `docs/ROADMAP.md` Phase 0 enumerates them.
+The backlog is landed — Phase 0 is complete and the twenty-seven stacked PRs it describes are in `main`. The obstacle is no longer integration. It is that the merged code has outrun its own exit criteria: `docs/ROADMAP.md` Phase 1 scores three M4 criteria as unmet, and the protected Storage seam M4.10t added is constructed by nothing. Prefer finishing a claim over adding a mechanism.
 
 Required direction, in order:
 

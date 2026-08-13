@@ -24,22 +24,22 @@ int main() {
     using namespace os::kernel::aarch64;
 
     KernelMappingManifest manifest{};
-    require(manifest.add(KernelMappingManifestEntry{
+    require(static_cast<bool>(manifest.add(KernelMappingManifestEntry{
         .virtual_base = 0x4000ULL,
         .physical_base = 0x4000ULL,
         .length = 0x1000ULL,
         .permissions = MachinePermissions::read_execute,
         .kind = MachineMemoryKind::normal,
         .role = KernelMappingRole::ordinary,
-    }));
-    require(manifest.add(KernelMappingManifestEntry{
+    })));
+    require(static_cast<bool>(manifest.add(KernelMappingManifestEntry{
         .virtual_base = 0x8000ULL,
         .physical_base = 0x9000ULL,
         .length = 0x2000ULL,
         .permissions = MachinePermissions::read_write,
         .kind = MachineMemoryKind::normal,
         .role = KernelMappingRole::guarded_stack,
-    }));
+    })));
     require(manifest.size() == 2U);
     require(!manifest.add(KernelMappingManifestEntry{
         .virtual_base = 0xA000ULL,
@@ -68,9 +68,9 @@ int main() {
     EarlyStage1Builder builder_a{arena};
     EarlyStage1Builder builder_b{arena};
     EarlyStage1Builder builder_stale{arena};
-    require(builder_a.initialize());
-    require(builder_b.initialize());
-    require(builder_stale.initialize());
+    require(static_cast<bool>(builder_a.initialize()));
+    require(static_cast<bool>(builder_b.initialize()));
+    require(static_cast<bool>(builder_stale.initialize()));
     auto root_a = TranslationRootSealer::seal(builder_a);
     auto root_b = TranslationRootSealer::seal(builder_b);
     auto root_stale = TranslationRootSealer::seal(builder_stale);
@@ -82,12 +82,12 @@ int main() {
     require(epoch_a && epoch_b);
 
     ProcessTranslationTable translations{};
-    require(translations.bind(1U, epoch_a.value(), root_a.value(), epochs));
-    require(translations.bind(2U, epoch_b.value(), root_b.value(), epochs));
+    require(static_cast<bool>(translations.bind(1U, epoch_a.value(), root_a.value(), epochs)));
+    require(static_cast<bool>(translations.bind(2U, epoch_b.value(), root_b.value(), epochs)));
 
     Scheduler scheduler{};
-    require(scheduler.admit(1U, 4U));
-    require(scheduler.admit(2U, 4U));
+    require(static_cast<bool>(scheduler.admit(1U, 4U)));
+    require(static_cast<bool>(scheduler.admit(2U, 4U)));
 
     ExceptionFrame a{};
     a.elr_el1 = 0x1000U;
@@ -101,15 +101,15 @@ int main() {
     b.x[0] = 0xB0U;
 
     PreemptionCoordinator preemption{};
-    require(preemption.admit_frame(1U, a));
-    require(preemption.admit_frame(2U, b));
+    require(static_cast<bool>(preemption.admit_frame(1U, a)));
+    require(static_cast<bool>(preemption.admit_frame(2U, b)));
 
     ExceptionFrame live{};
     auto start = preemption.start(scheduler, translations, epochs, 1'000'000U, live);
-    require(start);
+    require(static_cast<bool>(start));
     require(start.value().translation.root_physical == root_a.value().root_physical());
     auto start_plan = prepare_execution_universe(start.value());
-    require(start_plan);
+    require(static_cast<bool>(start_plan));
     require(start_plan.value().thread == 1U);
     require(start_plan.value().epoch == epoch_a.value());
     require(start_plan.value().root_physical == root_a.value().root_physical());
@@ -118,11 +118,11 @@ int main() {
     auto to_b = preemption.on_timer(
         scheduler, translations, epochs, start.value().deadline,
         start.value().deadline.absolute_nanoseconds, live);
-    require(to_b);
+    require(static_cast<bool>(to_b));
     require(to_b.value().next == 2U);
     require(to_b.value().translation.root_physical == root_b.value().root_physical());
     auto b_plan = prepare_execution_universe(to_b.value());
-    require(b_plan);
+    require(static_cast<bool>(b_plan));
     require(b_plan.value().thread == 2U);
     require(b_plan.value().epoch == epoch_b.value());
     require(live.x[0] == 0xB0U);
@@ -131,18 +131,18 @@ int main() {
     auto to_a = preemption.on_timer(
         scheduler, translations, epochs, to_b.value().deadline,
         to_b.value().deadline.absolute_nanoseconds, live);
-    require(to_a);
+    require(static_cast<bool>(to_a));
     require(to_a.value().next == 1U);
     require(live.x[0] == 0xA55AU);
 
-    require(scheduler.update(2U, false, 4U));
+    require(static_cast<bool>(scheduler.update(2U, false, 4U)));
     auto final = preemption.on_timer(
         scheduler, translations, epochs, to_a.value().deadline,
         to_a.value().deadline.absolute_nanoseconds, live);
-    require(final);
+    require(static_cast<bool>(final));
     require(!final.value().deadline.active);
     auto final_plan = prepare_execution_universe(final.value());
-    require(final_plan);
+    require(static_cast<bool>(final_plan));
     require(!final_plan.value().deadline.active);
 
     auto mismatched = final.value();
@@ -151,19 +151,20 @@ int main() {
 
     AddressSpaceEpochAuthority stale_epochs{};
     auto stale_epoch = stale_epochs.acquire();
-    require(stale_epoch);
+    require(static_cast<bool>(stale_epoch));
     ProcessTranslationTable stale_translations{};
-    require(stale_translations.bind(7U, stale_epoch.value(), root_stale.value(), stale_epochs));
-    require(stale_epochs.begin_retire(stale_epoch.value()));
+    require(static_cast<bool>(
+        stale_translations.bind(7U, stale_epoch.value(), root_stale.value(), stale_epochs)));
+    require(static_cast<bool>(stale_epochs.begin_retire(stale_epoch.value())));
 
     Scheduler stale_scheduler{};
-    require(stale_scheduler.admit(7U, 4U));
+    require(static_cast<bool>(stale_scheduler.admit(7U, 4U)));
     PreemptionCoordinator stale_preemption{};
     ExceptionFrame stale_frame{};
     stale_frame.elr_el1 = 0x7000U;
     stale_frame.sp_el0 = 0xA000U;
     stale_frame.spsr_el1 = 0U;
-    require(stale_preemption.admit_frame(7U, stale_frame));
+    require(static_cast<bool>(stale_preemption.admit_frame(7U, stale_frame)));
 
     ExceptionFrame untouched{};
     untouched.elr_el1 = 0xDEADU;

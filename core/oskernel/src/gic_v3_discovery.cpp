@@ -128,8 +128,24 @@ bool property(
     auto& node = context.nodes[depth];
 
     if (name == "#address-cells" || name == "#size-cells") {
+        if (value.size() != 4U) {
+            fail(context, gic_v3_discovery_errors::unsupported_cells);
+            return false;
+        }
+        // Accept the range the format actually uses, not the range this reader
+        // can represent. Zero is legal and common - /cpus carries
+        // #size-cells = <0> in every ARM device tree, because a CPU's reg is
+        // an identifier rather than a range - and three is what PCI declares,
+        // since a PCI address is three cells. QEMU virt has both, and this
+        // walker visits the whole tree looking for the one arm,gic-v3 node.
+        //
+        // Cells wider than two are recorded and then rejected only if the
+        // node they describe turns out to be the GIC itself, in end_node
+        // below. Refusing them here failed the whole walk over a bus this
+        // parser has no interest in - the M7.5d lesson recurring in a second
+        // DTB walker that hadn't learned it yet.
         std::uint32_t raw = 0U;
-        if (value.size() != 4U || !read_be32(value, 0U, raw) || raw == 0U || raw > 2U) {
+        if (!read_be32(value, 0U, raw) || raw > 4U) {
             fail(context, gic_v3_discovery_errors::unsupported_cells);
             return false;
         }

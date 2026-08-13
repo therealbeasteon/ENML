@@ -61,6 +61,8 @@ int main() {
     require(static_cast<bool>(after_remove));
     require(!after_remove.value());
 
+    // Intermediate translation tables remain allocated in the monotonic early
+    // regime; removing a leaf never fabricates reusable physical memory.
     const auto table_pages_after_remove = builder.remaining_table_pages();
     auto remove_again = builder.unmap_page(va);
     require(!remove_again);
@@ -104,7 +106,8 @@ int main() {
     require((user_leaf & descriptor::privileged_execute_never) != 0ULL);
     require((user_leaf & descriptor::unprivileged_execute_never) == 0ULL);
 
-    require(builder.seal());
+    // A process translation root becomes immutable before it is executable.
+    require(static_cast<bool>(builder.seal()));
     require(builder.executable_process_root());
     require(!builder.sealed_kernel_root());
     require(!builder.map_user_page(
@@ -115,14 +118,14 @@ int main() {
 
     EarlyStage1Builder other{arena};
     auto other_root = other.initialize();
-    require(other_root);
+    require(static_cast<bool>(other_root));
     require(other_root.value() != root.value());
     constexpr std::uint64_t other_user_pa = 0x0000'0000'8300'0000ULL;
-    require(other.map_user_page(
+    require(static_cast<bool>(other.map_user_page(
         user_va,
         other_user_pa,
-        MachinePermissions::read_execute));
-    require(other.seal());
+        MachinePermissions::read_execute)));
+    require(static_cast<bool>(other.seal()));
     require(other.executable_process_root());
 
     auto* other_l1 = reinterpret_cast<std::uint64_t*>(
@@ -136,15 +139,15 @@ int main() {
 
     EarlyStage1Builder kernel_builder{arena, Stage1Region::upper};
     auto kernel_root = kernel_builder.initialize();
-    require(kernel_root);
+    require(static_cast<bool>(kernel_root));
     require(kernel_builder.region() == Stage1Region::upper);
     constexpr std::uint64_t kernel_va = kernel_virtual_base + 0x0020'0000ULL;
     constexpr std::uint64_t kernel_pa = 0x0000'0000'8400'0000ULL;
-    require(kernel_builder.map_page(
+    require(static_cast<bool>(kernel_builder.map_page(
         kernel_va,
         kernel_pa,
         MachinePermissions::read_execute,
-        MachineMemoryKind::normal));
+        MachineMemoryKind::normal)));
     require(!kernel_builder.map_page(
         user_va,
         kernel_pa + architectural_page_size,
@@ -156,7 +159,7 @@ int main() {
         MachinePermissions::read_write);
     require(!upper_user_attempt);
     require(upper_user_attempt.error().code == translation_root_errors::wrong_region);
-    require(kernel_builder.seal());
+    require(static_cast<bool>(kernel_builder.seal()));
     require(kernel_builder.sealed_kernel_root());
     require(!kernel_builder.executable_process_root());
 
@@ -170,9 +173,11 @@ int main() {
     require((kernel_leaf & page_address_mask) == kernel_pa);
     require((kernel_leaf & (3ULL << 6U)) == descriptor::ap_el1_ro_el0_none);
 
-    require(builder.begin_retire());
+    // Teardown is an explicit lifecycle transition. Only after begin_retire()
+    // can leaf mappings be destructively removed.
+    require(static_cast<bool>(builder.begin_retire()));
     require(builder.lifecycle() == EarlyStage1Builder::Lifecycle::retiring);
-    require(builder.unmap_page(user_va));
+    require(static_cast<bool>(builder.unmap_page(user_va)));
     auto retired_user = builder.mapped(user_va);
     require(retired_user && !retired_user.value());
 

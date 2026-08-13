@@ -73,6 +73,10 @@ enum class Stage1Region : std::uint8_t {
     upper = 1U,
 };
 
+// Page-only stage-1 table builder used before the general VM subsystem exists.
+// Intermediate table pages are monotonic in the early regime: leaf mappings can
+// be removed, but empty L2/L3 table pages are not reclaimed until the general
+// physical allocator owns page-table lifetime.
 class EarlyStage1Builder final {
 public:
     enum class Lifecycle : std::uint8_t {
@@ -183,6 +187,10 @@ public:
         return ((*leaf.value()) & descriptor::valid) != 0ULL;
     }
 
+    // Clears exactly one level-3 page descriptor. This deliberately performs no
+    // TLBI: architectural invalidation belongs to the machine layer, which must
+    // order descriptor writes and TLB invalidation with DSB/ISB. Separating the
+    // table mutation from CPU invalidation makes that ordering explicit.
     [[nodiscard]] os::core::Result<void> unmap_page(std::uint64_t virtual_address) noexcept {
         if (lifecycle_ == Lifecycle::sealed) {
             return os::core::make_error(os::core::ErrorDomain::kernel, translation_root_errors::sealed);
