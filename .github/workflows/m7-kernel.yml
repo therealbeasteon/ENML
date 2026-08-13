@@ -130,6 +130,12 @@ jobs:
           objdump -d --start-address="$entry" --stop-address=$((entry + 0x120)) "$elf" || true
           echo '--- cookie_aarch64_boot_main prologue ---'
           objdump -d --start-address="$boot_main" --stop-address=$((boot_main + 0x100)) "$elf" || true
+          echo '--- reject accidental FP/SIMD before kernel context support exists ---'
+          if objdump -d "$elf" | grep -Eq '\b(q[0-9]+|v[0-9]+\.)\b'; then
+            echo 'freestanding Cookie kernel unexpectedly contains FP/SIMD register use' >&2
+            objdump -d "$elf" | grep -E '\b(q[0-9]+|v[0-9]+\.)\b' | head -n 40 >&2 || true
+            exit 1
+          fi
           stat -c 'raw-image-bytes=%s' "$image"
       - name: Boot Cookie Kernel as bare-metal ELF and prove isolated EL0 native IPC under QEMU virt GICv3
         shell: bash
