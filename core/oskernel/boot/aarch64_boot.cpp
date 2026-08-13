@@ -287,6 +287,14 @@ extern "C" void cookie_kernel_syscall_entry(
         const auto now = os::kernel::machine_monotonic_nanoseconds();
         auto rescheduled = boot_preemption.reschedule(
             boot_scheduler, boot_translations, boot_epochs, now, *frame);
+        if (!rescheduled) uart_write("COOKIE:DIAG:RESCHED_ERR\n");
+        if (rescheduled && rescheduled.value().next != process_a_thread) {
+            uart_write(rescheduled.value().next == process_b_thread
+                ? "COOKIE:DIAG:RESCHED_NEXT_IS_B\n"
+                : "COOKIE:DIAG:RESCHED_NEXT_OTHER\n");
+        }
+        if (rescheduled && rescheduled.value().switched) uart_write("COOKIE:DIAG:RESCHED_SWITCHED\n");
+        if (rescheduled && !rescheduled.value().deadline.active) uart_write("COOKIE:DIAG:RESCHED_NO_DEADLINE\n");
         if (!rescheduled || rescheduled.value().next != process_a_thread ||
             rescheduled.value().switched || !rescheduled.value().deadline.active ||
             !commit_result(rescheduled.value(), now)) {
