@@ -54,6 +54,70 @@ target_compile_options(kernel_aarch64_contract_test PRIVATE
 add_test(NAME kernel_aarch64_contract_test COMMAND kernel_aarch64_contract_test)
 set_tests_properties(kernel_aarch64_contract_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_aarch64_exception_test aarch64_exception_test.cpp)
+target_link_libraries(kernel_aarch64_exception_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_exception_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_exception_test COMMAND kernel_aarch64_exception_test)
+set_tests_properties(kernel_aarch64_exception_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_aarch64_translation_test aarch64_translation_test.cpp)
+target_link_libraries(kernel_aarch64_translation_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_translation_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_translation_test COMMAND kernel_aarch64_translation_test)
+set_tests_properties(kernel_aarch64_translation_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_aarch64_page_tables_test aarch64_page_tables_test.cpp)
+target_link_libraries(kernel_aarch64_page_tables_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_page_tables_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_page_tables_test COMMAND kernel_aarch64_page_tables_test)
+set_tests_properties(kernel_aarch64_page_tables_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_aarch64_mapping_state_test aarch64_mapping_state_test.cpp)
+target_link_libraries(kernel_aarch64_mapping_state_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_mapping_state_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_mapping_state_test COMMAND kernel_aarch64_mapping_state_test)
+set_tests_properties(kernel_aarch64_mapping_state_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_fdt_test fdt_test.cpp)
+target_link_libraries(kernel_fdt_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_fdt_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_fdt_test COMMAND kernel_fdt_test)
+set_tests_properties(kernel_fdt_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_hardware_inventory_test hardware_inventory_test.cpp)
+target_link_libraries(kernel_hardware_inventory_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_hardware_inventory_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_hardware_inventory_test COMMAND kernel_hardware_inventory_test)
+set_tests_properties(kernel_hardware_inventory_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_boot_memory_test boot_memory_test.cpp)
+target_link_libraries(kernel_boot_memory_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_boot_memory_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_boot_memory_test COMMAND kernel_boot_memory_test)
+set_tests_properties(kernel_boot_memory_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_boot_memory_plan_test boot_memory_plan_test.cpp)
+target_link_libraries(kernel_boot_memory_plan_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_boot_memory_plan_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_boot_memory_plan_test COMMAND kernel_boot_memory_plan_test)
+set_tests_properties(kernel_boot_memory_plan_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_composition_test kernel_test.cpp)
 target_link_libraries(kernel_composition_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_composition_test PRIVATE
