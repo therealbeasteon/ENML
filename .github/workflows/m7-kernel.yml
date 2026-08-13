@@ -74,8 +74,8 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          elf=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot
-          test -s "$elf"
+          image=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot.bin
+          test -s "$image"
           set +e
           timeout 12s qemu-system-aarch64 \
             -machine virt,virtualization=off \
@@ -85,7 +85,7 @@ jobs:
             -monitor none \
             -d cpu_reset,guest_errors,int,in_asm \
             -D cookie-qemu-debug.log \
-            -device loader,file="$elf",cpu-num=0 >cookie-qemu.log 2>&1
+            -kernel "$image" >cookie-qemu.log 2>&1
           status=$?
           set -e
           if [[ $status -ne 0 && $status -ne 124 ]]; then
