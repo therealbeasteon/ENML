@@ -130,8 +130,18 @@ bool property(
             fail(context, hardware_inventory_errors::invalid_property);
             return false;
         }
+        // Accept the range the format actually uses, not the range this reader
+        // can represent. Zero is legal and common - /cpus carries
+        // #size-cells = <0> in every ARM device tree, because a CPU's reg is
+        // an identifier rather than a range - and three is what PCI declares,
+        // since a PCI address is three cells. QEMU virt has both.
+        //
+        // Cells wider than two are recorded and then skipped at the reg site
+        // below. Refusing them here failed the whole walk over a bus this
+        // kernel has no interest in enumerating, and took the memory nodes
+        // with it.
         std::uint32_t raw = 0U;
-        if (!read_be32(value, 0U, raw) || raw == 0U || raw > 2U) {
+        if (!read_be32(value, 0U, raw) || raw > 4U) {
             fail(context, hardware_inventory_errors::unsupported_cells);
             return false;
         }
@@ -171,10 +181,23 @@ bool property(
     }
 
     if (name == "reg") {
-        if (node.parent_address_cells == 0U || node.parent_address_cells > 2U ||
-            node.parent_size_cells == 0U || node.parent_size_cells > 2U) {
-            fail(context, hardware_inventory_errors::unsupported_cells);
-            return false;
+        // A reg this reader cannot express as a 64-bit base and size is not a
+        // malformed reg, it is one describing something else. Two cases:
+        //
+        // No address cells or no size cells - /cpus/cpu@0 has reg = <0> under
+        // #size-cells = <0>, where the zero is an identifier, not a range.
+        //
+        // More than two cells - a PCI child under #address-cells = <3>, whose
+        // address encodes bus/device/function and space alongside the address.
+        // Decoding that is PCI enumeration, which belongs to a user-space
+        // driver under M6.0 and not to the kernel's boot inventory.
+        //
+        // Both leave has_reg false, so the node is recorded as neither memory
+        // nor device, and the walk continues. Failing instead rejected trees
+        // that are correct and lost the memory nodes that came after them.
+        if (node.parent_address_cells == 0U || node.parent_size_cells == 0U ||
+            node.parent_address_cells > 2U || node.parent_size_cells > 2U) {
+            return true;
         }
         const std::size_t range_bytes =
             static_cast<std::size_t>(node.parent_address_cells + node.parent_size_cells) * 4U;
@@ -226,8 +249,19 @@ bool end_node(void* opaque, std::size_t depth) noexcept {
     if (node.compatible_size != 0U && node.has_reg && !node.memory &&
         !node.inside_reserved_memory && !node.reserved_memory_root) {
         if (context.inventory.device_count >= context.inventory.devices.size()) {
-            fail(context, hardware_inventory_errors::inventory_exhausted);
-            return false;
+            // Record the truncation and keep walking. A full device table is a
+            // capacity limit on an informational list, not a failure of the
+            // walk, and aborting here abandoned the memory and reservation
+            // ranges that had not been visited yet - so a board with more
+            // devices than the table holds reported "no RAM". QEMU virt alone
+            // publishes thirty-two virtio-mmio nodes before its other
+            // peripherals, which is the whole table.
+            //
+            // Not silent: devices_truncated is part of the inventory, so a
+            // caller that needs a device it cannot find can tell the
+            // difference between absent and dropped.
+            context.inventory.devices_truncated = true;
+            return true;
         }
         auto& device = context.inventory.devices[context.inventory.device_count++];
         device.compatible = node.compatible;

@@ -348,6 +348,16 @@ extern "C" void cookie_aarch64_irq_dispatch(
 }
 
 extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physical) noexcept {
+    // Vectors first, before any code that can fault. VBAR_EL1 has no
+    // architectural reset value, so before this write a synchronous fault
+    // vectors to physical 0x200 - flash on this board, not a handler - and the
+    // machine executes flash. That is how the M7.5d boot fault stayed
+    // invisible: nothing halted, because nothing reached a halt.
+    //
+    // They stay valid across the MMU transition because the identity mapping
+    // built below keeps the address they point at.
+    if (!os::kernel::aarch64::install_exception_vectors()) halt();
+
     const auto dtb_blob = bounded_dtb(dtb_physical);
     if (dtb_blob.empty()) halt();
 
@@ -523,8 +533,10 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
 
-    if (!os::kernel::aarch64::activate_stage1_translation(boot_root.value()) ||
-        !os::kernel::aarch64::install_exception_vectors()) halt();
+    // Vectors already installed at entry; reinstalling here would imply the
+    // activation on this line ran without a handler, which is the arrangement
+    // that made the M7.5d fault unreportable.
+    if (!os::kernel::aarch64::activate_stage1_translation(boot_root.value())) halt();
     uart_write("COOKIE:M7.5d:MMU\n");
 
     auto gic = os::kernel::aarch64::initialize_gic_v3_primary_cpu(

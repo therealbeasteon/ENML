@@ -49,7 +49,13 @@ struct DiscoveredDevice final {
 struct HardwareInventory final {
     static constexpr std::size_t max_memory_regions = 8U;
     static constexpr std::size_t max_reserved_regions = 16U;
-    static constexpr std::size_t max_devices = 32U;
+    // 64, not 32. QEMU virt publishes thirty-two virtio-mmio nodes and then
+    // its UART, RTC, GPIO, interrupt controller, timer and PCIe host - so a
+    // 32-entry table filled before reaching the console on the one board this
+    // is tested against. A physical phone SoC has more nodes again, not fewer.
+    // The table stays bounded and truncation stays observable; only the
+    // constant moved.
+    static constexpr std::size_t max_devices = 64U;
 
     std::array<HardwareRange, max_memory_regions> memory {};
     std::size_t memory_count {0U};
@@ -58,6 +64,10 @@ struct HardwareInventory final {
     std::array<HardwareRange, max_reserved_regions> reserved {};
     std::size_t reserved_count {0U};
     std::array<DiscoveredDevice, max_devices> devices {};
+    // Set when the device table filled and later compatible nodes were not
+    // recorded. The walk still completes, because memory and reservation
+    // ranges matter to boot and an informational device list does not.
+    bool devices_truncated {false};
     std::size_t device_count {0U};
 };
 

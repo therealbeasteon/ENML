@@ -47,10 +47,22 @@ _start:
 
 .size _start, .-_start
 
+// The bootstrap stack is the only stack in existence until the guarded stack
+// is mapped, and cookie_aarch64_boot_main is a large frame: the debug build
+// the QEMU gate uses allocates every local in that function at entry -
+// hardware inventory, memory plan, page arena, table builder, address space,
+// physical ledger and two machine contexts - before the first call is made.
+// Below this region lies .rodata and then .text, so a frame that does not fit
+// does not fault. With translation still off it writes over the kernel's own
+// code and the machine executes whatever that leaves behind.
+//
+// 64 KiB rather than 16. This is sized for the debug build deliberately: the
+// gate that has to catch a stack problem is the one that runs the largest
+// frames, so the release build being comfortable is not the question.
 .section .bss.boot_stack, "aw", %nobits
 .align 12
 .global __cookie_bootstrap_stack_start
 __cookie_bootstrap_stack_start:
-    .skip 16384
+    .skip 65536
 .global __cookie_bootstrap_stack_top
 __cookie_bootstrap_stack_top:
