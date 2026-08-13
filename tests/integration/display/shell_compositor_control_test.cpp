@@ -12,6 +12,8 @@
 #include <os/display/error.hpp>
 #include <os/display/shell_control.hpp>
 #include <os/ipc/constants.hpp>
+#include <os/package/package.hpp>
+#include <os/shell/compositor_client.hpp>
 
 namespace {
 
@@ -28,6 +30,18 @@ constexpr os::core::PeerIdentity app_two{
     os::core::UserId{7U},
     os::core::ProcessId{201U},
 };
+
+os::package::ApplicationIdentity shell_application_identity() {
+    auto package = os::package::PackageId::parse("com.enml.shell.transport");
+    assert(package);
+    os::package::SignerLineageId signer{};
+    signer.bytes[0] = std::byte{0x51};
+    assert(signer.valid());
+    return os::package::ApplicationIdentity{
+        .package_id = package.value(),
+        .signer_lineage = signer,
+    };
+}
 
 class TestIdentityResolver final : public os::ipc::PeerIdentityResolver {
 public:
@@ -106,8 +120,9 @@ int main() {
     };
     assert(server.valid());
 
-    // Exact authenticated shell activation succeeds and changes only stack
-    // order; application identity/ownership remains compositor-authored.
+    // Exact authenticated activation travels through the same revision-bound
+    // ShellActivationIntent commit seam that the real shell uses. The client
+    // owns only wire transport; semantic stale-state checks happen before IPC.
     auto trusted_pair_result = os::ipc::Channel::create_local_pair();
     assert(trusted_pair_result);
     auto trusted_pair = std::move(trusted_pair_result).value();
@@ -115,9 +130,32 @@ int main() {
     assert(trusted_child >= 0);
     if (trusted_child == 0) {
         trusted_pair[0].close();
-        os::display::ShellCompositorControlClient client{trusted_pair[1]};
+        os::shell::ShellCompositorClient client{trusted_pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> scratch{};
-        auto activated = client.activate_exact(app_one, first.id, scratch);
+
+        os::shell::ShellSnapshot snapshot{};
+        snapshot.revision = os::shell::ShellRevision{7U};
+        snapshot.view = os::shell::ShellView::application;
+        snapshot.active_instance = os::core::ApplicationInstanceId{11U};
+        snapshot.task_count = 1U;
+        snapshot.tasks[0] = os::shell::ShellTask{
+            .instance = snapshot.active_instance,
+            .application = shell_application_identity(),
+            .owner = app_one,
+            .root_surface = first.id,
+            .activation_serial = 1U,
+        };
+        auto intent = os::shell::make_activation_intent(snapshot);
+        if (!intent) ::_exit(19);
+        os::shell::ShellCompositorActivationContext activation{
+            .client = &client,
+            .scratch = scratch,
+        };
+        auto backend = os::shell::shell_compositor_activation_backend(activation);
+        auto activated = os::shell::commit_activation_intent(
+            snapshot,
+            intent.value(),
+            backend);
         if (!activated) ::_exit(20);
         ::_exit(0);
     }
@@ -143,7 +181,7 @@ int main() {
     assert(ordinary_child >= 0);
     if (ordinary_child == 0) {
         denied_pair[0].close();
-        os::display::ShellCompositorControlClient client{denied_pair[1]};
+        os::shell::ShellCompositorClient client{denied_pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> child_scratch{};
         auto denied = client.activate_exact(app_two, second.id, child_scratch);
         if (denied || denied.error().domain != os::core::ErrorDomain::service ||
@@ -170,7 +208,7 @@ int main() {
     assert(mismatch_child >= 0);
     if (mismatch_child == 0) {
         mismatch_pair[0].close();
-        os::display::ShellCompositorControlClient client{mismatch_pair[1]};
+        os::shell::ShellCompositorClient client{mismatch_pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> child_scratch{};
         auto mismatch = client.activate_exact(app_one, second.id, child_scratch);
         if (mismatch || mismatch.error().domain != os::core::ErrorDomain::display ||
@@ -197,7 +235,7 @@ int main() {
     assert(stale_child >= 0);
     if (stale_child == 0) {
         stale_pair[0].close();
-        os::display::ShellCompositorControlClient client{stale_pair[1]};
+        os::shell::ShellCompositorClient client{stale_pair[1]};
         std::array<std::byte, os::ipc::max_wire_packet_size> child_scratch{};
         auto stale = client.activate_exact(app_one, stale_surface, child_scratch);
         if (stale || stale.error().domain != os::core::ErrorDomain::display ||

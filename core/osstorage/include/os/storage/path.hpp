@@ -37,4 +37,12 @@ private:
     std::uint16_t size_ {0U};
 };
 
+// Compose two already-confined relative paths into one canonical path within
+// the same private root. This is used by the protected namespace so a child
+// directory capability cannot accidentally reinterpret "file" as a root-level
+// object. The result is reparsed through the normal path validator rather than
+// constructing a RelativePath by privileged field access.
+[[nodiscard]] os::core::Result<RelativePath>
+join_relative_paths(const RelativePath& parent, const RelativePath& child) noexcept;
+
 } // namespace os::storage

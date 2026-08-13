@@ -108,6 +108,12 @@ private:
     [[nodiscard]] os::core::Result<ProviderKeyReference>
     install_key(os::core::ByteSpan key_material) noexcept;
 
+    // Key material creation with no purpose policy of its own. Both entry
+    // points check first and then call this; neither the flat nor the
+    // root-scoped admission rule lives here, so widening one cannot silently
+    // widen the other.
+    [[nodiscard]] os::core::Result<ProviderKeyReference> generate_material() noexcept;
+
     [[nodiscard]] RootSlot* resolve_root(RootKeyReference reference) noexcept;
     [[nodiscard]] const RootSlot* resolve_root(RootKeyReference reference) const noexcept;
     [[nodiscard]] static RootKeyReference make_root_reference(
