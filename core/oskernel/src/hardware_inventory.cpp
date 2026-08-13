@@ -130,13 +130,18 @@ bool property(
             fail(context, hardware_inventory_errors::invalid_property);
             return false;
         }
-        // Zero is legal and common, not malformed. A bus whose children have
-        // no address or no size declares it that way, and every ARM device
-        // tree does: /cpus carries #size-cells = <0> because a CPU's reg is an
-        // identifier rather than a range. Rejecting zero here failed the walk
-        // on conformant input before it reached the memory nodes.
+        // Accept the range the format actually uses, not the range this reader
+        // can represent. Zero is legal and common - /cpus carries
+        // #size-cells = <0> in every ARM device tree, because a CPU's reg is
+        // an identifier rather than a range - and three is what PCI declares,
+        // since a PCI address is three cells. QEMU virt has both.
+        //
+        // Cells wider than two are recorded and then skipped at the reg site
+        // below. Refusing them here failed the whole walk over a bus this
+        // kernel has no interest in enumerating, and took the memory nodes
+        // with it.
         std::uint32_t raw = 0U;
-        if (!read_be32(value, 0U, raw) || raw > 2U) {
+        if (!read_be32(value, 0U, raw) || raw > 4U) {
             fail(context, hardware_inventory_errors::unsupported_cells);
             return false;
         }
@@ -176,17 +181,22 @@ bool property(
     }
 
     if (name == "reg") {
-        if (node.parent_address_cells > 2U || node.parent_size_cells > 2U) {
-            fail(context, hardware_inventory_errors::unsupported_cells);
-            return false;
-        }
-        // A reg under a parent declaring no address or no size cells does not
-        // describe a hardware range - /cpus/cpu@0 has reg = <0> under
-        // #size-cells = <0>, and that zero is an identifier. Leave has_reg
-        // false so the node is neither recorded as memory nor as a device, and
-        // keep walking. Treating it as an error rejected trees that are
-        // correct.
-        if (node.parent_address_cells == 0U || node.parent_size_cells == 0U) {
+        // A reg this reader cannot express as a 64-bit base and size is not a
+        // malformed reg, it is one describing something else. Two cases:
+        //
+        // No address cells or no size cells - /cpus/cpu@0 has reg = <0> under
+        // #size-cells = <0>, where the zero is an identifier, not a range.
+        //
+        // More than two cells - a PCI child under #address-cells = <3>, whose
+        // address encodes bus/device/function and space alongside the address.
+        // Decoding that is PCI enumeration, which belongs to a user-space
+        // driver under M6.0 and not to the kernel's boot inventory.
+        //
+        // Both leave has_reg false, so the node is recorded as neither memory
+        // nor device, and the walk continues. Failing instead rejected trees
+        // that are correct and lost the memory nodes that came after them.
+        if (node.parent_address_cells == 0U || node.parent_size_cells == 0U ||
+            node.parent_address_cells > 2U || node.parent_size_cells > 2U) {
             return true;
         }
         const std::size_t range_bytes =
