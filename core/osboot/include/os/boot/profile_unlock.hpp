@@ -47,7 +47,12 @@ inline constexpr std::uint32_t destruction_pending = 5U;
 } // namespace profile_unlock_errors
 
 [[nodiscard]] constexpr os::core::Error profile_unlock_error(std::uint32_t code) noexcept {
-    return os::core::make_error(os::core::ErrorDomain::boot, 0x500U + code);
+    // Boot is security-domain evidence, not a storage or ipc fault, and the
+    // rest of osboot already reports in that domain. The 0x500 offset keeps
+    // this module's codes distinct within it; adding an ErrorDomain member
+    // instead would change a wire-visible discriminant that existing peers
+    // are required to reject.
+    return os::core::make_error(os::core::ErrorDomain::security, 0x500U + code);
 }
 
 // Policy gate for releasing a credential-encrypted profile key after boot.
