@@ -5,7 +5,7 @@ on:
   pull_request:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.event.pull_request.head.sha || github.sha }}
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.event.pull_request.head.sha || github.sha }}
   cancel-in-progress: true
 
 jobs:
@@ -30,6 +30,13 @@ jobs:
           kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-gcc' --preset host-debug
+
+  kernel-line-count:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Kernel line-count ceiling
+        run: .github/scripts/kernel-line-count.sh 'kernel-line-count'
 
   kernel-sanitizers:
     runs-on: ubuntu-24.04

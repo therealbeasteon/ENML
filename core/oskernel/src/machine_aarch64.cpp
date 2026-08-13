@@ -33,6 +33,10 @@ namespace {
 }
 
 void invalidate_stage1_pages(std::uint64_t virtual_base, std::uint64_t page_count) noexcept {
+    // Break-before-make / teardown ordering for the current TTBR0_EL1 regime:
+    // make descriptor clears visible first, invalidate each VA for all ASIDs in
+    // the inner-shareable domain, then synchronize completion before execution
+    // can continue using the retired authority.
     asm volatile("dsb ishst" ::: "memory");
     for (std::uint64_t page = 0ULL; page < page_count; ++page) {
         const std::uint64_t operand =
@@ -126,6 +130,9 @@ os::core::Result<void> aarch64_validate_user_context(
 }
 
 os::core::Result<void> machine_release_address_space(MachineAddressSpace& space) noexcept {
+    // Bulk release waits until the scheduler/process lifetime layer can prove no
+    // CPU is executing in this space. Individual mappings now have real TLBI-
+    // backed teardown through machine_unmap().
     (void)space;
     return machine_error(machine_errors::unsupported);
 }
@@ -219,6 +226,9 @@ os::core::Result<void> machine_unmap(
         if (!state.value()) return machine_error(machine_errors::mapping_ledger_inconsistent);
     }
 
+    // No recoverable failures remain after this boundary. A failed clear now
+    // means the single-threaded table state changed underneath its own verified
+    // ledger; returning would expose a partially retired mapping.
     for (std::uint64_t page = 0ULL; page < page_count; ++page) {
         auto cleared = space.early_builder->unmap_page(
             static_cast<std::uint64_t>(virtual_base) +
