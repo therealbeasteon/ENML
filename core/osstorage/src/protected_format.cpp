@@ -50,15 +50,11 @@ void write_u64_le(os::core::MutableByteSpan out, std::size_t offset, std::uint64
 } // namespace
 
 os::core::Result<std::size_t>
-encode_protected_chunk_header_v1(
-    const ProtectedChunkHeaderV1& header,
+encode_protected_chunk_header_v2(
+    const ProtectedChunkHeaderV2& header,
     os::core::MutableByteSpan output) noexcept {
-    if (!valid_protected_chunk_header(header)) {
-        return storage_error(errors::invalid_options);
-    }
-    if (output.size() < protected_chunk_header_bytes) {
-        return storage_error(errors::too_large);
-    }
+    if (!valid_protected_chunk_header(header)) return storage_error(errors::invalid_options);
+    if (output.size() < protected_chunk_header_bytes) return storage_error(errors::too_large);
 
     write_u32_le(output, 0U, protected_chunk_magic);
     write_u16_le(output, 4U, protected_chunk_version);
@@ -67,34 +63,32 @@ encode_protected_chunk_header_v1(
     write_u64_le(output, 12U, header.user.value());
     write_u64_le(output, 20U, header.object_id.high);
     write_u64_le(output, 28U, header.object_id.low);
-    write_u64_le(output, 36U, header.chunk_index);
-    write_u32_le(output, 44U, header.plaintext_size);
-    write_u32_le(output, 48U, header.flags);
+    write_u64_le(output, 36U, header.object_generation);
+    write_u64_le(output, 44U, header.chunk_index);
+    write_u32_le(output, 52U, header.plaintext_size);
+    write_u32_le(output, 56U, header.flags);
     return static_cast<std::size_t>(protected_chunk_header_bytes);
 }
 
-os::core::Result<ProtectedChunkHeaderV1>
-decode_protected_chunk_header_v1(os::core::ByteSpan input) noexcept {
-    if (input.size() != protected_chunk_header_bytes) {
-        return storage_error(errors::invalid_options);
-    }
+os::core::Result<ProtectedChunkHeaderV2>
+decode_protected_chunk_header_v2(os::core::ByteSpan input) noexcept {
+    if (input.size() != protected_chunk_header_bytes) return storage_error(errors::invalid_options);
     if (read_u32_le(input, 0U) != protected_chunk_magic ||
         read_u16_le(input, 4U) != protected_chunk_version ||
         read_u16_le(input, 6U) != protected_chunk_header_bytes) {
         return storage_error(errors::invalid_options);
     }
 
-    ProtectedChunkHeaderV1 header{
+    ProtectedChunkHeaderV2 header{
         .crypto_profile = static_cast<os::keys::CryptoProfileId>(read_u32_le(input, 8U)),
         .user = os::core::UserId{read_u64_le(input, 12U)},
         .object_id = ProtectedObjectId{read_u64_le(input, 20U), read_u64_le(input, 28U)},
-        .chunk_index = read_u64_le(input, 36U),
-        .plaintext_size = read_u32_le(input, 44U),
-        .flags = read_u32_le(input, 48U),
+        .object_generation = read_u64_le(input, 36U),
+        .chunk_index = read_u64_le(input, 44U),
+        .plaintext_size = read_u32_le(input, 52U),
+        .flags = read_u32_le(input, 56U),
     };
-    if (!valid_protected_chunk_header(header)) {
-        return storage_error(errors::invalid_options);
-    }
+    if (!valid_protected_chunk_header(header)) return storage_error(errors::invalid_options);
     return header;
 }
 
