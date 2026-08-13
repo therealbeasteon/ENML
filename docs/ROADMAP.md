@@ -27,9 +27,11 @@ Measured on `main` at `d8bb620`, not claimed:
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
 | Cookie Kernel (M7) | Through M7.5d merged; **boots on QEMU virt**; 7 PRs open (M7.5f–M7.8) |
 
-Roughly 40,000 lines of implementation against 25,000 lines of test. Zero
-`TODO`/`FIXME`/`HACK` markers in the tree. Twelve CI workflows, all green on
-`main`. The discipline is real and the roadmap should not spend it.
+Roughly 49,000 lines of implementation against 29,000 lines of test, both grown
+by the backlog rather than by new work. Zero `TODO`/`FIXME`/`HACK` markers in
+the tree. Thirteen CI workflows — twelve on every push and pull request, plus
+nightly fuzzing on a schedule — all green on `main`. The discipline is real and
+the roadmap should not spend it.
 
 Three statements that must stay attached to any claim about Cookie:
 
@@ -134,14 +136,26 @@ git grep -n -E '^(<<<<<<<|=======|>>>>>>>)'
 **Exit criteria, and where they landed**
 
 - Zero open PRs whose only obstacle is a stale base or a missing build target —
-  met. What remains open is the M7.5f–M7.8 kernel stack, which is Phase 2 work
-  rather than backlog.
-- `main` green across all twelve workflows after each stack lands — met at the
-  tip, with the conflict-marker interruption above in the middle of it.
+  met with one exception, and the exception is the same defect class again.
+  PR #53 (M7.5e) was closed unmerged when its base branch `m7-5d` was deleted on
+  merge, which is what GitHub does to a pull request whose base disappears. The
+  branch survives and the whole open M7.5f–M7.8 stack is rooted on it, so the
+  chain's base has no pull request. That obstacle is mechanical, not design.
+- `main` green across all twelve push workflows after each stack lands — met at
+  the tip, with the conflict-marker interruption above in the middle of it.
 - 59 already-merged remote branches deleted; only live work visible — exceeded;
-  65 were deleted.
-- `AGENTS.md` and `README.md` describing the tree that exists — done, here and
-  in the resync that preceded this.
+  65 were deleted in one pass, and 73 across the day counting the automatic
+  delete-on-merge. Twenty-six remote branches remain and not all are live: the
+  sweep left behind heads whose work reached `main` long ago, among them
+  `m0-10-arm64-gate`, `m2-1-storage-service-handles` and
+  `m2-2-storage-integration`.
+- `AGENTS.md` and `README.md` describing the tree that exists — half met.
+  `README.md` is resynced. `AGENTS.md` is not: it still reads "M4.0-M4.10g" and
+  "M7.0-M7.5a", still says the Cookie Kernel exists through M7.5c, and still
+  carries a **Stranded work** section asserting that M4.10h, M7.5b and M7.5c are
+  absent from `main`, which stopped being true when the stacks landed. It is out
+  of scope for this change and it is the next thing to correct, because it is
+  the file agents are instructed to read first.
 
 **Honest position:** this phase added no capability. It converted work that had
 already been done into work that can be built on, which is the only reason it
@@ -149,16 +163,17 @@ outranked everything below it.
 
 ---
 
-## Phase 1 — Complete the M4 product security line *(substantially complete)*
+## Phase 1 — Complete the M4 product security line *(code merged; exit criteria not met)*
 
 The security features a user actually touches. Most of the code landed in Phase
 0; this phase finishes what the stacks left open.
 
 M4.1, M4.10h through M4.10t, and M4.11 through M4.15 are all in `main`. That is
-the whole of the line as written, which makes this phase substantially complete
-in code and *not* complete against its own exit criteria. The distinction
-matters more here than anywhere else in the document, because the features
-involved are the ones a user would be told to rely on.
+the whole of the line as written, and it is worth being exact about what that
+does and does not mean: every milestone this phase names is merged, and not one
+of the phase's three exit criteria is met. The distinction matters more here
+than anywhere else in the document, because the features involved are the ones a
+user would be told to rely on.
 
 - Encrypted profile storage end-to-end: boot-bound unlock, protector restore,
   rollback-bound snapshots, the protected Storage cutover seam (M4.10i–t).
@@ -176,16 +191,46 @@ chain and the user's credential; duress erasure destroys the profile root
 irrecoverably and is proven by test; no application reaches a socket the policy
 did not grant.
 
-**What is not yet verified.** The mechanisms exist and are tested; the exit
-criteria are claims about the product and have not all been checked as such.
-The specific outstanding item is the second bullet above and it should not be
-allowed to blur: `PROJECT_VISION.md` forbids shipping a second-PIN scheme
-labelled coercion resistant, and M4.10's coercion-resistant unlock is merged
-without the reviewed threat model that would either justify the label or remove
-it. That debt is unpaid. Until it is paid the feature is a mechanism in the
-tree, not a product feature, and nothing should describe it to a user as
-coercion resistance. The choice at the end of this phase remains the one already
-stated: pay the debt or cut the feature.
+**Against those criteria, measured rather than claimed: none of the three is met
+yet.** The mechanisms exist and are tested. The criteria are claims about the
+product, and each fails on something other than the mechanism.
+
+*A profile's durable data is unreadable without both the boot chain and the
+user's credential* — **not met**, and the reason is a wire that was never
+connected. M4.10t added `ProtectedReplaceHandler` to `StorageService` as a
+constructor parameter and a member, and nothing in the tree passes one or calls
+it; the only three references to it are its declaration, its initialiser and its
+field. PR #45 said so in its own body — the service still calls its existing
+substrate `atomic_replace` — and that remains true on `main`. The encryption
+engine below the seam is real and tested. Durable Storage writes do not reach
+it. Separately, the only key provider in the tree is the OpenSSL test provider
+under `core/oskeys/testing/`, whose fixed wrapping key its own header calls
+deliberately test-only, so even once the seam is wired the boot-chain half of
+this criterion terminates in a test root until Phase 5.
+
+*Duress erasure destroys the profile root irrecoverably and is proven by test* —
+**mechanism met, label not earned.** The erasure path is merged and covered.
+What is unpaid is the second bullet above, and it should not be allowed to blur:
+`PROJECT_VISION.md` forbids shipping a second-PIN scheme labelled coercion
+resistant, and M4.10's coercion-resistant unlock is merged without the reviewed
+threat model that would either justify the label or remove it. Until that debt
+is paid the feature is a mechanism in the tree, not a product feature, and
+nothing should describe it to a user as coercion resistance. The choice at the
+end of this phase remains the one already stated: pay the debt or cut the
+feature.
+
+*No application reaches a socket the policy did not grant* — **not met, and not
+currently falsifiable.** `core/osnetwork` is admission policy: `constexpr`
+predicates over blindness plans, tunnel authority, packet and link grants, with
+the supervisor holding connection admission and session state. There is no
+network stack, no link driver and no socket path beneath any of it, so no
+application reaches a socket at all. That is a stronger position than the
+criterion asks for and a much weaker one than it means: nothing has been
+enforced because nothing has yet been attempted. The bullet above also calls
+this boundary kernel-enforced, which it is not — the Cookie Kernel is not the
+substrate, and M4.14's own document places enforcement at a kernel/device
+boundary that does not exist yet. It is a policy note that is *written to
+become* a mechanism in Phase 3.
 
 **Honest position:** duress erasure is only as durable as the storage medium's
 erase semantics. Until Phase 4 puts this on real flash with a real controller,
@@ -247,8 +292,8 @@ contributor and every future file added to that target. The first is more work
 and removes a class of fault; the second is what exists and is one careless
 `CMakeLists.txt` edit away from returning. No decision has been made.
 
-Then the part no PR covers yet. Neither of these exists in any form — not as a
-branch, not as a document, and in M7.10's case not in any CI workflow:
+Then the part the merged tree does not cover. Neither of these is in `main` — no
+source, no document, and in M7.10's case no CI workflow computes the number:
 
 - **M7.9 — user-space driver framework.** Interrupt handlers inside driver
   processes, connected to a vector by a kernel call, under M6.0 device access
@@ -267,11 +312,14 @@ entire operating system in 15,930 lines on a **605-line kernel**. The gap is
 roughly eight-fold against the kernel figure and it is not narrowing on its own.
 
 The figure needs one qualification, and the qualification is itself the problem.
-The 5,091 lines include the machine layer, the flattened device tree reader, the
+It counts C++ under those two directories and nothing else. Add the two assembly
+files beside them and it is 5,240; add `core/oskernel/boot`, which is the code
+that actually reaches the `COOKIE:M7.5d:MMU` marker, and the directory holds
+5,733 lines. Which of those three numbers is "the kernel" is undecided, and the
+5,091 already includes the machine layer, the flattened device tree reader, the
 hardware inventory and the boot memory planner — code that exists to bring a
-machine up, not to provide the four kernel services. Whether any of that counts
-as "the kernel" for the purposes of the gate is unresolved. A gate cannot be
-written until it is decided, because the decision *is* the gate: a measure that
+machine up, not to provide the four kernel services. A gate cannot be written
+until this is settled, because the decision *is* the gate: a measure that
 excludes whatever is currently inconvenient enforces nothing, and a measure that
 counts every line in the directory will be argued with the first time it fails.
 Deciding what is counted has to come before M7.10 exists, and it should be
@@ -281,7 +329,36 @@ has been chosen to fit the number.
 **Exit criteria:** Cookie Kernel boots on QEMU virt, schedules multiple EL0
 processes, delivers timer and device interrupts to user-space handlers, passes
 the full EMNL wire-format and capability fuzz corpus, and reports a trusted line
-count under the declared ceiling. The first of those is now met.
+count under the declared ceiling.
+
+One of the five is met. Taken in order:
+
+- *Boots on QEMU virt* — **met**, and gated: `kernel-arm64-native` greps the
+  serial log for both markers and fails the workflow without them.
+- *Schedules multiple EL0 processes* — **not met.** No EL0 process exists on
+  `main` at all. `cookie_kernel_syscall_entry` currently panics with
+  `COOKIE:PANIC:EARLY_SVC` on any lower-EL syscall, on the grounds that nothing
+  should be down there yet, and boot ends in a context switch onto a guarded
+  kernel stack that parks in `wfe`. The scheduler exists and is tested on the
+  host; it has never scheduled anything on the machine. M7.5f–M7.5i.
+- *Delivers timer and device interrupts to user-space handlers* — **not met.**
+  Timer delivery is M7.5g and still on a branch. User-space handlers are M7.9,
+  which does not exist, so the second half of this criterion has no work item
+  behind it beyond the bullet above.
+- *Passes the full EMNL wire-format and capability fuzz corpus* — **not met, and
+  not currently measurable.** `fuzz/` holds targets for boot state, device
+  access, the IPC decoder and RPC errors, the key registry snapshot, the OSIDL
+  compiler, package manifests, storage paths and time protection. There is no
+  target for the kernel ABI and none for the kernel capability model. Both are
+  bounded typed formats of exactly the kind every other one in that list is
+  fuzzed as, and the M7.0 argument that the kernel is the part small enough to
+  review completely applies with more force, not less, to the part that parses
+  untrusted syscall arguments.
+- *Reports a trusted line count under the declared ceiling* — **not met on
+  either half.** No ceiling has been declared and no gate computes the count;
+  `.github/scripts/` holds hardening, hygiene and Linux-coupling checks and
+  nothing that counts lines. See the section above for why the number is the
+  easy part.
 
 **Honest position:** an unaudited new kernel is genuinely worse than the mature
 one it replaces, for as long as the intermediate state lasts. That cost is
@@ -422,6 +499,15 @@ multi-year one, and every phase after Phase 3 depends on hardware that has not
 been selected. Dates here would be invented, and this project's documentation
 has so far been notable for not inventing things.
 
-What can be stated: Phase 0 is days of work, not weeks, because the defects are
-mechanical and the CI is comprehensive. Phase 1 and 2 are mostly written and
-awaiting integration. Phase 3 onward is genuine new engineering.
+What can be stated, now with one measurement behind it: Phase 0 was estimated at
+days rather than weeks because the defects were mechanical and the CI was
+comprehensive, and it took one. That is the only estimate in this document that
+has been tested, and it was the easiest one to make.
+
+The rest is unchanged and should be read more cautiously for it. Phase 1's code
+is merged and none of its exit criteria are met, which is a different kind of
+remaining work from integration — closing the Storage seam, paying or cutting
+the coercion-resistance debt, and building a network path that the admission
+policy can govern. Phase 2's remaining stack is written and awaiting
+integration; M7.9 and M7.10 are not written at all. Phase 3 onward is genuine
+new engineering.
