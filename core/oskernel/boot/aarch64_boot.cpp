@@ -97,6 +97,32 @@ void uart_write(std::string_view text) noexcept {
     halt();
 }
 
+// The four checks that run before the console is discovered cannot print a
+// stage, so the QEMU trace address is the only evidence. One shared halt()
+// destroys that evidence: every early failure folds onto a single address and
+// addr2line attributes them all to whichever call site the compiler outlined
+// first, which is how a failing parse came to look like a failing DTB probe.
+//
+// Each gets its own address. The distinct register write is not diagnostic in
+// itself - nothing reads x20 - it exists so the bodies are not identical, and
+// therefore cannot be folded back together by the linker.
+[[gnu::noinline]] [[noreturn]] void halt_no_dtb() noexcept {
+    asm volatile("mov x20, #1" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_unparsable_fdt() noexcept {
+    asm volatile("mov x20, #2" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_no_inventory() noexcept {
+    asm volatile("mov x20, #3" ::: "x20");
+    halt();
+}
+[[gnu::noinline]] [[noreturn]] void halt_no_console() noexcept {
+    asm volatile("mov x20, #4" ::: "x20");
+    halt();
+}
+
 [[nodiscard]] const os::kernel::DiscoveredDevice*
 find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
     for (std::size_t i = 0U; i < inventory.device_count; ++i) {
@@ -163,12 +189,12 @@ extern "C" void cookie_kernel_syscall_entry(
 
 extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physical) noexcept {
     const auto dtb_blob = bounded_dtb(dtb_physical);
-    if (dtb_blob.empty()) halt();
+    if (dtb_blob.empty()) halt_no_dtb();
 
     auto fdt = os::kernel::FdtView::parse(dtb_blob);
-    if (!fdt) halt();
+    if (!fdt) halt_unparsable_fdt();
     auto inventory = os::kernel::discover_hardware(fdt.value());
-    if (!inventory || inventory.value().memory_count == 0U) halt();
+    if (!inventory || inventory.value().memory_count == 0U) halt_no_inventory();
 
     // Publish the UART the moment the device tree names it. Translation is
     // still off, so the physical address is directly addressable, and every
@@ -177,7 +203,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // until the device tree has been read there is no discovered console to
     // report through, and hardware neutrality forbids assuming one.
     const auto* uart = find_pl011(inventory.value());
-    if (uart == nullptr || !uart->registers.valid()) halt();
+    if (uart == nullptr || !uart->registers.valid()) halt_no_console();
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
 
