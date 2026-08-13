@@ -31,11 +31,18 @@ enum class TileFreshnessClass : std::uint8_t {
     periodic = 2U,
 };
 
+enum class TileContainment : std::uint8_t {
+    open_field = 0U,
+    anchored = 1U,
+    framed = 2U,
+};
+
 struct LivingTileContract final {
     LivingTileKind kind {LivingTileKind::information};
     LivingTileSize size {LivingTileSize::standard};
-    HomePrivacyClass privacy {HomePrivacyClass::public_};
+    HomePrivacyClass privacy {HomePrivacyClass::public_metadata};
     TileFreshnessClass freshness {TileFreshnessClass::event_driven};
+    TileContainment containment {TileContainment::open_field};
     std::uint8_t action_count {0U};
     std::uint8_t content_items {1U};
     bool resizeable {true};
@@ -47,16 +54,17 @@ struct LivingTileContract final {
 inline constexpr std::uint8_t max_tile_actions = 4U;
 inline constexpr std::uint8_t max_tile_content_items = 12U;
 
-[[nodiscard]] constexpr bool living_tile_valid(
-    const LivingTileContract& tile) noexcept {
+[[nodiscard]] constexpr bool living_tile_valid(const LivingTileContract& tile) noexcept {
     if (tile.action_count > max_tile_actions) return false;
     if (tile.content_items == 0U || tile.content_items > max_tile_content_items) return false;
     if (tile.continuous_animation_requested) return false;
     if (tile.kind == LivingTileKind::trusted_system && !tile.trusted_attribution) return false;
     if (tile.kind != LivingTileKind::trusted_system && tile.trusted_attribution) return false;
     if (tile.privacy == HomePrivacyClass::secret && tile.remote_refresh_requested) return false;
-    if (tile.freshness == TileFreshnessClass::periodic &&
-        tile.kind == LivingTileKind::control) return false;
+    if (tile.freshness == TileFreshnessClass::periodic && tile.kind == LivingTileKind::control) return false;
+    // Trusted system surfaces may use a frame. Ordinary content should prefer
+    // open Field or Anchor containment rather than generic card chrome.
+    if (tile.containment == TileContainment::framed && tile.kind != LivingTileKind::trusted_system) return false;
     return true;
 }
 
@@ -65,6 +73,7 @@ struct LivingTilePresentation final {
     bool show_content {true};
     bool allow_remote_refresh {true};
     bool allow_motion {true};
+    TileContainment containment {TileContainment::open_field};
 };
 
 [[nodiscard]] constexpr LivingTilePresentation resolve_living_tile_presentation(
@@ -77,18 +86,15 @@ struct LivingTilePresentation final {
         .show_content = true,
         .allow_remote_refresh = tile.remote_refresh_requested,
         .allow_motion = !reduce_motion && available_quality >= QualityTier::continuity,
+        .containment = tile.containment,
     };
 
-    if (device_locked && tile.privacy != HomePrivacyClass::public_) {
+    if (device_locked && tile.privacy != HomePrivacyClass::public_metadata) {
         presentation.show_content = false;
         presentation.allow_remote_refresh = false;
     }
-    if (tile.privacy == HomePrivacyClass::secret) {
-        presentation.allow_remote_refresh = false;
-    }
-    if (available_quality == QualityTier::essential) {
-        presentation.allow_motion = false;
-    }
+    if (tile.privacy == HomePrivacyClass::secret) presentation.allow_remote_refresh = false;
+    if (available_quality == QualityTier::essential) presentation.allow_motion = false;
     return presentation;
 }
 
