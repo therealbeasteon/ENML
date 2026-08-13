@@ -83,7 +83,7 @@ jobs:
             -m 512M \
             -nographic \
             -monitor none \
-            -d cpu_reset,guest_errors,int,in_asm \n            -D cookie-qemu-debug.log \n            -device loader,file="$elf",cpu-num=0 >cookie-qemu.log 2>&1
+            -device loader,file="$elf",cpu-num=0 >cookie-qemu.log 2>&1
           status=$?
           set -e
           if [[ $status -ne 0 && $status -ne 124 ]]; then
@@ -91,10 +91,5 @@ jobs:
             exit "$status"
           fi
           cat cookie-qemu.log
-          echo '--- reset and first executed blocks ---'
-          head -n 60 cookie-qemu-debug.log || true
-          echo '--- did execution ever reach the linked image at 0x402? ---'
-          grep -c '^IN: ' cookie-qemu-debug.log || true
-          grep -m5 -E '^0x40[0-9a-f]{6}' cookie-qemu-debug.log || echo 'no 0x40xxxxxx addresses executed'
           grep -F 'COOKIE:M7.5d:MMU' cookie-qemu.log
           grep -F 'COOKIE:M7.5d:GUARDED' cookie-qemu.log
