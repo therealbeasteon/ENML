@@ -16,8 +16,6 @@ namespace os::keys {
 inline constexpr std::size_t max_profile_roots = 16U;
 inline constexpr std::size_t max_application_roots = 64U;
 
-// Logical protection scope is trusted system metadata. Public callers never
-// choose another principal's scope or owner through a Key Service payload.
 enum class KeyProtectionScope : std::uint32_t {
     system = 1U,
     user_profile = 2U,
@@ -48,10 +46,6 @@ struct KeyProtectionBinding final {
         const KeyProtectionBinding&) = default;
 };
 
-// Only downward hierarchy transitions are valid. The system root can parent a
-// user/profile root. A profile root can parent application roots only for the
-// same durable UserId. Application roots are leaves with respect to root-key
-// delegation and can only mint data keys through the provider.
 [[nodiscard]] constexpr bool valid_hierarchy_edge(
     const KeyProtectionBinding& parent,
     const KeyProtectionBinding& child) noexcept {
@@ -68,8 +62,6 @@ struct KeyProtectionBinding final {
     return false;
 }
 
-// Provider-private root reference. Like ProviderKeyReference, this is an
-// ephemeral process-local handle, not durable identity and never public ABI.
 struct RootKeyReference final {
     std::uint64_t value {0U};
 
@@ -79,13 +71,20 @@ struct RootKeyReference final {
         const RootKeyReference&) = default;
 };
 
-// A production implementation may map these operations to a TPM/TEE/HSM. The
-// interface deliberately has no method that exports raw root-key bytes.
-//
-// Root acquisition is binding-aware and must be idempotent for an existing
-// provider-owned root. Provider implementations must bind every RootKeyReference
-// to its KeyProtectionBinding internally and reject a mismatched reference /
-// binding pair; the binding argument is not a substitute for provider state.
+enum class RootErasureAssurance : std::uint8_t {
+    logical_only = 1U,
+    effaceable_key_storage = 2U,
+};
+
+struct ProfileRootErasureReport final {
+    std::size_t application_roots_destroyed {0U};
+    RootErasureAssurance assurance {RootErasureAssurance::logical_only};
+
+    [[nodiscard]] friend constexpr bool operator==(
+        const ProfileRootErasureReport&,
+        const ProfileRootErasureReport&) = default;
+};
+
 class HierarchicalKeyProvider : public PersistentKeyProvider {
 public:
     ~HierarchicalKeyProvider() override = default;
@@ -107,13 +106,12 @@ public:
 
     [[nodiscard]] virtual os::core::Result<void>
     destroy_root(RootKeyReference root, KeyProtectionBinding binding) noexcept = 0;
+
+    [[nodiscard]] virtual RootErasureAssurance root_erasure_assurance() const noexcept {
+        return RootErasureAssurance::logical_only;
+    }
 };
 
-// Fixed-capacity core policy object. It pairs provider references with trusted
-// bindings so higher layers never select or recombine raw root references.
-// Profile roots are unique per UserId in this M2.7 slice; application roots are
-// unique per PrincipalId + UserId. Persistence of the provider-owned roots is a
-// provider responsibility through binding-aware acquire operations.
 class KeyHierarchy final {
 public:
     explicit KeyHierarchy(HierarchicalKeyProvider& provider) noexcept : provider_(&provider) {}
@@ -131,6 +129,15 @@ public:
     generate_application_data_key(
         KeyProtectionBinding application_binding,
         KeyPurpose purpose) noexcept;
+
+    [[nodiscard]] os::core::Result<ProviderKeyReference>
+    generate_profile_storage_key(os::core::UserId user) noexcept;
+
+    [[nodiscard]] os::core::Result<ProviderKeyReference>
+    generate_profile_storage_metadata_key(os::core::UserId user) noexcept;
+
+    [[nodiscard]] os::core::Result<ProfileRootErasureReport>
+    destroy_profile(os::core::UserId user) noexcept;
 
     [[nodiscard]] bool initialized() const noexcept { return system_.occupied; }
     [[nodiscard]] std::size_t profile_count() const noexcept;
@@ -164,13 +171,6 @@ struct SecurityEpoch final {
     [[nodiscard]] friend constexpr auto operator<=>(const SecurityEpoch&, const SecurityEpoch&) = default;
 };
 
-// Contract for a production monotonic anti-rollback source. `advance` must be
-// atomic with respect to the provider's own state: it succeeds only if the
-// current value equals `expected_current`, then returns the strictly next epoch.
-//
-// M2.7 defines this boundary but does not pretend an ordinary host file can
-// provide rollback resistance. Integrating this contract with KRG snapshots
-// requires a reviewed crash-consistent protocol in a later slice.
 class MonotonicSecurityState {
 public:
     virtual ~MonotonicSecurityState() = default;

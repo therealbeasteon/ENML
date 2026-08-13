@@ -1,10 +1,10 @@
 #pragma once
 
 #include <cstddef>
-#include <cstdint>
 
-#include <os/app/lifecycle.hpp>
 #include <os/app/manager.hpp>
+#include <os/app/shell_lifecycle_client.hpp>
+#include <os/core/native_handle.hpp>
 #include <os/core/result.hpp>
 #include <os/core/span.hpp>
 #include <os/ipc/channel.hpp>
@@ -12,20 +12,20 @@
 
 namespace os::app {
 
-// Private App Manager control namespace for the trusted phone shell. Knowledge
-// of this numeric ServiceId is not authority: every request is authenticated
-// from SCM_CREDENTIALS through the trusted identity resolver before any
-// lifecycle state is returned.
-inline constexpr os::core::ServiceId shell_lifecycle_control_service_id{0x0000F016U};
-inline constexpr std::uint32_t shell_lifecycle_operation_snapshot = 1U;
-
 using ShellLifecycleSnapshotFn = os::core::Result<ApplicationLifecycleSnapshot> (*)(
     void* context) noexcept;
+using ShellTakeCompositorCapabilityFn = os::core::Result<os::core::NativeHandle> (*)(
+    void* context) noexcept;
 
-// Internal composition seam only. Function pointers never cross IPC.
+// Internal composition seam only. Function pointers and backing contexts never
+// cross IPC. `context` remains the lifecycle context for compatibility with the
+// existing server fixture shape; compositor handoff has its own optional
+// context so boot composition does not teach ApplicationManager about display.
 struct ShellLifecycleBackend final {
     void* context {nullptr};
     ShellLifecycleSnapshotFn snapshot {nullptr};
+    void* compositor_context {nullptr};
+    ShellTakeCompositorCapabilityFn take_compositor_capability {nullptr};
 };
 
 [[nodiscard]] ShellLifecycleBackend shell_lifecycle_backend(
@@ -44,7 +44,7 @@ public:
 
     // Handles exactly one bounded request. Unauthorized callers receive one
     // generic access-denied result before operation or payload validation so the
-    // interface cannot be used as an application-lifecycle enumeration oracle.
+    // interface cannot be used as an application-lifecycle or capability oracle.
     [[nodiscard]] os::core::Result<void> dispatch_once(
         os::ipc::Channel& channel,
         os::core::MutableByteSpan scratch) noexcept;
@@ -52,18 +52,6 @@ public:
 private:
     ShellLifecycleBackend backend_ {};
     os::ipc::PeerIdentityResolver* identity_resolver_ {nullptr};
-};
-
-class ShellLifecycleControlClient final {
-public:
-    explicit ShellLifecycleControlClient(os::ipc::Channel& channel) noexcept
-        : connection_(channel) {}
-
-    [[nodiscard]] os::core::Result<ApplicationLifecycleSnapshot> snapshot(
-        os::core::MutableByteSpan scratch) noexcept;
-
-private:
-    os::ipc::ClientConnection connection_;
 };
 
 } // namespace os::app
