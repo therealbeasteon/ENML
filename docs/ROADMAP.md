@@ -302,7 +302,7 @@ no branch, no document; M7.10 is built and enforced by this change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 4,457 lines, a ratchet rather than the 605-line
+  ceiling is the measured 4,758 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -331,11 +331,11 @@ cannot be laundered between them:
 
 | Category | Lines |
 | --- | --- |
-| core — privileged portable runtime | 1,280 |
-| machine — the AArch64 port | 1,545 |
+| core — privileged portable runtime | 1,360 |
+| machine — the AArch64 port | 1,766 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,221 |
 | entry — reset vector, freestanding memory | 411 |
-| **total** | **4,457** |
+| **total** | **4,758** |
 
 `core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -364,7 +364,14 @@ outside what the parser could represent, producing a 100%-reproducible
 silent boot hang with a completely empty serial log. `hardware_inventory.cpp`
 had already carried the fix for this exact class of defect since M7.5d;
 this walker hadn't inherited it. discovery 1,217 → 1,221, total 4,453 →
-4,457. None of it is discretionary — see
+4,457. A fifth raise, by M7.5h, is what makes the kernel preemptive rather
+than cooperative: 1,280 → 1,360 in `core` for deadline scheduling authority,
+alongside the scheduler it extends; 1,545 → 1,766 in `machine` for AArch64
+exception-frame decoding of an interrupted lower-EL context and the
+preemption path that switches away from it. A kernel that can enter EL0 and
+deliver a timer IRQ to it (M7.5g) but cannot preempt what it interrupted
+still only runs one process cooperatively. total 4,457 → 4,758. None of it
+is discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 

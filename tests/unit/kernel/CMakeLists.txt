@@ -38,6 +38,14 @@ target_compile_options(kernel_scheduler_test PRIVATE
 add_test(NAME kernel_scheduler_test COMMAND kernel_scheduler_test)
 set_tests_properties(kernel_scheduler_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_scheduler_deadline_test scheduler_deadline_test.cpp)
+target_link_libraries(kernel_scheduler_deadline_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_scheduler_deadline_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_scheduler_deadline_test COMMAND kernel_scheduler_deadline_test)
+set_tests_properties(kernel_scheduler_deadline_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_machine_host_test machine_host_test.cpp)
 target_link_libraries(kernel_machine_host_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_machine_host_test PRIVATE
@@ -61,6 +69,22 @@ target_compile_options(kernel_aarch64_exception_test PRIVATE
 )
 add_test(NAME kernel_aarch64_exception_test COMMAND kernel_aarch64_exception_test)
 set_tests_properties(kernel_aarch64_exception_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_aarch64_user_frames_test aarch64_user_frames_test.cpp)
+target_link_libraries(kernel_aarch64_user_frames_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_user_frames_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_user_frames_test COMMAND kernel_aarch64_user_frames_test)
+set_tests_properties(kernel_aarch64_user_frames_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(kernel_aarch64_preemption_test aarch64_preemption_test.cpp)
+target_link_libraries(kernel_aarch64_preemption_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_aarch64_preemption_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_aarch64_preemption_test COMMAND kernel_aarch64_preemption_test)
+set_tests_properties(kernel_aarch64_preemption_test PROPERTIES LABELS "m7-kernel")
 
 add_executable(kernel_aarch64_translation_test aarch64_translation_test.cpp)
 target_link_libraries(kernel_aarch64_translation_test PRIVATE emnl::oskernel emnl_warnings)

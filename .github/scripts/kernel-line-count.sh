@@ -128,12 +128,14 @@ core_files=(
     "core/oskernel/include/os/kernel/kernel.hpp"
     "core/oskernel/include/os/kernel/rendezvous.hpp"
     "core/oskernel/include/os/kernel/scheduler.hpp"
+    "core/oskernel/include/os/kernel/scheduler_deadline.hpp"
     "core/oskernel/src/abi.cpp"
     "core/oskernel/src/capability.cpp"
     "core/oskernel/src/interrupt.cpp"
     "core/oskernel/src/kernel.cpp"
     "core/oskernel/src/rendezvous.cpp"
     "core/oskernel/src/scheduler.cpp"
+    "core/oskernel/src/scheduler_deadline.cpp"
 )
 
 machine_files=(
@@ -143,13 +145,17 @@ machine_files=(
     "core/oskernel/include/os/kernel/aarch64_gic_v3.hpp"
     "core/oskernel/include/os/kernel/aarch64_mapping_state.hpp"
     "core/oskernel/include/os/kernel/aarch64_page_tables.hpp"
+    "core/oskernel/include/os/kernel/aarch64_preemption.hpp"
     "core/oskernel/include/os/kernel/aarch64_translation.hpp"
+    "core/oskernel/include/os/kernel/aarch64_user_frames.hpp"
     "core/oskernel/include/os/kernel/machine.hpp"
     "core/oskernel/include/os/kernel/machine_aarch64.hpp"
     "core/oskernel/src/aarch64_context_switch.S"
     "core/oskernel/src/aarch64_entry.cpp"
     "core/oskernel/src/aarch64_gic_v3.cpp"
+    "core/oskernel/src/aarch64_preemption.cpp"
     "core/oskernel/src/aarch64_translation.cpp"
+    "core/oskernel/src/aarch64_user_frames.cpp"
     "core/oskernel/src/aarch64_vectors.S"
     "core/oskernel/src/aarch64_el0.S"
     "core/oskernel/src/machine_aarch64.cpp"
@@ -244,11 +250,20 @@ not_kernel=(
 # added in M7.5g that never inherited it. Splitting the malformed-encoding
 # check from the unrepresentable-range check to match that established
 # pattern costs 4 lines.
-core_ceiling=1280
-machine_ceiling=1545
+# Raised a fifth time, by M7.5h: core 1280 -> 1360, machine 1545 -> 1766,
+# total 4457 -> 4758. This is the milestone that makes the kernel preemptive
+# rather than cooperative: deadline scheduling authority (core, alongside the
+# scheduler it extends) and, on the AArch64 side, exception-frame decoding for
+# a lower-EL context interrupted mid-execution and the actual preemption path
+# that switches away from it (machine). A kernel that can enter EL0 and
+# deliver a timer IRQ to it (M7.5g) but cannot preempt what it interrupted
+# still only runs one process cooperatively; this is what makes M7.5i's
+# multi-process scheduling meaningful rather than aspirational.
+core_ceiling=1360
+machine_ceiling=1766
 discovery_ceiling=1221
 entry_ceiling=411
-total_ceiling=4457
+total_ceiling=4758
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
