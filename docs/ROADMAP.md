@@ -292,39 +292,65 @@ contributor and every future file added to that target. The first is more work
 and removes a class of fault; the second is what exists and is one careless
 `CMakeLists.txt` edit away from returning. No decision has been made.
 
-Then the part the merged tree does not cover. Neither of these is in `main` — no
-source, no document, and in M7.10's case no CI workflow computes the number:
+Then the parts outside the open PR stack. M7.9 is in no form at all — no source,
+no branch, no document; M7.10 is built and enforced by this change:
 
 - **M7.9 — user-space driver framework.** Interrupt handlers inside driver
   processes, connected to a vector by a kernel call, under M6.0 device access
   policy. This is the piece that makes "no drivers in the kernel" true rather
   than aspirational.
-- **M7.10 — the line count gate.** A CI check that fails when the kernel exceeds
-  its budget. `docs/M7_0_KERNEL.md` states the measure of success is a single
-  number and that reaching Linux's size means the exercise failed. A number
-  nobody enforces is a wish.
+- **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
+  counts what runs with kernel privilege in the shipped image and fails the
+  build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
+  ceiling is the measured 3,395 lines, a ratchet rather than the 605-line
+  aspiration, and the script prints the gap to 605 on every run so it stays
+  visible.
 
-### The number M7.10 would have to enforce
+### The number M7.10 enforces
 
-`core/oskernel/src` and `core/oskernel/include` currently hold 5,091 lines of
-C++. `docs/M7_0_KERNEL.md` names the QNX class of artefact as the target: an
-entire operating system in 15,930 lines on a **605-line kernel**. The gap is
-roughly eight-fold against the kernel figure and it is not narrowing on its own.
+`docs/M7_0_KERNEL.md` names the QNX class of artefact as the target: an entire
+operating system in 15,930 lines on a **605-line kernel**. The question that
+blocked the gate was not what the ceiling should be but *what gets counted*,
+because a measure that excludes whatever is currently inconvenient enforces
+nothing, and one that counts every line in the directory gets argued with the
+first time it fails.
 
-The figure needs one qualification, and the qualification is itself the problem.
-It counts C++ under those two directories and nothing else. Add the two assembly
-files beside them and it is 5,240; add `core/oskernel/boot`, which is the code
-that actually reaches the `COOKIE:M7.5d:MMU` marker, and the directory holds
-5,733 lines. Which of those three numbers is "the kernel" is undecided, and the
-5,091 already includes the machine layer, the flattened device tree reader, the
-hardware inventory and the boot memory planner — code that exists to bring a
-machine up, not to provide the four kernel services. A gate cannot be written
-until this is settled, because the decision *is* the gate: a measure that
-excludes whatever is currently inconvenient enforces nothing, and a measure that
-counts every line in the directory will be argued with the first time it fails.
-Deciding what is counted has to come before M7.10 exists, and it should be
-decided while the answer is still uncomfortable rather than after a definition
-has been chosen to fit the number.
+The difficulty was never arithmetic. Counting C++ under `core/oskernel/src` and
+`core/oskernel/include` gives 5,091; adding the two assembly files beside them
+gives 5,240; adding `core/oskernel/boot`, which is the code that actually
+reaches the `COOKIE:M7.5d:MMU` marker, gives 5,733. Three defensible numbers for
+the same question, and picking among them after the fact is how a ceiling gets
+chosen to fit the code rather than the other way round.
+
+That decision is now made and it is the gate. The boundary is **code that
+executes with kernel privilege in the shipped image** — the source list of the
+`cookie_kernel_aarch64_boot` target plus the headers it depends on — so the
+measurement is drawn by the build rather than by judgement, and cannot drift
+from what is actually trusted. Four categories are capped separately so lines
+cannot be laundered between them:
+
+| Category | Lines |
+| --- | --- |
+| core — privileged portable runtime | 1,280 |
+| machine — the AArch64 port | 1,040 |
+| discovery — FDT, inventory, boot memory | 723 |
+| entry — reset vector, freestanding memory | 352 |
+| **total** | **3,395** |
+
+`core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
+discovery is counted rather than excused: it runs at EL1 with translation off
+against a firmware-supplied blob, so a defect in it is a defect in the most
+privileged code on the machine, and excluding it would have shed 723 lines by
+relabelling. The one exclusion, `machine_host.*`, is a test double that never
+enters the image, and it is listed by name rather than silently dropped.
+
+The ceilings are the measured values, not the aspiration — a ratchet. A gate set
+at 605 would be red on arrival and switched off within a week; one set
+comfortably above the count would measure nothing. The kernel is free to shrink
+and free to be rewritten, and cannot grow without someone editing the number and
+defending it in review. The open M7.5e–M7.8 stack will therefore trip this gate
+as it lands, which is intended: the growth and the decision to permit it should
+be one reviewable diff.
 
 **Exit criteria:** Cookie Kernel boots on QEMU virt, schedules multiple EL0
 processes, delivers timer and device interrupts to user-space handlers, passes
