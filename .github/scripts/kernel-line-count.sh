@@ -192,11 +192,19 @@ not_kernel=(
 #
 # Raising a ceiling is allowed. It must happen in the same change that adds the
 # lines, so the growth and the decision to permit it are one reviewable diff.
+#
+# Raised once, by M7.5e: machine 1040 -> 1151, total 3395 -> 3506. The 111 lines
+# are page-table leaf teardown, verified mapping retirement and the TLB
+# invalidation that must accompany them. Unmapping is not optional for a kernel
+# that reclaims address space, and a stale TLB entry after an unmap is a
+# use-after-free with hardware caching it. This is the machine layer doing the
+# job the machine layer exists for, so the growth is accepted rather than
+# argued down.
 core_ceiling=1280
-machine_ceiling=1040
+machine_ceiling=1151
 discovery_ceiling=723
 entry_ceiling=352
-total_ceiling=3395
+total_ceiling=3506
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

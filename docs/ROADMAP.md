@@ -302,7 +302,7 @@ no branch, no document; M7.10 is built and enforced by this change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 3,395 lines, a ratchet rather than the 605-line
+  ceiling is the measured 3,506 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -332,10 +332,10 @@ cannot be laundered between them:
 | Category | Lines |
 | --- | --- |
 | core — privileged portable runtime | 1,280 |
-| machine — the AArch64 port | 1,040 |
+| machine — the AArch64 port | 1,151 |
 | discovery — FDT, inventory, boot memory | 723 |
 | entry — reset vector, freestanding memory | 352 |
-| **total** | **3,395** |
+| **total** | **3,506** |
 
 `core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
