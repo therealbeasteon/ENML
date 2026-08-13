@@ -98,5 +98,12 @@ jobs:
           grep -m 8 -E '^0x40[0-9a-f]{6}' cookie-qemu-debug.log || echo 'NOTHING EXECUTED AT 0x40xxxxxx'
           echo '--- first 40 lines of the trace ---'
           head -n 40 cookie-qemu-debug.log || true
+          # Report the stage the kernel rejected before reporting the marker it
+          # never printed. A bare grep for the success marker says only that
+          # boot did not finish, which is the one thing already known.
+          if grep -F 'COOKIE:PANIC:' cookie-qemu.log; then
+            echo '--- kernel reported the stage above and halted ---'
+            exit 1
+          fi
           grep -F 'COOKIE:M7.5d:MMU' cookie-qemu.log
           grep -F 'COOKIE:M7.5d:GUARDED' cookie-qemu.log
