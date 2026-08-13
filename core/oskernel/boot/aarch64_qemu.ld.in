@@ -1,6 +1,13 @@
 OUTPUT_ARCH(aarch64)
 ENTRY(_start)
 
+PHDRS
+{
+    text   PT_LOAD FLAGS(5); /* R-X */
+    rodata PT_LOAD FLAGS(4); /* R-- */
+    data   PT_LOAD FLAGS(6); /* RW- */
+}
+
 SECTIONS
 {
     . = @EMNL_AARCH64_BOOT_LOAD_ADDRESS@;
@@ -12,21 +19,21 @@ SECTIONS
         *(.text .text.*)
         __cookie_text_end = ALIGN(4096);
         . = __cookie_text_end;
-    }
+    } :text
 
     .rodata ALIGN(4096) : {
         __cookie_rodata_start = .;
         *(.rodata .rodata.*)
         __cookie_rodata_end = ALIGN(4096);
         . = __cookie_rodata_end;
-    }
+    } :rodata
 
     .data ALIGN(4096) : {
         __cookie_data_start = .;
         *(.data .data.*)
         __cookie_data_end = ALIGN(4096);
         . = __cookie_data_end;
-    }
+    } :data
 
     .bss ALIGN(4096) (NOLOAD) : {
         __bss_start = .;
@@ -34,15 +41,15 @@ SECTIONS
         *(.bss .bss.* COMMON)
         __bss_end = ALIGN(4096);
         . = __bss_end;
-    }
+    } :data
 
     /* Cookie's native image deliberately has no C/C++ startup runtime. Keep
        these sections visible to the linker and fail if any object introduces a
        constructor/destructor instead of silently discarding code that somebody
        expected to execute. */
-    .preinit_array ALIGN(8) : { KEEP(*(.preinit_array .preinit_array.*)) }
-    .init_array ALIGN(8) : { KEEP(*(.init_array .init_array.*)) }
-    .fini_array ALIGN(8) : { KEEP(*(.fini_array .fini_array.*)) }
+    .preinit_array ALIGN(8) : { KEEP(*(.preinit_array .preinit_array.*)) } :data
+    .init_array ALIGN(8) : { KEEP(*(.init_array .init_array.*)) } :data
+    .fini_array ALIGN(8) : { KEEP(*(.fini_array .fini_array.*)) } :data
     ASSERT(SIZEOF(.preinit_array) == 0, "Cookie kernel cannot require preinit runtime")
     ASSERT(SIZEOF(.init_array) == 0, "Cookie kernel cannot require global constructors")
     ASSERT(SIZEOF(.fini_array) == 0, "Cookie kernel cannot require global destructors")
