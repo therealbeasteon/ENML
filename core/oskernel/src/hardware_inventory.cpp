@@ -130,8 +130,13 @@ bool property(
             fail(context, hardware_inventory_errors::invalid_property);
             return false;
         }
+        // Zero is legal and common, not malformed. A bus whose children have
+        // no address or no size declares it that way, and every ARM device
+        // tree does: /cpus carries #size-cells = <0> because a CPU's reg is an
+        // identifier rather than a range. Rejecting zero here failed the walk
+        // on conformant input before it reached the memory nodes.
         std::uint32_t raw = 0U;
-        if (!read_be32(value, 0U, raw) || raw == 0U || raw > 2U) {
+        if (!read_be32(value, 0U, raw) || raw > 2U) {
             fail(context, hardware_inventory_errors::unsupported_cells);
             return false;
         }
@@ -171,10 +176,18 @@ bool property(
     }
 
     if (name == "reg") {
-        if (node.parent_address_cells == 0U || node.parent_address_cells > 2U ||
-            node.parent_size_cells == 0U || node.parent_size_cells > 2U) {
+        if (node.parent_address_cells > 2U || node.parent_size_cells > 2U) {
             fail(context, hardware_inventory_errors::unsupported_cells);
             return false;
+        }
+        // A reg under a parent declaring no address or no size cells does not
+        // describe a hardware range - /cpus/cpu@0 has reg = <0> under
+        // #size-cells = <0>, and that zero is an identifier. Leave has_reg
+        // false so the node is neither recorded as memory nor as a device, and
+        // keep walking. Treating it as an error rejected trees that are
+        // correct.
+        if (node.parent_address_cells == 0U || node.parent_size_cells == 0U) {
+            return true;
         }
         const std::size_t range_bytes =
             static_cast<std::size_t>(node.parent_address_cells + node.parent_size_cells) * 4U;
