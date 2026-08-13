@@ -25,19 +25,22 @@ struct HomeLayoutPolicy final {
     HomeComposition composition {HomeComposition::single_field};
     ReachZone frequent_action_zone {ReachZone::primary};
     bool reserve_center_seam {false};
-    bool shelf_collapsed {false};
-    bool dock_floats_above_safe_inset {true};
+    bool now_compact {false};
+    bool index_edge_reachable {true};
 };
 
 [[nodiscard]] constexpr ReachZone preferred_reach_zone(
     const DeviceProfile& profile,
     HomeRegion region) noexcept {
-    if (region == HomeRegion::dock) return ReachZone::primary;
-    if (region == HomeRegion::shelf && prefer_bottom_reach_controls(profile)) {
+    // Index is the stable discovery entrance and remains reachable without a
+    // permanent dock. Now follows reach on tall phones; Pinned preserves the
+    // user's learned spatial map instead of being dragged to the thumb.
+    if (region == HomeRegion::index) return ReachZone::primary;
+    if (region == HomeRegion::now && prefer_bottom_reach_controls(profile)) {
         return ReachZone::primary;
     }
     if (profile.width_class == WidthClass::expanded) return ReachZone::secondary;
-    return region == HomeRegion::field ? ReachZone::secondary : ReachZone::primary;
+    return region == HomeRegion::pinned ? ReachZone::secondary : ReachZone::primary;
 }
 
 [[nodiscard]] constexpr HomeLayoutPolicy resolve_home_layout_policy(
@@ -47,9 +50,8 @@ struct HomeLayoutPolicy final {
     HomeLayoutPolicy policy {};
     policy.frequent_action_zone = ReachZone::primary;
     policy.reserve_center_seam = avoid_center_seam(profile);
-    policy.shelf_collapsed = profile.height_class == HeightClass::short_;
-    policy.dock_floats_above_safe_inset = profile.safe_insets.bottom != 0U ||
-                                          profile.rounded_display;
+    policy.now_compact = profile.height_class == HeightClass::short_;
+    policy.index_edge_reachable = true;
 
     if (profile.cutout == CutoutKind::hinge || profile.posture == DevicePosture::half_open) {
         policy.composition = HomeComposition::seam_split;
