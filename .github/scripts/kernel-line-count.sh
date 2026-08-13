@@ -231,11 +231,24 @@ not_kernel=(
 # into the boot sequence so a return from IRQ has somewhere defined to go
 # (entry). A kernel that can enter EL0 but never preempt it cannot schedule
 # more than one process, so this is load-bearing for M7.5h.
+# Raised a fourth time, not by a milestone but by a defect fix: discovery
+# 1217 -> 1221, total 4453 -> 4457. gic_v3_discovery.cpp rejected the whole
+# device tree walk - not just the GIC node, every node - whenever any sibling
+# declared #address-cells/#size-cells outside [1,2]. Real QEMU virt always has
+# such a sibling (/cpus declares #size-cells = <0>), so this was not a
+# hardening gap but a 100%-reproducible silent boot hang: the image built,
+# QEMU launched, and the serial log came back completely empty because the
+# halt landed before boot_uart was ever assigned. hardware_inventory.cpp
+# already carries the fix for this exact class of defect, recorded there as
+# the M7.5d lesson; gic_v3_discovery.cpp is a second, independent DTB walker
+# added in M7.5g that never inherited it. Splitting the malformed-encoding
+# check from the unrepresentable-range check to match that established
+# pattern costs 4 lines.
 core_ceiling=1280
 machine_ceiling=1545
-discovery_ceiling=1217
+discovery_ceiling=1221
 entry_ceiling=411
-total_ceiling=4453
+total_ceiling=4457
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

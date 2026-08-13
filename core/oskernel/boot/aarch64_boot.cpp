@@ -56,16 +56,6 @@ os::kernel::aarch64::GicV3PrimaryCpu boot_gic{};
 os::kernel::MachinePhysicalLedger boot_physical_ledger{};
 os::kernel::MachineAddressSpace boot_kernel_space{};
 
-// TEMPORARY diagnostic: QEMU virt's PL011 is always at this fixed physical
-// address, and translation is off for the whole pre-MMU window, so this is
-// safe to use before boot_uart is discovered/mapped. Reverted once the M7.5g
-// silent-hang regression is found - see the CI run where cookie-qemu.log came
-// back completely empty despite the image linking and QEMU launching.
-void debug_checkpoint(char tag) noexcept {
-    auto* const raw = reinterpret_cast<volatile std::uint32_t*>(0x09000000ULL);
-    raw[0] = static_cast<std::uint32_t>(static_cast<unsigned char>(tag));
-}
-
 [[noreturn]] void halt() noexcept {
     asm volatile("msr daifset, #0xf" ::: "memory");
     for (;;) asm volatile("wfe" ::: "memory");
@@ -265,38 +255,18 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // across the MMU transition because the identity mapping below keeps the
     // address they point at.
     if (!os::kernel::aarch64::install_exception_vectors()) halt();
-    debug_checkpoint('1');
 
     const auto dtb_blob = bounded_dtb(dtb_physical);
     if (dtb_blob.empty()) halt();
-    debug_checkpoint('2');
 
     auto fdt = os::kernel::FdtView::parse(dtb_blob);
     if (!fdt) halt();
-    debug_checkpoint('3');
     auto inventory = os::kernel::discover_hardware(fdt.value());
-    debug_checkpoint('4');
     auto gic_topology = os::kernel::discover_gic_v3(fdt.value());
-    debug_checkpoint('5');
     auto timer = os::kernel::discover_architected_timer(fdt.value());
-    debug_checkpoint('6');
-    if (!inventory) debug_checkpoint('a');
-    if (inventory && inventory.value().memory_count == 0U) debug_checkpoint('b');
-    if (!gic_topology) {
-        debug_checkpoint('c');
-        const auto code = gic_topology.error().code;
-        if (code >= 90U && code <= 99U) {
-            debug_checkpoint(static_cast<char>('0' + (code - 90U)));
-        } else {
-            debug_checkpoint('?');
-        }
-    }
-    if (!timer) debug_checkpoint('d');
-    if (timer && (timer.value().trigger_flags & 0xFU) != 4U) debug_checkpoint('e');
     if (!inventory || inventory.value().memory_count == 0U ||
         !gic_topology || !timer ||
         (timer.value().trigger_flags & 0xFU) != 4U) halt();
-    debug_checkpoint('7');
 
     const auto image_begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(__cookie_image_start));
@@ -317,7 +287,6 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         inventory.value(), std::span<const HardwareRange>{protected_ranges},
         early_page_table_pages, runtime_stack_pages, page_size);
     if (!plan || !plan.value().valid()) halt();
-    debug_checkpoint('8');
 
     const std::array<HardwareRange, 4U> user_code_protected{
         image_range, dtb_range, plan.value().page_tables, plan.value().kernel_stack};
@@ -335,7 +304,6 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!user_stack) halt();
 
     install_first_user_program(user_code.value().base);
-    debug_checkpoint('9');
 
     os::kernel::aarch64::EarlyPageArena arena{
         plan.value().page_tables.base,
@@ -348,7 +316,6 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!os::kernel::machine_bind_address_space(
             boot_kernel_space, boot_physical_ledger) ||
         !os::kernel::aarch64_attach_early_stage1(boot_kernel_space, builder)) halt();
-    debug_checkpoint('A');
 
     if (!map_identity_symbols(
             boot_kernel_space, __cookie_text_start, __cookie_text_end,
@@ -390,17 +357,14 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             static_cast<std::uintptr_t>(user_stack.value().base),
             static_cast<std::size_t>(page_size)) ||
         !map_device_range(boot_kernel_space, gic_topology.value().distributor)) halt();
-    debug_checkpoint('B');
 
     for (std::size_t i = 0U; i < gic_topology.value().redistributor_count; ++i) {
         if (!map_device_range(boot_kernel_space, gic_topology.value().redistributors[i])) halt();
     }
-    debug_checkpoint('C');
 
     const auto* uart = find_pl011(inventory.value());
     if (uart == nullptr || !uart->registers.valid() ||
         !map_device_range(boot_kernel_space, uart->registers)) halt();
-    debug_checkpoint('D');
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
 
