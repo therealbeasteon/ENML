@@ -69,6 +69,23 @@ int main() {
     b.property(off_address_cells, two.data(), two.size());
     b.property(off_size_cells, two.data(), two.size());
 
+    // A sibling with cells this parser cannot represent as a decodable reg -
+    // /cpus declares #size-cells = <0> in every real ARM device tree, because
+    // a CPU's reg is an identifier rather than a range. QEMU virt always has
+    // this node. It has nothing to do with the GIC and must not poison
+    // discovery of the node that does - the exact regression that shipped
+    // in M7.5g and produced a completely silent boot hang under real QEMU,
+    // caught only because kernel-arm64-native's serial log came back empty.
+    std::array<std::byte, 4U> one{};
+    put_be32(one.data(), 1U);
+    std::array<std::byte, 4U> zero{};
+    put_be32(zero.data(), 0U);
+    b.u32(FdtView::token_begin_node);
+    b.padded_string("cpus");
+    b.property(off_address_cells, one.data(), one.size());
+    b.property(off_size_cells, zero.data(), zero.size());
+    b.u32(FdtView::token_end_node);
+
     b.u32(FdtView::token_begin_node);
     b.padded_string("interrupt-controller@8000000");
 

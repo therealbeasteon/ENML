@@ -48,6 +48,8 @@ int main() {
     require(!executable_alias);
     require(executable_alias.error().code == machine_errors::writable_executable_alias);
 
+    // A software-ledger retirement is forbidden while the page-table leaf is
+    // still valid. Hardware authority must disappear first.
     auto early_retire = space_a.retire_unmapped(va_a, 4096ULL);
     require(!early_retire);
     require(early_retire.error().code == machine_errors::mapping_ledger_inconsistent);
@@ -58,6 +60,8 @@ int main() {
     require(space_a.mapping_count() == 0U);
     require(ledger.occupied == 0U);
 
+    // Once the writable translation and its machine-wide authority are both
+    // gone, the physical page may legitimately be admitted executable.
     require(static_cast<bool>(space_b.map(
         va_b, physical, 4096ULL,
         MachinePermissions::read_execute, MachineMemoryKind::normal)));

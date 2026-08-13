@@ -143,6 +143,10 @@ public:
         return error(machine_errors::not_mapped);
     }
 
+    // Retires software authority only after the caller has cleared the hardware
+    // descriptors and completed the architectural TLB invalidation sequence.
+    // Every leaf is re-read here so ordering bugs cannot silently leave a valid
+    // translation after the physical W^X ledger says the mapping is gone.
     [[nodiscard]] os::core::Result<void> retire_unmapped(
         std::uint64_t virtual_base,
         std::uint64_t length) noexcept {
