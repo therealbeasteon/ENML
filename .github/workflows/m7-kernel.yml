@@ -151,10 +151,17 @@ jobs:
           status=$?
           set -e
           cat cookie-qemu.log
-          echo '--- QEMU diagnostic head ---'
-          head -n 180 cookie-qemu-debug.log || true
+          echo '--- QEMU first-exception instruction window ---'
+          first_exception=$(grep -n -m1 'Taking exception' cookie-qemu-debug.log | cut -d: -f1 || true)
+          if [[ -n "$first_exception" ]]; then
+            begin=$(( first_exception > 140 ? first_exception - 140 : 1 ))
+            end=$(( first_exception + 25 ))
+            sed -n "${begin},${end}p" cookie-qemu-debug.log || true
+          else
+            tail -n 260 cookie-qemu-debug.log || true
+          fi
           echo '--- QEMU diagnostic tail ---'
-          tail -n 250 cookie-qemu-debug.log || true
+          tail -n 80 cookie-qemu-debug.log || true
           if [[ $status -ne 0 && $status -ne 124 ]]; then
             exit "$status"
           fi
