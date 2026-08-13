@@ -25,15 +25,15 @@ int main() {
         reinterpret_cast<std::uintptr_t>(memory.data()));
     EarlyPageArena arena{begin, begin + memory.size()};
     EarlyStage1Builder builder{arena};
-    require(builder.initialize());
+    require(static_cast<bool>(builder.initialize()));
     auto sealed = TranslationRootSealer::seal(builder);
-    require(sealed);
+    require(static_cast<bool>(sealed));
 
     AddressSpaceEpochAuthority epochs{};
     ProcessTranslationTable translations{};
     auto epoch = epochs.acquire();
-    require(epoch);
-    require(translations.bind(7U, epoch.value(), sealed.value(), epochs));
+    require(static_cast<bool>(epoch));
+    require(static_cast<bool>(translations.bind(7U, epoch.value(), sealed.value(), epochs)));
 
     const UserRange good{.address = 0x1000ULL, .length = 64U};
     auto ticket = prepare_user_access(
@@ -52,7 +52,7 @@ int main() {
         UserAccessIntent::write_to_user, translations, epochs));
 
     auto retiring = epochs.begin_retire(epoch.value());
-    require(retiring);
+    require(static_cast<bool>(retiring));
     require(!user_access_still_live(ticket.value(), translations, epochs));
     require(!prepare_user_access(
         7U, epoch.value(), good, UserAccessIntent::write_to_user,
