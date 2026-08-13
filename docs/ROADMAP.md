@@ -302,7 +302,7 @@ no branch, no document; M7.10 is built and enforced by this change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 5,639 lines, a ratchet rather than the 605-line
+  ceiling is the measured 7,505 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -331,11 +331,11 @@ cannot be laundered between them:
 
 | Category | Lines |
 | --- | --- |
-| core — privileged portable runtime | 1,674 |
-| machine — the AArch64 port | 2,174 |
+| core — privileged portable runtime | 2,872 |
+| machine — the AArch64 port | 2,661 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,221 |
-| entry — reset vector, freestanding memory | 570 |
-| **total** | **5,639** |
+| entry — reset vector, freestanding memory | 751 |
+| **total** | **7,505** |
 
 `core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -393,7 +393,17 @@ fixed by passing the still-current since-`start()` timestamp to the
 contention-detecting `reschedule()` call instead of a fresh clock read;
 `machine_set_timer()` reads the real hardware counter internally, so the
 deadline it arms stays correct relative to actual elapsed time regardless.
-None of it is discretionary — see
+An eighth raise, by M7.6a, is Cookie's own native IPC replacing the
+Linux-substrate transport M8 exists to retire: 1,674 → 2,872 in `core` for
+capability-addressed endpoints, continuations and the reply-seal syscall
+surface; 2,174 → 2,661 in `machine` for the AArch64 side of that surface
+plus bounded user-memory copy with an explicit fault guard — a syscall
+copying from an untrusted pointer without one is the kernel analogue of the
+cache-attack class this project already refuses to ship AES with; 570 → 751
+in `entry` for wiring it through boot. Reply seals exist so a capability
+that answered one request cannot be replayed against a second it was never
+granted for — the most exposed surface to unprivileged callers landed so
+far. total 5,639 → 7,505. None of it is discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 

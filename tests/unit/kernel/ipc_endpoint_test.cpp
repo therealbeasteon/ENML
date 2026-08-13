@@ -14,15 +14,15 @@ int main() {
     constexpr ThreadId attacker = 30U;
 
     Rendezvous rendezvous{};
-    require(rendezvous.create_thread(client));
-    require(rendezvous.create_thread(server));
-    require(rendezvous.create_thread(attacker));
+    require(static_cast<bool>(rendezvous.create_thread(client)));
+    require(static_cast<bool>(rendezvous.create_thread(server)));
+    require(static_cast<bool>(rendezvous.create_thread(attacker)));
 
     CapabilityTable capabilities{};
     IpcEndpointTable ipc{};
 
     auto endpoint = ipc.create(server);
-    require(endpoint);
+    require(static_cast<bool>(endpoint));
     require(ipc.active(endpoint.value()));
     require(ipc.active_endpoint_count() == 1U);
 
@@ -36,7 +36,7 @@ int main() {
         attacker, object, ipc_right_receive, false);
     require(server_cap && client_cap && wrong_rights);
 
-    require(ipc.send(client, client_cap.value(), capabilities, rendezvous));
+    require(static_cast<bool>(ipc.send(client, client_cap.value(), capabilities, rendezvous)));
     require(ipc.pending_call_count() == 1U);
     auto received = ipc.receive(
         server, server_cap.value(), capabilities, rendezvous);
@@ -45,7 +45,7 @@ int main() {
     require(ipc.active_reply_seal_count() == 1U);
 
     require(!ipc.reply(attacker, received.value().reply, rendezvous));
-    require(ipc.reply(server, received.value().reply, rendezvous));
+    require(static_cast<bool>(ipc.reply(server, received.value().reply, rendezvous)));
     require(!ipc.reply(server, received.value().reply, rendezvous));
     require(ipc.pending_call_count() == 0U);
     require(ipc.active_reply_seal_count() == 0U);
@@ -53,14 +53,14 @@ int main() {
     require(wake && wake.value() == WakeReason::replied);
 
     require(!ipc.send(client, client_cap.value(), capabilities, rendezvous));
-    require(ipc.take_reply(client));
+    require(static_cast<bool>(ipc.take_reply(client)));
     require(!ipc.take_reply(client));
 
     require(!ipc.send(attacker, wrong_rights.value(), capabilities, rendezvous));
 
     auto waiting = ipc.receive(server, server_cap.value(), capabilities, rendezvous);
     require(waiting && !waiting.value().valid());
-    require(ipc.send(client, client_cap.value(), capabilities, rendezvous));
+    require(static_cast<bool>(ipc.send(client, client_cap.value(), capabilities, rendezvous)));
     auto delivered = ipc.receive(server, server_cap.value(), capabilities, rendezvous);
     require(delivered && delivered.value().valid());
     require(delivered.value().caller == client);
@@ -68,7 +68,7 @@ int main() {
     const auto stale_seal = delivered.value().reply;
     require(ipc.pending_call_count() == 1U);
 
-    require(ipc.retire(server, endpoint.value(), rendezvous));
+    require(static_cast<bool>(ipc.retire(server, endpoint.value(), rendezvous)));
     require(!ipc.active(endpoint.value()));
     require(ipc.pending_call_count() == 0U);
     require(ipc.active_reply_seal_count() == 0U);
@@ -80,7 +80,7 @@ int main() {
     require(server_state && server_state.value() == ThreadState::ready);
 
     auto replacement = ipc.create(server);
-    require(replacement);
+    require(static_cast<bool>(replacement));
     require(replacement.value().slot == endpoint.value().slot);
     require(replacement.value().generation != endpoint.value().generation);
     require(!ipc.send(client, client_cap.value(), capabilities, rendezvous));
@@ -92,18 +92,18 @@ int main() {
     auto replacement_client_cap = capabilities.mint(
         client, replacement_object, ipc_right_send, false);
     require(replacement_server_cap && replacement_client_cap);
-    require(ipc.send(client, replacement_client_cap.value(), capabilities, rendezvous));
+    require(static_cast<bool>(ipc.send(client, replacement_client_cap.value(), capabilities, rendezvous)));
     auto replacement_request = ipc.receive(
         server, replacement_server_cap.value(), capabilities, rendezvous);
     require(replacement_request && replacement_request.value().valid());
-    require(ipc.reply(server, replacement_request.value().reply, rendezvous));
-    require(ipc.take_reply(client));
+    require(static_cast<bool>(ipc.reply(server, replacement_request.value().reply, rendezvous)));
+    require(static_cast<bool>(ipc.take_reply(client)));
 
     // One server may own multiple endpoints, but a blocked receive is bound to
     // exactly one endpoint generation. Traffic to B must not satisfy a receive
     // waiting on A, even though both endpoints share the same server thread.
     auto endpoint_b = ipc.create(server);
-    require(endpoint_b);
+    require(static_cast<bool>(endpoint_b));
     const auto object_b = ipc_object_id(endpoint_b.value());
     auto server_cap_b = capabilities.mint(
         server, object_b, ipc_right_receive, false);
@@ -117,13 +117,13 @@ int main() {
     server_state = rendezvous.state_of(server);
     require(server_state && server_state.value() == ThreadState::receive_blocked);
 
-    require(ipc.send(attacker, attacker_cap_b.value(), capabilities, rendezvous));
+    require(static_cast<bool>(ipc.send(attacker, attacker_cap_b.value(), capabilities, rendezvous)));
     server_state = rendezvous.state_of(server);
     require(server_state && server_state.value() == ThreadState::receive_blocked);
     auto attacker_state = rendezvous.state_of(attacker);
     require(attacker_state && attacker_state.value() == ThreadState::send_blocked);
 
-    require(ipc.send(client, replacement_client_cap.value(), capabilities, rendezvous));
+    require(static_cast<bool>(ipc.send(client, replacement_client_cap.value(), capabilities, rendezvous)));
     server_state = rendezvous.state_of(server);
     require(server_state && server_state.value() == ThreadState::ready);
 
@@ -131,28 +131,28 @@ int main() {
         server, replacement_server_cap.value(), capabilities, rendezvous);
     require(only_a && only_a.value().valid());
     require(only_a.value().caller == client);
-    require(ipc.reply(server, only_a.value().reply, rendezvous));
-    require(ipc.take_reply(client));
+    require(static_cast<bool>(ipc.reply(server, only_a.value().reply, rendezvous)));
+    require(static_cast<bool>(ipc.take_reply(client)));
 
     auto then_b = ipc.receive(server, server_cap_b.value(), capabilities, rendezvous);
     require(then_b && then_b.value().valid());
     require(then_b.value().caller == attacker);
-    require(ipc.reply(server, then_b.value().reply, rendezvous));
-    require(ipc.take_reply(attacker));
+    require(static_cast<bool>(ipc.reply(server, then_b.value().reply, rendezvous)));
+    require(static_cast<bool>(ipc.take_reply(attacker)));
 
     // Retirement also owns the receiver side: a server blocked on an endpoint
     // is released when that exact endpoint generation is retired.
     auto endpoint_c = ipc.create(server);
-    require(endpoint_c);
+    require(static_cast<bool>(endpoint_c));
     const auto object_c = ipc_object_id(endpoint_c.value());
     auto server_cap_c = capabilities.mint(
         server, object_c, ipc_right_receive, false);
-    require(server_cap_c);
+    require(static_cast<bool>(server_cap_c));
     auto wait_c = ipc.receive(server, server_cap_c.value(), capabilities, rendezvous);
     require(wait_c && !wait_c.value().valid());
     server_state = rendezvous.state_of(server);
     require(server_state && server_state.value() == ThreadState::receive_blocked);
-    require(ipc.retire(server, endpoint_c.value(), rendezvous));
+    require(static_cast<bool>(ipc.retire(server, endpoint_c.value(), rendezvous)));
     server_state = rendezvous.state_of(server);
     require(server_state && server_state.value() == ThreadState::ready);
     auto server_wake = rendezvous.wake_reason_of(server);
