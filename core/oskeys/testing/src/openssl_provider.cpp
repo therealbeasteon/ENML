@@ -166,10 +166,18 @@ OpenSslTestKeyProvider::install_key(os::core::ByteSpan key_material) noexcept {
 
 os::core::Result<ProviderKeyReference>
 OpenSslTestKeyProvider::generate(KeyPurpose purpose) noexcept {
+    // The flat entry point stays application-only. A profile storage key is
+    // only meaningful beneath a user-profile root, and permitting one here
+    // would let a caller mint it with no root and therefore no scope check -
+    // which is the admission rule generate_under_root exists to apply.
     if (purpose != KeyPurpose::application_data_aead) {
         return key_error(errors::unsupported_purpose);
     }
+    return generate_material();
+}
 
+os::core::Result<ProviderKeyReference>
+OpenSslTestKeyProvider::generate_material() noexcept {
     std::array<std::byte, key_bytes> candidate{};
     if (RAND_bytes(
             reinterpret_cast<unsigned char*>(candidate.data()),
