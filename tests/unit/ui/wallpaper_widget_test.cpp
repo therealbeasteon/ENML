@@ -4,11 +4,7 @@
 #include <os/ui/wallpaper.hpp>
 #include <os/ui/widget.hpp>
 
-namespace {
-void require(bool condition) {
-    if (!condition) std::abort();
-}
-} // namespace
+namespace { void require(bool condition) { if (!condition) std::abort(); } }
 
 int main() {
     using namespace os::ui;
@@ -39,8 +35,7 @@ int main() {
     require(wallpaper_asset_valid(hd_scene));
     require(wallpaper_long_edge(hd_scene) == preferred_wallpaper_long_edge_px);
 
-    const auto rich_wallpaper = resolve_wallpaper_policy(
-        hd_scene, phone, QualityTier::ambient, false, false);
+    const auto rich_wallpaper = resolve_wallpaper_policy(hd_scene, phone, QualityTier::ambient, false, false);
     require(rich_wallpaper.depth_motion_allowed);
     require(rich_wallpaper.reveal_personal_detail);
 
@@ -48,8 +43,7 @@ int main() {
     sensitive.privacy = WallpaperPrivacyClass::sensitive;
     sensitive.lock_screen_safe = false;
     require(wallpaper_asset_valid(sensitive));
-    const auto locked_sensitive = resolve_wallpaper_policy(
-        sensitive, phone, QualityTier::ambient, true, false);
+    const auto locked_sensitive = resolve_wallpaper_policy(sensitive, phone, QualityTier::ambient, true, false);
     require(!locked_sensitive.depth_motion_allowed);
     require(!locked_sensitive.reveal_personal_detail);
     require(locked_sensitive.maximum_quality == QualityTier::continuity);
@@ -62,8 +56,9 @@ int main() {
     LivingTileContract weather {
         .kind = LivingTileKind::information,
         .size = LivingTileSize::wide,
-        .privacy = HomePrivacyClass::public_,
+        .privacy = HomePrivacyClass::public_metadata,
         .freshness = TileFreshnessClass::event_driven,
+        .containment = TileContainment::open_field,
         .action_count = 2U,
         .content_items = 6U,
         .resizeable = true,
@@ -72,17 +67,16 @@ int main() {
         .trusted_attribution = false,
     };
     require(living_tile_valid(weather));
-    const auto weather_presentation = resolve_living_tile_presentation(
-        weather, false, QualityTier::ambient, false);
+    const auto weather_presentation = resolve_living_tile_presentation(weather, false, QualityTier::ambient, false);
     require(weather_presentation.show_content);
     require(weather_presentation.allow_remote_refresh);
     require(weather_presentation.allow_motion);
+    require(weather_presentation.containment == TileContainment::open_field);
 
     LivingTileContract private_messages = weather;
     private_messages.kind = LivingTileKind::collection;
     private_messages.privacy = HomePrivacyClass::private_metadata;
-    const auto locked_messages = resolve_living_tile_presentation(
-        private_messages, true, QualityTier::continuity, false);
+    const auto locked_messages = resolve_living_tile_presentation(private_messages, true, QualityTier::continuity, false);
     require(!locked_messages.show_content);
     require(!locked_messages.allow_remote_refresh);
 
@@ -99,6 +93,16 @@ int main() {
     forged_system.kind = LivingTileKind::trusted_system;
     forged_system.trusted_attribution = false;
     require(!living_tile_valid(forged_system));
+
+    LivingTileContract generic_card = weather;
+    generic_card.containment = TileContainment::framed;
+    require(!living_tile_valid(generic_card));
+
+    LivingTileContract trusted_frame = weather;
+    trusted_frame.kind = LivingTileKind::trusted_system;
+    trusted_frame.trusted_attribution = true;
+    trusted_frame.containment = TileContainment::framed;
+    require(living_tile_valid(trusted_frame));
 
     return 0;
 }
