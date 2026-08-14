@@ -41,6 +41,25 @@ inline constexpr ObjectId address_space_object_tag_mask = 0xFFFF'0000'0000'0000U
 inline constexpr Rights address_space_right_hold = 1U << 0U;
 inline constexpr Rights address_space_right_destroy = 1U << 1U;
 
+// The right to create address spaces at all, held over the one object below
+// rather than over any particular space.
+inline constexpr Rights address_space_right_create = 1U << 2U;
+
+// The object that authorizes creation. It is the bare tag - slot 0,
+// generation 0 - and that encoding is free by construction rather than by
+// convention: address_space_object_id refuses generation 0, so no real space
+// can ever be named by it. Reserving it here costs no namespace and cannot
+// collide with a space that has not been created yet.
+//
+// This is transitional and should be said plainly. In the finished design the
+// authority to create a space is the authority over the page it is built
+// from - docs/M7_11_MEMORY.md's no-allocator decision makes memory the only
+// authority there is - and the caller already supplies that page. Memory
+// capabilities do not exist yet, so a distinguished object stands in for them.
+// When they land, this object should disappear rather than being kept beside
+// them: two answers to "who may create an address space" is one too many.
+inline constexpr ObjectId address_space_authority_object = address_space_object_tag;
+
 namespace address_space_syscall_errors {
 inline constexpr std::uint32_t invalid_capability = 260U;
 inline constexpr std::uint32_t invalid_page = 261U;

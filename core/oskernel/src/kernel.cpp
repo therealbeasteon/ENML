@@ -9,6 +9,79 @@ namespace {
     return os::core::make_error(os::core::ErrorDomain::kernel, code);
 }
 
+[[nodiscard]] constexpr os::core::Error address_space_error(std::uint32_t code) noexcept {
+    return os::core::make_error(os::core::ErrorDomain::kernel, code);
+}
+
+// The shared front half of every address-space call: the capability is held by
+// this thread right now, carries the right this operation needs, and names the
+// object it is supposed to name.
+//
+// One error for all three failures, deliberately. A caller learns that its
+// capability did not authorize this, not which of "you do not hold it", "you
+// hold it without that right" and "that is a capability over something else"
+// applied - the same reasoning M7.8's reply path uses to keep a stale
+// generation from distinguishing itself from a wrong thread.
+[[nodiscard]] os::core::Result<void> address_space_capability(
+    ThreadId thread,
+    CapabilityId capability,
+    const CapabilityTable& capabilities,
+    Rights required,
+    ObjectId object) noexcept {
+    if (thread == invalid_thread || capability == invalid_capability) {
+        return address_space_error(address_space_syscall_errors::invalid_capability);
+    }
+    if (!capabilities.holds(thread, capability)) {
+        return address_space_error(address_space_syscall_errors::invalid_capability);
+    }
+    auto description = capabilities.describe(capability);
+    if (!description) return description.error();
+    if ((description.value().rights & required) == 0U ||
+        description.value().object != object) {
+        return address_space_error(address_space_syscall_errors::invalid_capability);
+    }
+    return {};
+}
+
+// The same check for a capability over *some* space rather than a known one,
+// recovering which space it names. The object is not known in advance here, so
+// the tag is what proves this is an address-space capability at all.
+[[nodiscard]] os::core::Result<AddressSpaceIdentity> address_space_identity_for_capability(
+    ThreadId thread,
+    CapabilityId capability,
+    const CapabilityTable& capabilities,
+    Rights required) noexcept {
+    if (thread == invalid_thread || capability == invalid_capability) {
+        return os::core::Result<AddressSpaceIdentity>{
+            address_space_error(address_space_syscall_errors::invalid_capability)};
+    }
+    if (!capabilities.holds(thread, capability)) {
+        return os::core::Result<AddressSpaceIdentity>{
+            address_space_error(address_space_syscall_errors::invalid_capability)};
+    }
+    auto description = capabilities.describe(capability);
+    if (!description) return description.error();
+    if ((description.value().rights & required) == 0U ||
+        (description.value().object & address_space_object_tag_mask) !=
+            address_space_object_tag) {
+        return os::core::Result<AddressSpaceIdentity>{
+            address_space_error(address_space_syscall_errors::invalid_capability)};
+    }
+
+    const AddressSpaceIdentity identity{
+        static_cast<AddressSpaceSlot>(description.value().object & 0xFFFFULL),
+        static_cast<AddressSpaceGeneration>(
+            (description.value().object >> 16U) & 0xFFFF'FFFFULL),
+    };
+    // Catches the authority object, whose generation is zero: it carries the
+    // tag but names no space, so it must not be usable to destroy one.
+    if (!identity.valid()) {
+        return os::core::Result<AddressSpaceIdentity>{
+            address_space_error(address_space_syscall_errors::invalid_capability)};
+    }
+    return identity;
+}
+
 // The one check all three interrupt syscalls share: the capability is held
 // by this thread right now (fresh, not cached - a capability revoked between
 // attach and complete must not still authorize complete), names a source
@@ -388,6 +461,94 @@ os::core::Result<bool> Kernel::interrupt_complete(
     auto source = interrupt_source_for_capability(driver, source_capability, capabilities_);
     if (!source) return source.error();
     return interrupts_.end_service(driver, source.value());
+}
+
+os::core::Result<AddressSpaceCreation> Kernel::address_space_create(
+    ThreadId creator,
+    CapabilityId authority,
+    AddressSpaceEpochAuthority& epochs) noexcept {
+    auto checked = address_space_capability(
+        creator, authority, capabilities_,
+        address_space_right_create, address_space_authority_object);
+    if (!checked) return checked.error();
+
+    auto epoch = epochs.acquire();
+    if (!epoch) return epoch.error();
+
+    auto minted = capabilities_.mint(
+        creator, address_space_object_id(epoch.value().identity()),
+        address_space_right_hold | address_space_right_destroy, true);
+    if (!minted) {
+        // Give the slot back rather than leaking a lifetime nothing can name.
+        //
+        // A capability table full at exactly this moment would otherwise burn
+        // an epoch slot permanently: the space would be active, no capability
+        // would name it, and no destroy could reach it because destroy is
+        // reached through a capability. There are only 63 slots, so a caller
+        // that can provoke this repeatedly could exhaust address spaces
+        // entirely without ever holding one.
+        //
+        // Unwound through the ordinary two-phase retire, not a special path.
+        // Nothing has been built against this epoch - no tables, no TLB
+        // entries, no thread bound - so completing immediately is honest here
+        // in a way it would not be after the machine layer had touched it.
+        auto retiring = epochs.begin_retire(epoch.value());
+        if (retiring) {
+            auto completed = epochs.complete_retire(retiring.value());
+            (void)completed;
+        }
+        return minted.error();
+    }
+
+    return AddressSpaceCreation{
+        .epoch = epoch.value(),
+        .capability = minted.value(),
+    };
+}
+
+os::core::Result<RetiringAddressSpaceEpoch> Kernel::address_space_begin_destroy(
+    ThreadId owner,
+    CapabilityId space,
+    AddressSpaceEpochAuthority& epochs) noexcept {
+    auto identity = address_space_identity_for_capability(
+        owner, space, capabilities_, address_space_right_destroy);
+    if (!identity) return identity.error();
+
+    // resolve() is what refuses a capability over a space that has already
+    // been destroyed. It cannot be skipped by holding an old capability,
+    // because the generation is part of what was resolved.
+    auto epoch = epochs.resolve(identity.value());
+    if (!epoch) return epoch.error();
+    return epochs.begin_retire(epoch.value());
+}
+
+os::core::Result<void> Kernel::address_space_complete_destroy(
+    ThreadId owner,
+    CapabilityId space,
+    RetiringAddressSpaceEpoch retiring,
+    AddressSpaceEpochAuthority& epochs) noexcept {
+    auto identity = address_space_identity_for_capability(
+        owner, space, capabilities_, address_space_right_destroy);
+    if (!identity) return identity.error();
+
+    // The capability presented here must name the space actually being
+    // retired. Without this a holder of one space's destroy capability could
+    // complete another's retirement - releasing an ASID whose translations
+    // the machine layer may not have invalidated yet.
+    if (retiring.epoch.identity() != identity.value()) {
+        return address_space_error(address_space_syscall_errors::invalid_capability);
+    }
+
+    auto completed = epochs.complete_retire(retiring);
+    if (!completed) return completed.error();
+
+    // The space is gone, so the capability naming it must go too. Left live it
+    // would be a capability over an identity that resolve() now refuses -
+    // harmless today because every path re-resolves, and exactly the kind of
+    // dangling authority that stops being harmless the first time one does not.
+    auto revoked = capabilities_.revoke(owner, space);
+    if (!revoked) return revoked.error();
+    return {};
 }
 
 os::core::Result<Dispatch> Kernel::dispatch_interrupt(InterruptSource source) noexcept {

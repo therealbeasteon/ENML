@@ -43,6 +43,24 @@ os::core::Result<AddressSpaceEpoch> AddressSpaceEpochAuthority::acquire() noexce
         epoch_error(address_space_epoch_errors::exhausted)};
 }
 
+os::core::Result<AddressSpaceEpoch> AddressSpaceEpochAuthority::resolve(
+    AddressSpaceIdentity identity) const noexcept {
+    if (!identity.valid() || identity.slot >= slots_.size()) {
+        return os::core::Result<AddressSpaceEpoch>{
+            epoch_error(address_space_epoch_errors::stale)};
+    }
+    const auto& slot = slots_[identity.slot];
+    if (slot.state != State::active || slot.generation != identity.generation) {
+        return os::core::Result<AddressSpaceEpoch>{
+            epoch_error(address_space_epoch_errors::stale)};
+    }
+    return AddressSpaceEpoch{
+        .slot = identity.slot,
+        .generation = slot.generation,
+        .asid = asid_for_slot(identity.slot),
+    };
+}
+
 bool AddressSpaceEpochAuthority::active(AddressSpaceEpoch epoch) const noexcept {
     if (!epoch.valid() || epoch.slot >= slots_.size()) return false;
     const auto& slot = slots_[epoch.slot];
