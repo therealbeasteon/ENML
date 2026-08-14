@@ -85,6 +85,60 @@ The order is chosen so the tree stays green throughout, not by how much is left:
    deleting it early would leave the Linux-hosted build unconfined while the
    rest of the migration is still in progress.
 
+## The other dependency axis: third-party libraries
+
+Added 2026-08-14. Everything above maps *kernel* coupling — the headers and
+syscalls that mean talking to Linux. That is not the whole of "no external
+dependence", and the second axis had no map at all.
+
+Measured, not estimated. Four external packages appear in the build:
+
+| Package | Where | Gate |
+| --- | --- | --- |
+| OpenSSL | `core/oskeys` | `EMNL_BUILD_OPENSSL_TEST_PROVIDER` |
+| Freetype | `core/osui/platform/linux` | `EMNL_BUILD_LINUX_TEXT_BACKEND` |
+| ICU (`uc`, `i18n`) | `core/osui/platform/linux` | `EMNL_BUILD_LINUX_TEXT_BACKEND` |
+| HarfBuzz | `core/osui/platform/linux` | `EMNL_BUILD_LINUX_TEXT_BACKEND` |
+
+**The good news is structural and was already right: every one of them is
+opt-in, and the seams are in the correct place.** A default Cookie build links
+none of them. `EMNL_BUILD_LINUX_TEXT_BACKEND` additionally hard-errors on a
+non-Linux `CMAKE_SYSTEM_NAME`, so it cannot be switched on by accident on the
+target. Behind each is an ENML-owned interface rather than a leaked vendor API:
+`TextShaperBackend`/`FontAwareParagraphShaperBackend` are function-pointer
+boundaries in `core/osui/include/os/ui/text.hpp`, and `PersistentKeyProvider`
+is an interface whose OpenSSL implementation `AGENTS.md` already labels
+test-only. Nothing has to be re-architected to remove them.
+
+**The bad news is that a seam with nothing behind it is not a capability.** On
+Cookie today there is no text shaper, no font rasterizer and no Unicode
+character database — `os::ui::error::text_shaper_unavailable` is the honest
+answer the code already returns. A phone that cannot render text is not a phone,
+so this is on the critical path and it is larger than the whole IPC migration:
+shaping, rasterization and Unicode tables are three substantial subsystems, and
+each is a parsing surface handling untrusted input at a trust boundary, which is
+precisely the category `docs/M4_5_FUZZING_DEPTH.md` exists for.
+
+The decisions are not made here and should not be made casually. What this
+section fixes is that they were not previously *recorded as owed*:
+
+- **Font rasterization.** A rasterizer parses attacker-supplied font files. It
+  is a classic remote-code-execution surface, and "use the well-tested one" is
+  a real argument against writing one.
+- **Text shaping.** Complex-script shaping is where correctness and cultural
+  adequacy live. Getting this wrong is not a security bug, it is a product that
+  cannot be used in most of the world.
+- **Unicode data.** Tables, not code — the most mechanical to own and the
+  easiest to keep current, and a plausible first target.
+- **Key provider.** Distinct from the other three and already scheduled
+  elsewhere: `AGENTS.md` requires a production TPM/TEE/HSM provider and forbids
+  faking one in a kernel milestone. Phases 4–6 own it.
+
+Whether Cookie writes these, vendors them as reviewed source inside the trust
+boundary, or confines them in their own address spaces behind the existing
+seams, is a decision this document now demands rather than one the build makes
+by default.
+
 ## What "completely off Linux" will mean
 
 The gate reaching zero is necessary and not sufficient. Cookie is off Linux when
@@ -92,3 +146,9 @@ the tree builds and its gates pass with no Linux headers anywhere, on the
 emulated reference platform, with the Cookie Kernel underneath. Until then Linux
 remains the development host, which is a different claim from being the
 substrate and should not be reported as the same thing.
+
+And "off Linux" is still not the same as "no external dependence". The
+coupling gate counts headers; it does not count linked libraries, and the four
+above would not move it by one file. A Cookie that boots its own kernel and
+still cannot draw a glyph without Freetype has met the first claim and not the
+second. Both are owed.
