@@ -202,10 +202,13 @@ than host tests:
    (an overflowing sum wraps to a small absolute value, which reads as
    already-expired — the exact opposite of the intent), and passes the absolute
    result to `ipc_arm_receive_continuation`.
-2. **Narrow at every scheduling decision.** Each `scheduler.choose()` result
-   passes through `narrow_decision_timer` with
-   `kernel.ipc_earliest_receive_deadline()` before the deadline authority
-   prepares it.
+2. ~~**Narrow at every scheduling decision.**~~ **Done.**
+   `PreemptionCoordinator::start`/`reschedule`/`on_timer` take an
+   `earliest_receive_deadline` and apply `narrow_decision_timer` inside
+   `apply_decision`, before `deadlines_.prepare()`. It defaults to zero, so
+   every existing caller keeps its exact behaviour — narrowing against no armed
+   receive is the identity. What remains for a caller is to pass
+   `kernel.ipc_earliest_receive_deadline()` instead of taking the default.
 3. **Drain on expiry.** The timer handler calls
    `ipc_take_expired_receive_continuation(now)` and, for each, `expire_receive`,
    and `complete_ipc_current` learns to see `deadline_expired` and return an
