@@ -703,11 +703,29 @@ not_kernel=(
 # once no CPU can be executing in the space, and the portable signature takes
 # the space and nothing else - it asks for a guarantee from an argument list
 # that cannot express it. The typed entry point takes the token that does.
+# Raised a twenty-ninth time, by donated page-table pages: machine 3,114 ->
+# 3,168, total 9,054 -> 9,108. core unchanged.
+#
+# EarlyPageArena gains a second source - pages a process hands over one at a
+# time - and works with no bump range at all, which is the post-boot shape.
+# This is M7.11's "the kernel does not need a pool because the caller supplies
+# the pages" made concrete, and it is what makes an address space creatable
+# after boot: there is nothing to allocate from, so the caller allocates.
+#
+# The enforcement is a composition rather than a new check, and that is why it
+# is cheap. aarch64_donate_table_page reserves the page as kernel_object before
+# donating it, and reserve_physical already re-checks live mappings and refuses
+# a range some process can still reach. A donor that has not unmapped its own
+# page is therefore rejected before that page becomes a translation table it
+# could keep writing - the hole the reservation work closed, reached from the
+# other direction. The "declaring is not retroactive blessing" re-check written
+# for boot, which boot itself never exercises, is exactly what does the work
+# here.
 core_ceiling=3535
-machine_ceiling=3114
+machine_ceiling=3168
 discovery_ceiling=1272
 entry_ceiling=1133
-total_ceiling=9054
+total_ceiling=9108
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

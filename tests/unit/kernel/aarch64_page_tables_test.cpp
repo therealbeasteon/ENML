@@ -181,5 +181,79 @@ int main() {
     auto retired_user = builder.mapped(user_va);
     require(retired_user && !retired_user.value());
 
+    // ---------------------------------------------------------------------
+    // Donated pages: the post-boot source, and a donation-only arena.
+    // ---------------------------------------------------------------------
+    {
+        alignas(4096) std::array<std::byte, 4U * 4096U> donations{};
+        const auto base = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(donations.data()));
+
+        // No bump range at all. This is the shape after boot: nothing was
+        // planned for this space before any process existed.
+        EarlyPageArena donated{};
+        require(!donated.valid());
+        require(donated.remaining_pages() == 0U);
+        require(!donated.allocate_page());
+
+        require(static_cast<bool>(donated.donate(base)));
+        require(donated.valid());
+        require(donated.remaining_pages() == 1U);
+        require(donated.donated_pages() == 1U);
+
+        // The same page twice would be handed out twice and become two
+        // different tables at once.
+        auto twice = donated.donate(base);
+        require(!twice);
+        require(twice.error().code == machine_errors::already_mapped);
+
+        require(static_cast<bool>(donated.donate(base + 4096ULL)));
+        auto taken = donated.allocate_page();
+        require(static_cast<bool>(taken));
+        require(taken.value() == base + 4096ULL);
+        require(donated.remaining_pages() == 1U);
+        auto taken_again = donated.allocate_page();
+        require(static_cast<bool>(taken_again));
+        require(taken_again.value() == base);
+        require(donated.remaining_pages() == 0U);
+        require(!donated.allocate_page());
+
+        // Unaligned and null donations are refused.
+        require(!donated.donate(base + 8ULL));
+        require(!donated.donate(0ULL));
+
+        // A donation-only arena really does build tables.
+        EarlyPageArena live{};
+        for (std::size_t i = 0U; i < 4U; ++i) {
+            require(static_cast<bool>(live.donate(base + i * 4096ULL)));
+        }
+        EarlyStage1Builder donated_builder{live};
+        auto donated_root = donated_builder.initialize();
+        require(static_cast<bool>(donated_root));
+        require(donated_root.value() != 0ULL);
+
+        // Donations are preferred over a bump range, so boot's finite budget is
+        // kept for the case that cannot be topped up.
+        alignas(4096) std::array<std::byte, 2U * 4096U> bump{};
+        const auto bump_base = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(bump.data()));
+        EarlyPageArena mixed{bump_base, bump_base + bump.size()};
+        require(mixed.remaining_pages() == 2U);
+        require(static_cast<bool>(mixed.donate(base)));
+        require(mixed.remaining_pages() == 3U);
+        auto mixed_first = mixed.allocate_page();
+        require(static_cast<bool>(mixed_first));
+        require(mixed_first.value() == base);
+        auto mixed_second = mixed.allocate_page();
+        require(static_cast<bool>(mixed_second));
+        require(mixed_second.value() == bump_base);
+
+        // A page inside the bump range cannot also be donated - it would be
+        // handed out by both paths.
+        auto overlap = mixed.donate(bump_base + 4096ULL);
+        require(!overlap);
+        require(overlap.error().code == machine_errors::already_mapped);
+    }
+
     return 0;
 }

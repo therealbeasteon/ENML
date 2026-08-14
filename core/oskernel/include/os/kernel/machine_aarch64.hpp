@@ -65,6 +65,23 @@ struct MachineAddressSpace final {
     MachineAddressSpace& space,
     RetiringAddressSpaceEpoch retiring) noexcept;
 
+// Hands one page a process already holds authority over to `space`, for
+// translation structures.
+//
+// This is the operation that makes address-space creation possible after boot:
+// the kernel has no pool to draw from, so the caller supplies the page. It is
+// also the operation with the sharpest failure mode, and the enforcement is a
+// composition rather than a new check - the page is first reserved as
+// kernel_object owned by this space, and `reserve_physical` refuses a range any
+// process can still reach. A donor that has not unmapped its own page is
+// therefore rejected here, before the page becomes a table it could still
+// write. Reserving *before* donating is the whole ordering: the reverse would
+// leave a window in which the page is a live table and still mappable.
+[[nodiscard]] os::core::Result<void> aarch64_donate_table_page(
+    MachineAddressSpace& space,
+    aarch64::EarlyPageArena& arena,
+    std::uintptr_t physical) noexcept;
+
 [[nodiscard]] os::core::Result<void> aarch64_map_user(
     MachineAddressSpace& space,
     std::uintptr_t virtual_base,

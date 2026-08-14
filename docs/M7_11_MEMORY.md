@@ -85,7 +85,25 @@ single-CPU today and this is the interface shape that stays correct when it is
 not, because the caller establishes the property rather than the machine layer
 guessing it locally.
 
-**Creation after boot is still missing**, and it is the remaining half.
+**Creation after boot: the page source exists.** `EarlyPageArena` now takes
+donated pages as well as a bump range, and works with no bump range at all -
+which is the post-boot shape, because nothing was planned for a space created
+after any process existed. `aarch64_donate_table_page` is the enforcement point,
+and the enforcement is a composition rather than a new rule: it reserves the
+page as `kernel_object` before donating it, and `reserve_physical` already
+refuses a range some process can still reach. A donor that has not unmapped its
+own page is rejected before that page becomes a translation table it could keep
+writing.
+
+That is the reservation hole closed from the other direction, and it is worth
+noticing which piece did the work: the "declaring is not retroactive blessing"
+re-check, written for boot and never exercised by boot, is what catches the
+donor. It was justified at the time as covering a caller that does not declare
+before it maps. This is that caller.
+
+**Still missing: the create call itself** - minting an epoch, initializing a
+builder from donated pages, sealing a root and binding a space, as one
+capability-gated operation. Every part it needs now exists.
 
 **There is no fault path.** `cookie_aarch64_unhandled_exception` prints
 `COOKIE:PANIC:EXCEPTION` and halts. It does not read `ESR_EL1` or `FAR_EL1`. A

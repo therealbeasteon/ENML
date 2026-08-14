@@ -87,6 +87,32 @@ os::core::Result<void> aarch64_reserve_physical(
         kind);
 }
 
+os::core::Result<void> aarch64_donate_table_page(
+    MachineAddressSpace& space,
+    aarch64::EarlyPageArena& arena,
+    std::uintptr_t physical) noexcept {
+    if (space.early_builder == nullptr || space.physical_ledger == nullptr) {
+        return machine_error(machine_errors::address_space_unbound);
+    }
+
+    // Reserve first. reserve_physical re-checks every live mapping of the range
+    // and refuses if any is user-accessible, so a donor that still has the page
+    // mapped is rejected before the page can become a translation table it
+    // could keep writing.
+    auto reserved = space.mappings.reserve_physical(
+        static_cast<std::uint64_t>(physical),
+        aarch64::architectural_page_size,
+        aarch64::PhysicalReservationKind::kernel_object);
+    if (!reserved) return reserved.error();
+
+    // If the arena refuses the page the reservation stands, and that is the
+    // safe direction: a reserved page nobody uses is wasted, an unreserved page
+    // in use as a table is a hole. Releasing it here would also be wrong, since
+    // release_reservations drops every reservation this space owns and cannot
+    // undo just this one.
+    return arena.donate(static_cast<std::uint64_t>(physical));
+}
+
 os::core::Result<void> aarch64_map_user(
     MachineAddressSpace& space,
     std::uintptr_t virtual_base,
