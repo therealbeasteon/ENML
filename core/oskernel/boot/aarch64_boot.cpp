@@ -982,8 +982,7 @@ extern "C" void cookie_aarch64_irq_dispatch(
     for (;;) {
         auto expired = boot_kernel.ipc_expire_one_receive(now);
         if (!expired) {
-            uart_write("COOKIE:PANIC:IPC_EXPIRY
-");
+            uart_write("COOKIE:PANIC:IPC_EXPIRY\n");
             halt();
         }
         if (!expired.value()) break;
