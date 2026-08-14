@@ -25,10 +25,10 @@ so that lines cannot be moved between categories to get under a ceiling:
 | Category | Lines | Ceiling | What it is |
 | --- | --- | --- | --- |
 | core | 3,117 | 3,117 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the ABI |
-| machine | 2,772 | 2,772 | The AArch64 port and the `machine.hpp` contract it satisfies |
-| discovery | 1,234 | 1,234 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, architected timer discovery, boot memory planning |
-| entry | 867 | 867 | Reset vector, freestanding memory primitives, the boot routine, syscall-entry decode/dispatch of the three interrupt calls |
-| **total** | **7,990** | **7,990** | |
+| machine | 2,790 | 2,790 | The AArch64 port and the `machine.hpp` contract it satisfies, including GICv3 device-PPI mask/unmask |
+| discovery | 1,272 | 1,272 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, architected timer discovery (physical and virtual PPIs), boot memory planning |
+| entry | 892 | 892 | Reset vector, freestanding memory primitives, the boot routine, syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing |
+| **total** | **8,071** | **8,071** | |
 
 `core` is the number comparable to QNX's 605. The others are trusted but are not
 what that figure described.
@@ -80,7 +80,7 @@ The script prints this on every run, pass or fail, so the distance stays visible
 rather than becoming something the project stopped mentioning:
 
 - `core` is **5.2x** the QNX microkernel. It must shed **2,512 lines** to reach 605.
-- The whole trusted image is **7,990 lines**, against 15,930 for the entire QNX
+- The whole trusted image is **8,071 lines**, against 15,930 for the entire QNX
   operating system including filesystem, device manager, networking and drivers.
 
 The second comparison is the uncomfortable one and it is the honest one. Cookie

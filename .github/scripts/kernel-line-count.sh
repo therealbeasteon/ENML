@@ -401,11 +401,33 @@ not_kernel=(
 # yet - the driver process that will is the remaining gap, tracked separately
 # - so this diff is reviewable on its own terms: decode and dispatch, matching
 # an already-tested Kernel:: composition, nothing more.
+# Raised a thirteenth time, by M7.9's third increment: machine 2,772 -> 2,790,
+# discovery 1,234 -> 1,272, entry 867 -> 892, total 7,990 -> 8,071. This closes
+# the second of the four gaps docs/M7_9_USER_SPACE_DRIVERS.md named:
+# machine-layer routing for a real, non-timer GICv3 device source.
+# discover_architected_timer now also decodes the same DTB node's virtual-
+# timer entry (discovery) - reused as M7.9's stand-in device source rather
+# than inventing a UART or virtio-mmio driver just to prove the capability
+# path, per the design doc's own recorded answer to "which device source the
+# first proof uses." initialize_gic_v3_primary_cpu configures both PPIs
+# identically but leaves the device PPI disabled until something attaches to
+# it, and gic_v3_set_ppi_masked gives the syscall entry a way to move it
+# between enabled and disabled at that and every later transition (machine).
+# cookie_aarch64_irq_dispatch gains a second branch, structurally parallel to
+# the timer's, that routes the device PPI through Kernel::dispatch_interrupt()
+# instead of PreemptionCoordinator and masks unconditionally afterward -
+# InterruptTable has no slot to ask for a spurious assertion, and leaving an
+# asserting line enabled with nobody to charge it to is a livelock at the
+# controller regardless of whose fault it is (entry); the same masking
+# discipline extends to the interrupt_attach/detach/complete syscall handlers
+# PR #74 landed, which decoded these calls but did not yet touch GIC state.
+# No caller exercises any of this yet - the driver process that will is M7.9's
+# last gap.
 core_ceiling=3117
-machine_ceiling=2772
-discovery_ceiling=1234
-entry_ceiling=867
-total_ceiling=7990
+machine_ceiling=2790
+discovery_ceiling=1272
+entry_ceiling=892
+total_ceiling=8071
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

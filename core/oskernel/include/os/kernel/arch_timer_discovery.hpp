@@ -39,10 +39,25 @@ struct ArchitectedTimerDiscovery final {
     std::uint32_t trigger_flags {0U};
     std::uint32_t raw_trigger_flags {0U};
 
+    // The same node's non-secure virtual timer entry, decoded the same way.
+    // M7.9 reuses this PPI as a stand-in device source - real hardware the
+    // kernel does not otherwise touch, discovered rather than invented, so
+    // the first driver process attaches to something the machine actually
+    // asserts instead of a source nobody can trigger. See
+    // docs/M7_9_USER_SPACE_DRIVERS.md, "Which device source the first proof
+    // uses."
+    std::uint32_t virtual_intid {0U};
+    std::uint32_t virtual_trigger_flags {0U};
+    std::uint32_t virtual_raw_trigger_flags {0U};
+
     [[nodiscard]] constexpr bool valid() const noexcept {
         return nonsecure_physical_intid >= 16U && nonsecure_physical_intid < 1120U &&
                trigger_flags == dt_irq_level_high &&
-               architected_timer_trigger_supported(raw_trigger_flags);
+               architected_timer_trigger_supported(raw_trigger_flags) &&
+               virtual_intid >= 16U && virtual_intid < 1120U &&
+               virtual_intid != nonsecure_physical_intid &&
+               virtual_trigger_flags == dt_irq_level_high &&
+               architected_timer_trigger_supported(virtual_raw_trigger_flags);
     }
 };
 

@@ -25,7 +25,7 @@ Measured on `main` at `ed26bf6`, not claimed:
 | Trusted phone shell and product security (M4) | Through M4.15 merged; **exit criteria not all verified** |
 | Verified boot evidence (M5) | Designed and tested; nothing produces the evidence |
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
-| Cookie Kernel (M7) | Through M7.8 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption**; M7.9 underway — capability-gated interrupt attach/detach/complete and syscall-entry decode/dispatch landed, machine-layer device routing and the end-to-end proof remain |
+| Cookie Kernel (M7) | Through M7.8 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption**; M7.9 underway — capability-gated attach/detach/complete, syscall-entry decode/dispatch and machine-layer device routing landed; the end-to-end proof remains |
 
 Roughly 49,000 lines of implementation against 29,000 lines of test, both grown
 by the backlog rather than by new work. Zero `TODO`/`FIXME`/`HACK` markers in
@@ -305,7 +305,7 @@ and removes a class of fault; the second is what exists and is one careless
 `CMakeLists.txt` edit away from returning. No decision has been made.
 
 Then M7.9, which the roadmap called unstarted for longer than it was true. It
-has a design document now, `docs/M7_9_USER_SPACE_DRIVERS.md`, and two of its
+has a design document now, `docs/M7_9_USER_SPACE_DRIVERS.md`, and three of its
 four named gaps are closed; M7.10 is built and enforced by this change:
 
 - **M7.9 — user-space driver framework.** Interrupt handlers inside driver
@@ -314,12 +314,15 @@ four named gaps are closed; M7.10 is built and enforced by this change:
   than aspirational. Landed: capability-gated `interrupt_attach`/
   `interrupt_detach`/`interrupt_complete` at the `Kernel` composition layer,
   host-tested; `cookie_kernel_syscall_entry` decoding and dispatching all
-  three from EL0. Remaining: machine-layer GICv3 routing for a real device
-  source, and the end-to-end QEMU proof a real driver process gives it.
+  three from EL0; machine-layer GICv3 routing of a real device source — the
+  discovered virtual-timer PPI, reused as a stand-in — through
+  `Kernel::dispatch_interrupt()`, mask-until-complete enforced at the
+  controller by the same syscall handlers. Remaining: the end-to-end QEMU
+  proof a real driver process gives it.
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 7,990 lines, a ratchet rather than the 605-line
+  ceiling is the measured 8,071 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -349,10 +352,10 @@ cannot be laundered between them:
 | Category | Lines |
 | --- | --- |
 | core — privileged portable runtime | 3,117 |
-| machine — the AArch64 port | 2,772 |
-| discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,234 |
-| entry — reset vector, freestanding memory, interrupt syscall decode | 867 |
-| **total** | **7,990** |
+| machine — the AArch64 port | 2,790 |
+| discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
+| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing | 892 |
+| **total** | **8,071** |
 
 `core` is the figure comparable to QNX's 605, and it is 5.2× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -457,7 +460,25 @@ decodes and dispatches all three interrupt syscalls, failing closed on any
 does, and returns `interrupt_complete`'s must-service-again answer in `x0`
 the way a completed receive already returns its byte count there. No caller
 exercises the path yet — the driver process that will is the remaining gap.
-None of it is discretionary — see
+A thirteenth raise, by M7.9's third increment, closes a second: machine
+2,772 → 2,790, discovery 1,234 → 1,272, entry 867 → 892, total
+7,990 → 8,071. `discover_architected_timer` now also decodes the same DTB
+node's virtual-timer entry — reused as M7.9's stand-in device source rather
+than building a UART or virtio-mmio driver just to prove the capability path,
+the design doc's own recorded answer to which source the first proof uses
+(discovery). `initialize_gic_v3_primary_cpu` configures both PPIs identically
+but leaves the device PPI disabled until something attaches to it, and a new
+`gic_v3_set_ppi_masked` moves it between enabled and disabled at every
+transition after that (machine). `cookie_aarch64_irq_dispatch` gains a second
+branch, structurally parallel to the timer's, that routes the device PPI
+through `Kernel::dispatch_interrupt()` instead of `PreemptionCoordinator` and
+masks unconditionally afterward — `InterruptTable` has no slot to ask about
+for a spurious assertion, and leaving an asserting line enabled with nobody
+to charge it to is a livelock at the controller regardless of whose fault it
+is; the same masking now extends to the interrupt syscall handlers the
+twelfth raise landed, which decoded the three calls but did not yet touch
+GIC state (entry). No caller exercises any of this yet — the driver process
+that will is M7.9's last gap. None of it is discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 
@@ -490,11 +511,14 @@ Three of the five are met, one is partially met, one is not. Taken in order:
   met.** The timer half is real: GICv3 timer IRQs are delivered to EL1,
   correctly attributed, and drive the preemption above (M7.5g). The "device
   interrupts to user-space handlers" half — an arbitrary driver process owning
-  its own interrupt line — is landed at the capability and syscall layers
-  (`docs/M7_9_USER_SPACE_DRIVERS.md`: capability-gated attach/detach/complete,
-  and `cookie_kernel_syscall_entry` decoding all three) but not yet proven end
-  to end. Machine-layer GICv3 routing for a real device source and a QEMU
-  boot proof with a real driver process remain.
+  its own interrupt line — is landed at the capability, syscall and
+  machine-routing layers (`docs/M7_9_USER_SPACE_DRIVERS.md`: capability-gated
+  attach/detach/complete; `cookie_kernel_syscall_entry` decoding all three;
+  `cookie_aarch64_irq_dispatch` routing the discovered virtual-timer PPI
+  through `Kernel::dispatch_interrupt()` with mask-until-complete enforced at
+  the controller) but not yet proven end to end. A QEMU boot proof with a
+  real driver process remains — nothing has attached to the source yet, so
+  none of this has executed outside its host tests.
 - *Passes the full EMNL wire-format and capability fuzz corpus* — **not met,
   and not currently measurable.** `fuzz/` gained an `ipc/` target during this
   stack, but it fuzzes `os::ipc` — the service-layer RPC decoder used over the
@@ -506,7 +530,7 @@ Three of the five are met, one is partially met, one is not. Taken in order:
   small enough to review completely applies with more force, not less, to the
   part that parses untrusted syscall arguments from unprivileged EL0 code.
 - *Reports a trusted line count under the declared ceiling* — **met**, and has
-  been since M7.10 landed. The ceiling moved twelve times across this stack —
+  been since M7.10 landed. The ceiling moved thirteen times across this stack —
   once per milestone plus two defect fixes — each raise landing in the same diff
   as the lines it covers, with the justification recorded in
   `.github/scripts/kernel-line-count.sh` and restated in
@@ -662,6 +686,5 @@ is merged and none of its exit criteria are met, which is a different kind of
 remaining work from integration — closing the Storage seam, paying or cutting
 the coercion-resistance debt, and building a network path that the admission
 policy can govern. Phase 2's M7.5e–M7.8 stack is landed; M7.10 is built and
-enforced; M7.9 is underway with two of its four named gaps closed and two
-remaining — machine-layer device routing and the end-to-end proof. Phase 3
-onward is genuine new engineering.
+enforced; M7.9 is underway with three of its four named gaps closed and one
+remaining — the end-to-end proof. Phase 3 onward is genuine new engineering.

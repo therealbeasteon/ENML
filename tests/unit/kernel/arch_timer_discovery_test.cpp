@@ -106,6 +106,10 @@ int main() {
     require(timer.value().nonsecure_physical_intid == 30U);
     require(timer.value().trigger_flags == dt_irq_level_high);
     require(timer.value().raw_trigger_flags == 0xF08U);
+    require(timer.value().virtual_intid == 27U);
+    require(timer.value().virtual_trigger_flags == dt_irq_level_high);
+    require(timer.value().virtual_raw_trigger_flags == 0xF08U);
+    require(timer.value().virtual_intid != timer.value().nonsecure_physical_intid);
     require(architected_timer_trigger_supported(timer.value().raw_trigger_flags));
     require(!architected_timer_trigger_supported(1U));
     require(!architected_timer_trigger_supported(2U));
