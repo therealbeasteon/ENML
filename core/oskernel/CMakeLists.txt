@@ -4,6 +4,7 @@ add_library(oskernel STATIC
     src/capability.cpp
     src/ipc_endpoint.cpp
     src/ipc_syscall.cpp
+    src/address_space_syscall.cpp
     src/ipc_continuation.cpp
     src/interrupt.cpp
     src/interrupt_delivery.cpp
@@ -90,6 +91,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/capability.cpp
             src/ipc_endpoint.cpp
             src/ipc_syscall.cpp
+            src/address_space_syscall.cpp
             src/ipc_continuation.cpp
             src/interrupt.cpp
             src/interrupt_delivery.cpp

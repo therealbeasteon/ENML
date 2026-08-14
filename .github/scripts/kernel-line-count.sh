@@ -153,6 +153,7 @@ core_files=(
     "core/oskernel/include/os/kernel/ipc_continuation.hpp"
     "core/oskernel/include/os/kernel/ipc_endpoint.hpp"
     "core/oskernel/include/os/kernel/ipc_syscall.hpp"
+    "core/oskernel/include/os/kernel/address_space_syscall.hpp"
     "core/oskernel/include/os/kernel/kernel.hpp"
     "core/oskernel/include/os/kernel/process_translation.hpp"
     "core/oskernel/include/os/kernel/rendezvous.hpp"
@@ -168,6 +169,7 @@ core_files=(
     "core/oskernel/src/ipc_continuation.cpp"
     "core/oskernel/src/ipc_endpoint.cpp"
     "core/oskernel/src/ipc_syscall.cpp"
+    "core/oskernel/src/address_space_syscall.cpp"
     "core/oskernel/src/kernel.cpp"
     "core/oskernel/src/process_translation.cpp"
     "core/oskernel/src/rendezvous.cpp"
@@ -739,11 +741,38 @@ not_kernel=(
 # relaxation is the smallest edit that breaks the cycle, and the alternative,
 # letting the creator own the new space's root reservation, would have put
 # teardown ownership in the wrong place.
-core_ceiling=3535
+#
+# Raised again, by M7.11's address-space syscall surface: core 3,535 -> 3,605,
+# total 9,131 -> 9,201. This is a raise to core, the category the QNX
+# comparison is about, so it needs the better argument.
+#
+# What the 70 lines buy is the object-id encoding, not the two decoders. The
+# decoders are almost trivial - reject zero, carry the rest through - and
+# deliberately so: they do not re-check page alignment or page ownership,
+# because aarch64_donate_table_page already refuses a page some process can
+# still reach, and a second weaker copy of that rule beside the enforcing one
+# is how the two come to disagree.
+#
+# The encoding is where the security content is. address_space_object_id folds
+# the generation into the identifier rather than naming a slot, so a capability
+# names one *lifetime* of an address space. M7.11's exit criteria require that
+# a stale reference to a destroyed space fail closed "with the same error a
+# wrong reference gets, not a distinguishing one" - and this shape delivers
+# that with no check written for the purpose. A capability over generation 4 of
+# slot 2 simply does not name generation 5 of slot 2, so the ordinary lookup
+# misses and returns the ordinary not-found error. The alternative, a slot-only
+# id plus a staleness comparison, costs fewer lines here and buys a check that
+# can be forgotten at one call site plus an answer that tells a holder its
+# space was replaced. Fewer lines, worse kernel.
+#
+# Two rights rather than one for the same reason interrupt sources have one:
+# there are genuinely two authorities. A pager needs to hold spaces it services
+# and must not be able to destroy them.
+core_ceiling=3605
 machine_ceiling=3191
 discovery_ceiling=1272
 entry_ceiling=1133
-total_ceiling=9131
+total_ceiling=9201
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
