@@ -54,6 +54,15 @@ public:
     [[nodiscard]] os::core::Result<IpcReceived> ipc_receive(
         ThreadId server,
         CapabilityId endpoint_capability) noexcept;
+    // M7.8.2, first increment - see ipc_endpoint.hpp's own overloads for what
+    // this does and does not yet close.
+    [[nodiscard]] os::core::Result<void> ipc_send(
+        ExecutionAuthority caller,
+        CapabilityId endpoint_capability,
+        IpcEnvelope request = {}) noexcept;
+    [[nodiscard]] os::core::Result<IpcReceived> ipc_receive(
+        ExecutionAuthority server,
+        CapabilityId endpoint_capability) noexcept;
     [[nodiscard]] os::core::Result<void> ipc_reply(
         ThreadId server,
         const IpcReplySeal& seal,

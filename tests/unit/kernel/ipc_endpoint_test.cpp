@@ -44,9 +44,10 @@ int main() {
 
     // M7.8 migration is fail-closed. A context-bound capability may have the
     // same numeric holder as this legacy IPC call, but the ThreadId-only path
-    // must not accept it. M7.8.2 introduces the explicit ExecutionAuthority IPC
-    // path; until then bound endpoint capabilities are deliberately unusable
-    // here rather than silently losing their generation binding.
+    // must not accept it rather than silently losing the generation binding.
+    // ipc_context_bound_test.cpp proves the other half: the same capabilities
+    // work through the ExecutionAuthority overloads M7.8.2's first increment
+    // added.
     constexpr ExecutionAuthority client_authority{
         client, AddressSpaceIdentity{1U, 9U}};
     constexpr ExecutionAuthority server_authority{

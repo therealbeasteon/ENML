@@ -230,8 +230,8 @@ os::core::Result<IpcEndpoint> IpcEndpointTable::endpoint_for_capability(
     auto description = capabilities.describe(capability);
     // This is the legacy ThreadId-only IPC path. It must fail closed for an
     // M7.8 context-bound capability rather than comparing only the reusable
-    // numeric holder. Context-bound IPC gets its own ExecutionAuthority path in
-    // M7.8.2; until then a bound capability is intentionally unusable here.
+    // numeric holder - the ExecutionAuthority overload just below is the
+    // usable path for one (M7.8.2's first increment).
     if (!description || description.value().context_bound ||
         !capabilities.holds(holder, capability)) {
         return ipc_error(ipc_errors::invalid_capability);
@@ -245,19 +245,41 @@ os::core::Result<IpcEndpoint> IpcEndpointTable::endpoint_for_capability(
     return endpoint.value();
 }
 
-os::core::Result<void> IpcEndpointTable::send(
+os::core::Result<IpcEndpoint> IpcEndpointTable::endpoint_for_capability(
+    ExecutionAuthority holder,
+    CapabilityId capability,
+    Rights required,
+    const CapabilityTable& capabilities) const noexcept {
+    if (!holder.valid() || capability == invalid_capability) {
+        return ipc_error(ipc_errors::invalid_capability);
+    }
+    auto description = capabilities.describe(capability);
+    // CapabilityTable::holds(ExecutionAuthority, ...) already fails closed
+    // for a non-context-bound capability - held_by requires context_bound -
+    // so this does not need its own mirror of the legacy overload's check
+    // above. Symmetry between the two overloads is enforced one layer down
+    // rather than duplicated here.
+    if (!description || !capabilities.holds(holder, capability)) {
+        return ipc_error(ipc_errors::invalid_capability);
+    }
+    if (!has_rights(description.value().rights, required)) {
+        return ipc_error(ipc_errors::wrong_rights);
+    }
+    auto endpoint = decode_endpoint_object(description.value().object);
+    if (!endpoint) return endpoint.error();
+    if (!active(endpoint.value())) return ipc_error(ipc_errors::stale_endpoint);
+    return endpoint.value();
+}
+
+os::core::Result<void> IpcEndpointTable::send_to_endpoint(
     ThreadId caller,
-    CapabilityId endpoint_capability,
-    const CapabilityTable& capabilities,
+    IpcEndpoint endpoint,
     Rendezvous& rendezvous,
     IpcEnvelope request) noexcept {
     if (!request.valid()) return ipc_error(ipc_errors::payload_too_large);
     if (completed_slot(caller) != nullptr) return ipc_error(ipc_errors::reply_unavailable);
 
-    auto endpoint = endpoint_for_capability(
-        caller, endpoint_capability, ipc_right_send, capabilities);
-    if (!endpoint) return endpoint.error();
-    auto* owner = slot_for(endpoint.value());
+    auto* owner = slot_for(endpoint);
     if (owner == nullptr) return ipc_error(ipc_errors::stale_endpoint);
 
     auto* pending = free_pending_slot();
@@ -270,7 +292,7 @@ os::core::Result<void> IpcEndpointTable::send(
     if (owner->receive_waiting) owner->receive_waiting = false;
 
     *pending = PendingSlot{
-        .endpoint = endpoint.value(),
+        .endpoint = endpoint,
         .caller = caller,
         .server = owner->server,
         .request = request,
@@ -280,15 +302,35 @@ os::core::Result<void> IpcEndpointTable::send(
     return {};
 }
 
-os::core::Result<IpcReceived> IpcEndpointTable::receive(
-    ThreadId server,
+os::core::Result<void> IpcEndpointTable::send(
+    ThreadId caller,
     CapabilityId endpoint_capability,
     const CapabilityTable& capabilities,
-    Rendezvous& rendezvous) noexcept {
+    Rendezvous& rendezvous,
+    IpcEnvelope request) noexcept {
     auto endpoint = endpoint_for_capability(
-        server, endpoint_capability, ipc_right_receive, capabilities);
+        caller, endpoint_capability, ipc_right_send, capabilities);
     if (!endpoint) return endpoint.error();
-    auto* owner = slot_for(endpoint.value());
+    return send_to_endpoint(caller, endpoint.value(), rendezvous, request);
+}
+
+os::core::Result<void> IpcEndpointTable::send(
+    ExecutionAuthority caller,
+    CapabilityId endpoint_capability,
+    const CapabilityTable& capabilities,
+    Rendezvous& rendezvous,
+    IpcEnvelope request) noexcept {
+    auto endpoint = endpoint_for_capability(
+        caller, endpoint_capability, ipc_right_send, capabilities);
+    if (!endpoint) return endpoint.error();
+    return send_to_endpoint(caller.thread, endpoint.value(), rendezvous, request);
+}
+
+os::core::Result<IpcReceived> IpcEndpointTable::receive_from_endpoint(
+    ThreadId server,
+    IpcEndpoint endpoint,
+    Rendezvous& rendezvous) noexcept {
+    auto* owner = slot_for(endpoint);
     if (owner == nullptr) return ipc_error(ipc_errors::stale_endpoint);
     if (owner->server != server) return ipc_error(ipc_errors::not_endpoint_owner);
     if (owner->receive_waiting) return ipc_error(ipc_errors::receive_already_waiting);
@@ -298,10 +340,10 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     if (!delivered) return delivered.error();
 
     if (delivered.value() != invalid_thread) {
-        pending = pending_slot(delivered.value(), endpoint.value());
+        pending = pending_slot(delivered.value(), endpoint);
         if (pending == nullptr) return ipc_error(ipc_errors::pending_call_missing);
     } else {
-        pending = pending_slot(endpoint.value());
+        pending = pending_slot(endpoint);
         if (pending == nullptr) {
             auto waiting = rendezvous.wait_receive(server);
             if (!waiting) return waiting.error();
@@ -329,7 +371,7 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     }
 
     const IpcReplySeal seal{
-        .endpoint = endpoint.value(),
+        .endpoint = endpoint,
         .transaction = next_transaction_++,
         .caller = pending->caller,
         .server = server,
@@ -341,6 +383,28 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
         .reply = seal,
         .request = pending->request,
     };
+}
+
+os::core::Result<IpcReceived> IpcEndpointTable::receive(
+    ThreadId server,
+    CapabilityId endpoint_capability,
+    const CapabilityTable& capabilities,
+    Rendezvous& rendezvous) noexcept {
+    auto endpoint = endpoint_for_capability(
+        server, endpoint_capability, ipc_right_receive, capabilities);
+    if (!endpoint) return endpoint.error();
+    return receive_from_endpoint(server, endpoint.value(), rendezvous);
+}
+
+os::core::Result<IpcReceived> IpcEndpointTable::receive(
+    ExecutionAuthority server,
+    CapabilityId endpoint_capability,
+    const CapabilityTable& capabilities,
+    Rendezvous& rendezvous) noexcept {
+    auto endpoint = endpoint_for_capability(
+        server, endpoint_capability, ipc_right_receive, capabilities);
+    if (!endpoint) return endpoint.error();
+    return receive_from_endpoint(server.thread, endpoint.value(), rendezvous);
 }
 
 os::core::Result<void> IpcEndpointTable::reply(
