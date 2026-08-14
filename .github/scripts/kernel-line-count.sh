@@ -671,11 +671,28 @@ not_kernel=(
 # It goes through the coordinator rather than around it because the clamp has
 # to reach deadlines_.prepare(); anything that arms the hardware without the
 # authority's knowledge produces an interrupt accept_interrupt discards.
-core_ceiling=3504
-machine_ceiling=3028
+# Raised a twenty-seventh time, completing bounded receive: core 3,504 ->
+# 3,535, machine 3,028 -> 3,038, entry 1,122 -> 1,134, total 8,926 -> 8,979.
+# KernelCall::receive now honours a deadline, and the ABI stops refusing one.
+#
+# The core lines are the drain (take the expired continuation, wake its thread)
+# and the consuming expiry read. That read is the part worth defending: every
+# other wake in this kernel is consumed by taking its payload - a reply is
+# taken, a delivered message is taken - but an expiry has nothing to take,
+# because the whole point is that no message arrived. Without a consuming read
+# the completion path reports the same timeout on every switch back to the
+# thread and overwrites its registers each time.
+#
+# The entry lines are the timer handler draining in a loop before it chooses,
+# so a waiter whose deadline has passed is runnable in *this* decision rather
+# than a slice later, and the two reschedule sites passing the earliest
+# deadline - the reschedule after a blocking receive is what arms the timer at
+# all, and on an idle system there is no later tick to fall back on.
+core_ceiling=3535
+machine_ceiling=3038
 discovery_ceiling=1272
-entry_ceiling=1122
-total_ceiling=8926
+entry_ceiling=1134
+total_ceiling=8979
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

@@ -320,6 +320,30 @@ std::uint64_t Kernel::ipc_earliest_receive_deadline() const noexcept {
     return ipc_continuations_.earliest_receive_deadline();
 }
 
+os::core::Result<bool> Kernel::ipc_expire_one_receive(
+    std::uint64_t now_nanoseconds) noexcept {
+    auto continuation = ipc_continuations_.take_expired_receive(now_nanoseconds);
+    if (!continuation) {
+        const auto error = continuation.error();
+        if (error.domain == os::core::ErrorDomain::kernel &&
+            error.code == ipc_continuation_errors::not_armed) {
+            return false;
+        }
+        return error;
+    }
+    // The continuation is already gone at this point. If the wake fails the
+    // slot must not be resurrected - a thread that cannot be woken is a thread
+    // whose address space died underneath it, and leaving the continuation
+    // armed would hold a deadline for a receiver that will never run.
+    auto woken = threads_.expire_receive(continuation.value().server);
+    if (!woken) return woken.error();
+    return true;
+}
+
+os::core::Result<bool> Kernel::ipc_take_deadline_expiry(ThreadId thread) noexcept {
+    return threads_.take_deadline_expiry(thread);
+}
+
 os::core::Result<IpcReceiveContinuation> Kernel::ipc_take_expired_receive_continuation(
     std::uint64_t now_nanoseconds) noexcept {
     return ipc_continuations_.take_expired_receive(now_nanoseconds);

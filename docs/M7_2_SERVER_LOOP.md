@@ -192,39 +192,33 @@ timer) and a shared parameter is a way for a later caller to pass the wrong one.
 Both keep the same guard: only a thread genuinely receive-blocked with no
 partner can be moved, so this is not an arbitrary thread-wakeup primitive.
 
-### What is still missing, precisely
+### Complete: the ABI no longer refuses
 
-Three things, all in the AArch64/boot tier and all needing the QEMU proof rather
-than host tests:
+`KernelCall::receive` honours a deadline. The receive syscall converts relative
+to absolute against `machine_monotonic_nanoseconds`, **saturating** — a relative
+deadline large enough to overflow the clock is a request to wait effectively
+forever, and a wrapped sum is a small absolute value that reads as already
+expired, the precise opposite. The timer handler drains expired waiters in a
+loop *before* it chooses, so a waiter whose deadline has passed is runnable in
+that decision rather than a slice later, and several deadlines falling inside
+one timer grain do not each need their own interrupt. Both reschedule sites pass
+the earliest deadline, because the reschedule following a blocking receive is
+what arms the timer at all — on an otherwise idle system there is no later tick
+to fall back on.
 
-1. **Convert and arm.** The receive syscall reads
-   `machine_monotonic_nanoseconds()`, adds the relative deadline *saturating*
-   (an overflowing sum wraps to a small absolute value, which reads as
-   already-expired — the exact opposite of the intent), and passes the absolute
-   result to `ipc_arm_receive_continuation`.
-2. ~~**Narrow at every scheduling decision.**~~ **Done.**
-   `PreemptionCoordinator::start`/`reschedule`/`on_timer` take an
-   `earliest_receive_deadline` and apply `narrow_decision_timer` inside
-   `apply_decision`, before `deadlines_.prepare()`. It defaults to zero, so
-   every existing caller keeps its exact behaviour — narrowing against no armed
-   receive is the identity. What remains for a caller is to pass
-   `kernel.ipc_earliest_receive_deadline()` instead of taking the default.
-3. **Drain on expiry.** The timer handler calls
-   `ipc_take_expired_receive_continuation(now)` and, for each, `expire_receive`,
-   and `complete_ipc_current` learns to see `deadline_expired` and return an
-   empty result (transaction 0, size 0) rather than falling through to
-   `ipc_take_reply`, which would report `reply_unavailable` and leave the woken
-   thread unable to resume.
+**A timed-out receive returns the same shape a successful one does**, with the
+fields that would identify a sender left empty: transaction zero, size zero.
+There was no sender. Inventing a distinguishable encoding would leak that the
+wait ended for a reason other than a message, which is the disclosure this
+document's own residue section is trying to keep bounded.
 
-**The ABI still refuses.** These increments buy the mechanism; the wake path —
-arming the hardware timer and completing the expired receiver with no message —
-is what removes the refusal, and until it exists a deadline that nothing checks
-would be the same accept-and-ignore failure the refusal was added to prevent.
-Accepting a deadline and ignoring it would have cost nothing and been far worse:
-a caller that asked for a bound and silently did not get one blocks forever
-believing it will not. The register contract is fixed now because that is the
-expensive part to change once callers exist; honouring it is the next
-increment.
+**The one thing that had no precedent** is that an expiry is consumed by
+reading it. Every other wake in this kernel is consumed by taking its payload —
+a reply is taken, a delivered message is taken — but an expiry has nothing to
+take, because the whole point is that no message arrived.
+`Rendezvous::take_deadline_expiry` therefore clears as it reports. Without that,
+the completion path reports the same timeout on every switch back to the thread
+and overwrites its registers each time.
 
 ## Order after this
 
