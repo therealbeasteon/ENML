@@ -84,7 +84,8 @@ In order, because each genuinely needs the one above it:
 4. **`channel_cookie.cpp` behind the already-neutral header**, then the rest of
    `docs/M7_2_DELINUX.md`'s order as written.
 
-Steps 1–3 are the missing milestone. Step 4 is what the de-Linux plan describes,
+Steps 1–3 are the missing milestone. It now has a name and a design:
+`docs/M7_12_FIRST_PROGRAM.md`. Step 4 is what the de-Linux plan describes,
 and it is the *fourth* thing, not the first.
 
 ## What this changes
