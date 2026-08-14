@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <cstddef>
 #include <cstdint>
 
@@ -9,6 +10,36 @@
 
 namespace os::kernel::aarch64 {
 
+// How many pages one address space may hold for translation structures at a
+// time. Fixed, like every other kernel table, because M7.11 decided the kernel
+// has no dynamic allocator. A caller that needs more donates more as it maps;
+// running out is an ordinary `exhausted` a caller resolves by giving another
+// page, not a kernel failure it can do nothing about.
+inline constexpr std::size_t max_donated_table_pages = 32U;
+
+// Supplies the pages translation structures are built from.
+//
+// Two sources, and the difference is the whole of why address spaces can be
+// created after boot at all:
+//
+//   * A contiguous bump range, from `plan_early_boot_memory`. Monotonic, never
+//     reclaimed, correct for boot and for nothing else - there is no caller to
+//     ask, because no process exists yet.
+//   * Donated pages, handed over one at a time by a process that already holds
+//     authority over them. This is M7.11's "the kernel does not need a pool
+//     because the caller supplies the pages", made concrete.
+//
+// Donated pages are used first. Boot's bump range is a finite budget chosen
+// before anything ran, so spending a donation in preference to it keeps the
+// irreplaceable resource for the case that cannot be topped up.
+//
+// A donated page must already be unreachable from EL0 before it arrives here,
+// or the donor keeps a writable mapping of the page tables it is about to be
+// governed by - the hole the physical-reservation work closed. This class does
+// not enforce that; it cannot see the ledger. `aarch64_donate_table_page` is
+// the enforcement point, and reserving through `reserve_physical` is what makes
+// it safe, because that call re-checks live mappings and refuses a range some
+// process can still reach.
 class EarlyPageArena final {
 public:
     constexpr EarlyPageArena() noexcept = default;
@@ -25,7 +56,7 @@ public:
         }
         next_ = begin;
         end_ = end;
-        if (!valid()) {
+        if (!bump_valid()) {
             next_ = 0ULL;
             end_ = 0ULL;
             return os::core::make_error(
@@ -35,14 +66,44 @@ public:
         return {};
     }
 
+    // A donation-only arena has no bump range and is still usable. That is the
+    // post-boot shape: nothing was planned for it before any process existed.
     [[nodiscard]] bool valid() const noexcept {
-        return page_aligned(next_) && page_aligned(end_) && next_ < end_ &&
-               stage1_physical_address(next_) &&
-               (end_ - architectural_page_size) <= page_address_mask;
+        return bump_valid() || donated_count_ != 0U;
+    }
+
+    [[nodiscard]] os::core::Result<void> donate(std::uint64_t physical) noexcept {
+        if (!page_aligned(physical) || !stage1_physical_address(physical) ||
+            physical == 0ULL) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel, machine_errors::invalid_range);
+        }
+        // A page donated twice would be handed out twice and become two
+        // different tables at once. Cheap to check against a fixed array, and
+        // the failure it prevents is a translation structure aliasing another.
+        for (std::size_t i = 0U; i < donated_count_; ++i) {
+            if (donated_[i] == physical) {
+                return os::core::make_error(
+                    os::core::ErrorDomain::kernel, machine_errors::already_mapped);
+            }
+        }
+        if (bump_valid() && physical >= next_ && physical < end_) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel, machine_errors::already_mapped);
+        }
+        if (donated_count_ >= max_donated_table_pages) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel, machine_errors::exhausted);
+        }
+        donated_[donated_count_++] = physical;
+        return {};
     }
 
     [[nodiscard]] os::core::Result<std::uint64_t> allocate_page() noexcept {
-        if (!valid() || next_ > end_ - architectural_page_size) {
+        if (donated_count_ != 0U) {
+            return donated_[--donated_count_];
+        }
+        if (!bump_valid() || next_ > end_ - architectural_page_size) {
             return os::core::make_error(os::core::ErrorDomain::kernel, machine_errors::exhausted);
         }
         const auto page = next_;
@@ -51,14 +112,25 @@ public:
     }
 
     [[nodiscard]] std::uint64_t next() const noexcept { return next_; }
+    [[nodiscard]] std::size_t donated_pages() const noexcept { return donated_count_; }
     [[nodiscard]] std::size_t remaining_pages() const noexcept {
-        if (!valid()) return 0U;
-        return static_cast<std::size_t>((end_ - next_) / architectural_page_size);
+        const std::size_t bump = bump_valid()
+            ? static_cast<std::size_t>((end_ - next_) / architectural_page_size)
+            : 0U;
+        return bump + donated_count_;
     }
 
 private:
     std::uint64_t next_ {0ULL};
     std::uint64_t end_ {0ULL};
+    std::array<std::uint64_t, max_donated_table_pages> donated_ {};
+    std::size_t donated_count_ {0U};
+
+    [[nodiscard]] bool bump_valid() const noexcept {
+        return page_aligned(next_) && page_aligned(end_) && next_ < end_ &&
+               stage1_physical_address(next_) &&
+               (end_ - architectural_page_size) <= page_address_mask;
+    }
 };
 
 namespace translation_root_errors {
