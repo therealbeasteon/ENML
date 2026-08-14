@@ -79,16 +79,40 @@ to permit it are one reviewable diff instead of a drift nobody voted for.
 The script prints this on every run, pass or fail, so the distance stays visible
 rather than becoming something the project stopped mentioning:
 
-- `core` is **5.7x** the QNX microkernel. It must shed **2,814 lines** to reach 605.
-- The whole trusted image is **8,823 lines**, against 15,930 for the entire QNX
-  operating system including filesystem, device manager, networking and drivers.
+- `core` is **2.6x** the QNX microkernel measured the way QNX measured itself —
+  **1,583 semicolons against 605**.
+- In this gate's own metric `core` is **3,419 lines**, and the whole trusted
+  image is **8,823 lines / 3,924 semicolons**.
+- QNX for scale, all semicolons: microkernel **605** *(no memory management)*,
+  `Proc` **3,924**, whole OS **15,930**.
 
-The second comparison is the uncomfortable one and it is the honest one. Cookie
-currently spends half of an entire operating system's budget on a kernel that
-does four things, cannot mount anything, and has no drivers. Some of that is
-real: Cookie's kernel carries capability transfer, which QNX's does not, and it
-is written in C++ with explicit bounds and typed results rather than in terse C.
-Some of it is not real and is simply not yet compressed.
+### The comparison was wrong twice, and both corrections landed together
+
+`docs/REFERENCE_NOTES_2026_08_14_QNX.md` records this in full. It happened
+because the QNX paper had been cited for a year and not read.
+
+**Metric.** QNX's figures are semicolon counts — the paper says so in the
+sentence introducing its own table. Dividing Cookie's non-blank non-comment line
+count by 605 compared two different quantities and roughly doubled the apparent
+gap. The stripped text is now counted both ways by the same pass, so the two
+numbers cannot drift.
+
+**Scope.** The QNX microkernel implements four services — IPC, low-level network
+communication, process scheduling, interrupt dispatching — and **memory
+management is not among them**. It lives in `Proc`, a user-space resource
+manager of 3,924 semicolons. M7.11 is putting memory management *inside*
+Cookie's kernel, so 605 stopped being the comparable figure the moment that work
+started; 605 + `Proc` is.
+
+It also cuts against Cookie once, and that is printed too: QNX's microkernel
+carries low-level networking, which Cookie's `core` does not and will not.
+
+**None of this is headroom, and no ceiling moved because of it.** The ratchet
+measures Cookie against its own past in one metric, and that job never depended
+on what QNX counted. What changed is only what this gate is entitled to claim.
+The claim that remains is still uncomfortable and still honest: 2.6× a 1992
+realtime microkernel, for a kernel that cannot mount anything and has no
+drivers, is a number to defend rather than celebrate.
 
 ## What this does not measure
 

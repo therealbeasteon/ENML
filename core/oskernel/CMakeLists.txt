@@ -11,6 +11,7 @@ add_library(oskernel STATIC
     src/scheduler_deadline.cpp
     src/address_space_epoch.cpp
     src/process_translation.cpp
+    src/fault_region.cpp
     src/user_access.cpp
     src/aarch64_user_frames.cpp
     src/aarch64_preemption.cpp

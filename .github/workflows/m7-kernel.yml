@@ -25,7 +25,7 @@ jobs:
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
-          kernel_aarch64_mapping_state_test kernel_fdt_test
+          kernel_aarch64_mapping_state_test kernel_fault_region_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
           kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test kernel_interrupt_delivery_test
@@ -54,7 +54,7 @@ jobs:
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
-          kernel_aarch64_mapping_state_test kernel_fdt_test
+          kernel_aarch64_mapping_state_test kernel_fault_region_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test kernel_interrupt_delivery_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
@@ -78,7 +78,7 @@ jobs:
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
-          kernel_aarch64_mapping_state_test kernel_fdt_test
+          kernel_aarch64_mapping_state_test kernel_fault_region_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
           kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test kernel_interrupt_delivery_test
@@ -109,7 +109,7 @@ jobs:
           kernel_aarch64_contract_test kernel_aarch64_exception_test
           kernel_aarch64_user_frames_test kernel_aarch64_preemption_test
           kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
-          kernel_aarch64_mapping_state_test kernel_fdt_test
+          kernel_aarch64_mapping_state_test kernel_fault_region_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
           kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test kernel_interrupt_delivery_test
