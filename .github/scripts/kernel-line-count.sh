@@ -445,11 +445,23 @@ not_kernel=(
 # otherwise collide with (machine). complete_after_switch in aarch64_boot.cpp
 # now calls both completions on every switch (entry). Found and closed before
 # M7.9's own boot proof tried to use interrupt_complete and could not have.
+# Raised a fifteenth time, by M7.9's fourth increment: entry 896 -> 945,
+# total 8,212 -> 8,261. The last of the four gaps docs/M7_9_USER_SPACE_DRIVERS.md
+# named: kernel-arm64-native now gates on COOKIE:M7.9:ATTACHED, ..:DISPATCHED,
+# ..:SERVICED and ..:COMPLETED, in that order, proving the whole chain under
+# QEMU the way M7.5i proved two-process preemption. Process A - reused after
+# its M7.6a role concludes, not a third address space - attaches to a real
+# capability minted at boot, arms the reused virtual-timer PPI as the stand-in
+# device it just attached to, and is redirected by complete_after_switch into
+# calling interrupt_complete the instant a delivery arrives, the same
+# elr_el1-rewrite technique the send/receive redirects already use rather
+# than a polling loop, so no code new to this proof needed anything beyond the
+# instruction patterns M7.5f-M7.6a already proved under CI. Closes M7.9.
 core_ceiling=3223
 machine_ceiling=2821
 discovery_ceiling=1272
-entry_ceiling=896
-total_ceiling=8212
+entry_ceiling=945
+total_ceiling=8261
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

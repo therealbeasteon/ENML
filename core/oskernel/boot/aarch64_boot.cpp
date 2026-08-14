@@ -80,12 +80,35 @@ constexpr os::kernel::Priority process_priority = 4U;
 // the same way process_a_thread and process_b_thread are.
 constexpr os::kernel::InterruptSource boot_device_interrupt_source = 1U;
 
+// Process A's program (install_process_a_program) reuses words 12-13 and
+// 14-15 for the M7.9 proof, appended after the words the M7.5f-M7.6a proof
+// already occupies (0-11). Both entry points are reached the same way word
+// 8 (the send redirect) already is: the kernel rewrites elr_el1 in a saved
+// frame rather than the program branching there itself, and places every
+// register the entry point's bare svc needs - x0, x8 - in that same frame
+// before the redirect, so neither entry point needs anything baked into its
+// own bytes beyond the svc itself.
+constexpr std::uint64_t interrupt_attach_entry_virtual =
+    user_code_virtual + 12U * sizeof(std::uint32_t);
+constexpr std::uint64_t interrupt_complete_entry_virtual =
+    user_code_virtual + 14U * sizeof(std::uint32_t);
+
+// How long after a successful attach the stand-in device source is armed to
+// assert. Short on purpose: nothing about this proof depends on real elapsed
+// time the way M7.5i's contention test does (see its own comment), so there
+// is no reason to spend more of the 12-second QEMU budget than it takes to
+// prove the interrupt was delivered asynchronously rather than synchronously
+// with the attach that armed it.
+constexpr std::uint64_t stand_in_device_deadline_nanoseconds = 200'000ULL;
+
 volatile std::uint32_t* boot_uart = nullptr;
 std::uint64_t boot_start_now = 0U;
 std::uint32_t el0_yield_count = 0U;
 std::uint32_t timer_irq_count = 0U;
+bool device_driver_attach_started = false;
 os::kernel::CapabilityId boot_client_ipc_cap = os::kernel::invalid_capability;
 os::kernel::CapabilityId boot_server_ipc_cap = os::kernel::invalid_capability;
+os::kernel::CapabilityId boot_device_interrupt_cap = os::kernel::invalid_capability;
 os::kernel::aarch64::GicV3PrimaryCpu boot_gic{};
 
 os::kernel::MachinePhysicalLedger boot_physical_ledger{};
@@ -312,6 +335,22 @@ void install_process_a_program(std::uint64_t physical_page) noexcept {
     words[9] = movz_x8_base | (yield_number << 5U);
     words[10] = svc_zero;
     words[11] = branch_self;
+
+    // M7.9 redirects A here once, after the M7.6a proof concludes, with the
+    // interrupt capability in x0 and interrupt_attach's call number in x8
+    // already set by complete_after_switch - see interrupt_attach_entry_virtual.
+    // Bare svc/branch_self, the same shape word 8 already uses for the send
+    // redirect: A never needs to know the capability's value, the call
+    // number, or that it is being redirected at all.
+    words[12] = svc_zero;
+    words[13] = branch_self;
+
+    // M7.9 redirects A here whenever complete_interrupt_current delivers a
+    // service - see interrupt_complete_entry_virtual - with the same
+    // capability and interrupt_complete's call number placed in x0/x8 by
+    // complete_after_switch.
+    words[14] = svc_zero;
+    words[15] = branch_self;
 }
 
 void install_process_b_program(std::uint64_t physical_page) noexcept {
@@ -344,6 +383,38 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
     words[12] = movz_x8_base | (reply_number << 5U);
     words[13] = svc_zero;
     words[14] = branch_self;
+}
+
+// Arms the reused virtual-timer PPI (boot_gic.device_intid) as M7.9's
+// stand-in device source. Not a general machine-layer primitive - the choice
+// to reuse this PPI as a device at all is specific to this boot harness's
+// proof (see arch_timer_discovery.hpp and docs/M7_9_USER_SPACE_DRIVERS.md,
+// "Which device source the first proof uses"), so it stays local here rather
+// than joining machine_set_timer, which arms the *physical* comparator this
+// image's own preemption depends on and must not be confused with this one.
+// Mirrors machine_set_timer's read-frequency/read-counter/write-deadline/
+// enable sequence exactly, against cntv_cval_el0/cntv_ctl_el0 instead of
+// cntp_cval_el0/cntp_ctl_el0.
+void arm_stand_in_device_source(std::uint64_t nanoseconds) noexcept {
+    std::uint64_t frequency_raw = 0ULL;
+    asm volatile("mrs %0, cntfrq_el0" : "=r"(frequency_raw));
+    const auto frequency = frequency_raw & 0xFFFF'FFFFULL;
+
+    std::uint64_t now = 0ULL;
+    asm volatile("mrs %0, cntvct_el0" : "=r"(now));
+
+    // No overflow guard needed the way machine_set_timer's does: nanoseconds
+    // here is the fixed, small stand_in_device_deadline_nanoseconds, not a
+    // caller-supplied budget, so this product is bounded well under 2^64 for
+    // any frequency an architected timer actually reports.
+    const std::uint64_t ticks = (nanoseconds * frequency) / 1'000'000'000ULL;
+    const std::uint64_t deadline = now + ticks;
+
+    asm volatile("msr cntv_cval_el0, %0" :: "r"(deadline) : "memory");
+    asm volatile("isb" ::: "memory");
+    const std::uint64_t enable = 1ULL;
+    asm volatile("msr cntv_ctl_el0, %0" :: "r"(enable) : "memory");
+    asm volatile("isb" ::: "memory");
 }
 
 [[nodiscard]] bool commit_result(
@@ -393,7 +464,34 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
     // depends on the other having found anything.
     auto serviced = os::kernel::aarch64::complete_interrupt_current(
         next, frame, boot_kernel);
-    return static_cast<bool>(serviced);
+    if (!serviced) return false;
+
+    if (serviced.value()) {
+        // A device interrupt was just delivered to A's resume. Hand it
+        // straight to the code that calls interrupt_complete, the same way
+        // the M7.6a timer redirect already hands A straight to the code that
+        // calls send rather than requiring A's own program to poll for it -
+        // see interrupt_complete_entry_virtual. x2/x3 already carry the
+        // delivery itself (complete_interrupt_current, above); x0/x8 are
+        // interrupt_complete's own arguments, unrelated to the delivery, and
+        // still have to be placed here because interrupt_complete_entry's
+        // bare svc does not set them itself.
+        frame.elr_el1 = interrupt_complete_entry_virtual;
+        frame.x[0] = boot_device_interrupt_cap;
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::interrupt_complete);
+        uart_write("COOKIE:M7.9:SERVICED\n");
+    } else if (next == process_a_thread && el0_yield_count == 4U &&
+               !device_driver_attach_started) {
+        // The M7.6a proof concluded and this is A's first resume since. Send
+        // it to attach a real interrupt source exactly once - see
+        // interrupt_attach_entry_virtual and boot_device_interrupt_cap,
+        // minted alongside boot_client_ipc_cap/boot_server_ipc_cap.
+        device_driver_attach_started = true;
+        frame.elr_el1 = interrupt_attach_entry_virtual;
+        frame.x[0] = boot_device_interrupt_cap;
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::interrupt_attach);
+    }
+    return true;
 }
 
 [[noreturn]] void guarded_runtime_main() noexcept {
@@ -524,6 +622,14 @@ extern "C" void cookie_kernel_syscall_entry(
             // source with no owner yet; enabled here, the instant one exists.
             os::kernel::aarch64::gic_v3_set_ppi_masked(
                 boot_gic.redistributor, boot_gic.device_intid, false);
+            uart_write("COOKIE:M7.9:ATTACHED\n");
+            // Nothing external drives this stand-in source - it is the
+            // discovered virtual-timer PPI, not a real peripheral - so the
+            // proof arms it itself, immediately after the attach that would,
+            // for a real device, be the point a driver becomes ready to
+            // receive it. See arm_stand_in_device_source's own comment for
+            // why this stays local to the boot harness.
+            arm_stand_in_device_source(stand_in_device_deadline_nanoseconds);
             return;
         }
         if (call.value().call == os::kernel::KernelCall::interrupt_detach) {
@@ -559,6 +665,7 @@ extern "C" void cookie_kernel_syscall_entry(
                 boot_gic.redistributor, boot_gic.device_intid, false);
         }
         frame->x[0] = completed.value() ? 1ULL : 0ULL;
+        uart_write("COOKIE:M7.9:COMPLETED\n");
         return;
     }
 
@@ -647,16 +754,16 @@ extern "C" void cookie_aarch64_irq_dispatch(
         // Routed straight through Kernel::dispatch_interrupt(), never through
         // PreemptionCoordinator - a device asserting is not the scheduling
         // decision point the timer's own PPI is, so it must not reuse that
-        // path. No caller in this boot proof has attached to
-        // boot_device_interrupt_source yet - the driver process that will is
-        // M7.9's remaining gap - so this branch is unreached until then,
-        // wired ahead of its caller for the same reason
-        // cookie_kernel_syscall_entry's interrupt decode was.
+        // path. The only caller of interrupt_attach in this boot proof is
+        // process A's redirected resume (see interrupt_attach_entry_virtual
+        // and complete_after_switch), which also arms the stand-in device
+        // that raises this line - see arm_stand_in_device_source.
         auto dispatched = boot_kernel.dispatch_interrupt(boot_device_interrupt_source);
         if (!dispatched) {
             uart_write("COOKIE:PANIC:INTERRUPT_DISPATCH\n");
             halt();
         }
+        uart_write("COOKIE:M7.9:DISPATCHED\n");
         // Masked until interrupt_complete unmasks it. True for an owned
         // source because dispatch() just moved it out of `attached`, and
         // true for a spurious one too (dispatched.value().owner is
@@ -983,6 +1090,18 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!client_cap) fail("IPC_CLIENT_CAP");
     boot_server_ipc_cap = server_cap.value();
     boot_client_ipc_cap = client_cap.value();
+
+    // The M7.9 proof's own capability, minted the same way the IPC ones just
+    // above were - held by A, not context-bound (the legacy ThreadId-only
+    // path M7.6a's own IPC syscalls launched on; M7.9's design doc leaves
+    // moving to M7.8 execution-authority binding as a later, undecided step).
+    auto device_cap = boot_kernel.capabilities().mint(
+        process_a_thread,
+        os::kernel::interrupt_object_id(boot_device_interrupt_source),
+        os::kernel::interrupt_right_attach,
+        false);
+    if (!device_cap) fail("INTERRUPT_CAP");
+    boot_device_interrupt_cap = device_cap.value();
 
     if (!boot_kernel.runqueue().update(process_b_thread, false, process_priority)) fail("RUNQUEUE");
 

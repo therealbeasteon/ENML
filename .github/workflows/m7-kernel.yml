@@ -238,3 +238,7 @@ jobs:
           grep -F 'COOKIE:M7.6:IPC_RECEIVER_FIRST' cookie-qemu.log
           grep -F 'COOKIE:M7.6:IPC_REQUEST_B' cookie-qemu.log
           grep -F 'COOKIE:M7.6:IPC_A_B_REPLY' cookie-qemu.log
+          grep -F 'COOKIE:M7.9:ATTACHED' cookie-qemu.log
+          grep -F 'COOKIE:M7.9:DISPATCHED' cookie-qemu.log
+          grep -F 'COOKIE:M7.9:SERVICED' cookie-qemu.log
+          grep -F 'COOKIE:M7.9:COMPLETED' cookie-qemu.log

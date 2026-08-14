@@ -25,7 +25,7 @@ Measured on `main` at `ed26bf6`, not claimed:
 | Trusted phone shell and product security (M4) | Through M4.15 merged; **exit criteria not all verified** |
 | Verified boot evidence (M5) | Designed and tested; nothing produces the evidence |
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
-| Cookie Kernel (M7) | Through M7.8 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption**; M7.9 underway — capability-gated attach/detach/complete, syscall-entry decode/dispatch, machine-layer device routing, and begin_service delivery on wakeup (a review-found prerequisite, not one of the four originally named gaps) all landed; the end-to-end proof remains |
+| Cookie Kernel (M7) | Through M7.9 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption, and a real driver process attaches to, is woken by, services and completes a device interrupt** |
 
 Roughly 49,000 lines of implementation against 29,000 lines of test, both grown
 by the backlog rather than by new work. Zero `TODO`/`FIXME`/`HACK` markers in
@@ -304,32 +304,37 @@ contributor and every future file added to that target. The first is more work
 and removes a class of fault; the second is what exists and is one careless
 `CMakeLists.txt` edit away from returning. No decision has been made.
 
-Then M7.9, which the roadmap called unstarted for longer than it was true. It
-has a design document now, `docs/M7_9_USER_SPACE_DRIVERS.md`, and three of its
-four named gaps are closed; M7.10 is built and enforced by this change:
+Then M7.9, which the roadmap called unstarted for longer than it was true and
+is now done. It has a design document, `docs/M7_9_USER_SPACE_DRIVERS.md`, and
+all four of its named gaps are closed; M7.10 is built and enforced by this
+change:
 
 - **M7.9 — user-space driver framework.** Interrupt handlers inside driver
   processes, connected to a vector by a kernel call, under M6.0 device access
   policy. This is the piece that makes "no drivers in the kernel" true rather
-  than aspirational. Landed: capability-gated `interrupt_attach`/
+  than aspirational. Done: capability-gated `interrupt_attach`/
   `interrupt_detach`/`interrupt_complete` at the `Kernel` composition layer,
   host-tested; `cookie_kernel_syscall_entry` decoding and dispatching all
   three from EL0; machine-layer GICv3 routing of a real device source — the
   discovered virtual-timer PPI, reused as a stand-in — through
   `Kernel::dispatch_interrupt()`, mask-until-complete enforced at the
-  controller by the same syscall handlers; and a gap review found rather than
-  a milestone named - `begin_service` was documented as riding the driver's
-  wakeup but nothing ever called it, so `interrupt_complete` could never have
-  succeeded outside a test that skipped straight to it. `dispatch_interrupt`
-  now calls it and `InterruptDeliveryTable` holds the result until the
-  driver's resume collects it, the interrupt analogue of how a receive
-  completion already rides an IPC-blocked thread's own resume. Remaining: the
-  end-to-end QEMU proof a real driver process gives it - now able to
-  actually reach `interrupt_complete`, which nothing before this could have.
+  controller by the same syscall handlers; a gap review found rather than a
+  milestone named - `begin_service` was documented as riding the driver's
+  wakeup but nothing ever called it, closed by `InterruptDeliveryTable` and
+  `complete_interrupt_current`; and the end-to-end proof itself -
+  `kernel-arm64-native` gates on `COOKIE:M7.9:ATTACHED` →
+  `..:DISPATCHED` → `..:SERVICED` → `..:COMPLETED`, process A (reused after
+  its M7.6a role concludes, not a third address space) attaching to a real
+  capability, arming the reused virtual-timer PPI as the device it just
+  attached to, and being redirected by `complete_after_switch` straight into
+  `interrupt_complete` the instant its delivery arrives - the same
+  `elr_el1`-rewrite technique the existing send/receive redirects already
+  use, so nothing new to this proof needed an instruction pattern M7.5f-M7.6a
+  had not already proven under CI.
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 8,212 lines, a ratchet rather than the 605-line
+  ceiling is the measured 8,261 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -361,8 +366,8 @@ cannot be laundered between them:
 | core — privileged portable runtime | 3,223 |
 | machine — the AArch64 port | 2,821 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
-| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing | 896 |
-| **total** | **8,212** |
+| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof | 945 |
+| **total** | **8,261** |
 
 `core` is the figure comparable to QNX's 605, and it is 5.2× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -501,9 +506,22 @@ every resume rather than `x0`/`x1`, which `complete_ipc_current` already uses
 and a driver that also does IPC would otherwise collide with.
 `complete_after_switch` in `aarch64_boot.cpp` now calls both completions on
 every switch (entry). Found and closed before M7.9's own boot proof tried to
-use `interrupt_complete` and could not have. None of it is discretionary —
-see `.github/scripts/kernel-line-count.sh` for the full justification
-recorded beside each raise.
+use `interrupt_complete` and could not have. A fifteenth raise, by M7.9's
+fourth and last increment, closes the final named gap: entry 896 → 945, total
+8,212 → 8,261. `kernel-arm64-native` now gates on `COOKIE:M7.9:ATTACHED` →
+`..:DISPATCHED` → `..:SERVICED` → `..:COMPLETED`. Process A - reused after
+its M7.6a role concludes rather than a third address space - attaches to a
+capability minted at boot, arms the reused virtual-timer PPI as the stand-in
+device it just attached to, and is redirected by `complete_after_switch` into
+calling `interrupt_complete` the instant its delivery arrives, the same
+`elr_el1`-rewrite technique the existing send/receive redirects already use
+rather than a polling loop the driver's own program would have to run. None
+of the new entry points needed anything baked into their own bytes beyond a
+bare `svc` - the same shape word 8's send redirect already proved - so
+nothing in this increment required an instruction pattern this tree had not
+already run under CI. None of it is discretionary — see
+`.github/scripts/kernel-line-count.sh` for the full justification recorded
+beside each raise.
 
 The ceilings are the measured values, not the aspiration — a ratchet. A gate set
 at 605 would be red on arrival and switched off within a week; one set
@@ -518,7 +536,7 @@ processes, delivers timer and device interrupts to user-space handlers, passes
 the full EMNL wire-format and capability fuzz corpus, and reports a trusted line
 count under the declared ceiling.
 
-Three of the five are met, one is partially met, one is not. Taken in order:
+Four of the five are met, one is not. Taken in order:
 
 - *Boots on QEMU virt* — **met**, and gated: `kernel-arm64-native` greps the
   serial log for both markers and fails the workflow without them.
@@ -530,22 +548,23 @@ Three of the five are met, one is partially met, one is not. Taken in order:
   `COOKIE:M7.5i:CONTENTION_ARMED` → `A_TO_B` → `B_TO_A` → `ISOLATED_A_B_A`
   marker sequence. `cookie_kernel_syscall_entry` no longer panics on every
   lower-EL syscall; it decodes and dispatches real ones.
-- *Delivers timer and device interrupts to user-space handlers* — **partially
-  met.** The timer half is real: GICv3 timer IRQs are delivered to EL1,
-  correctly attributed, and drive the preemption above (M7.5g). The "device
-  interrupts to user-space handlers" half — an arbitrary driver process owning
-  its own interrupt line — is landed at the capability, syscall and
-  machine-routing layers (`docs/M7_9_USER_SPACE_DRIVERS.md`: capability-gated
-  attach/detach/complete; `cookie_kernel_syscall_entry` decoding all three;
-  `cookie_aarch64_irq_dispatch` routing the discovered virtual-timer PPI
-  through `Kernel::dispatch_interrupt()` with mask-until-complete enforced at
-  the controller), and a gap review found while preparing the boot proof is
-  closed too: `begin_service` was documented as riding the driver's wakeup
-  but nothing called it, so `interrupt_complete` could never have succeeded
-  outside a test that skipped straight to it (`InterruptDeliveryTable`,
-  `complete_interrupt_current`). None of this has executed outside host tests
-  yet — a QEMU boot proof with a real driver process remains, and is the only
-  piece left before this criterion is met.
+- *Delivers timer and device interrupts to user-space handlers* — **met.**
+  The timer half was already real: GICv3 timer IRQs are delivered to EL1,
+  correctly attributed, and drive the preemption above (M7.5g). The device
+  half is M7.9, now landed end to end and gated by `kernel-arm64-native`:
+  capability-gated `interrupt_attach`/`interrupt_detach`/`interrupt_complete`
+  at the `Kernel` composition layer; `cookie_kernel_syscall_entry` decoding
+  all three from EL0; `cookie_aarch64_irq_dispatch` routing the discovered
+  virtual-timer PPI, reused as a stand-in device source, through
+  `Kernel::dispatch_interrupt()` with mask-until-complete enforced at the
+  controller; `begin_service`'s result delivered to the driver on its own
+  resume without a syscall, the gap review found while preparing this proof
+  (`InterruptDeliveryTable`, `complete_interrupt_current`); and the proof
+  itself - process A, reused after its M7.6a role concludes, attaches to a
+  real capability, the reused PPI is armed, and `complete_after_switch`
+  redirects A straight into `interrupt_complete` the instant its delivery
+  arrives, observed via `COOKIE:M7.9:ATTACHED` → `..:DISPATCHED` →
+  `..:SERVICED` → `..:COMPLETED` in that order.
 - *Passes the full EMNL wire-format and capability fuzz corpus* — **not met,
   and not currently measurable.** `fuzz/` gained an `ipc/` target during this
   stack, but it fuzzes `os::ipc` — the service-layer RPC decoder used over the
@@ -557,7 +576,7 @@ Three of the five are met, one is partially met, one is not. Taken in order:
   small enough to review completely applies with more force, not less, to the
   part that parses untrusted syscall arguments from unprivileged EL0 code.
 - *Reports a trusted line count under the declared ceiling* — **met**, and has
-  been since M7.10 landed. The ceiling moved fourteen times across this stack —
+  been since M7.10 landed. The ceiling moved fifteen times across this stack —
   once per milestone plus three defect fixes — each raise landing in the same diff
   as the lines it covers, with the justification recorded in
   `.github/scripts/kernel-line-count.sh` and restated in
@@ -712,6 +731,5 @@ The rest is unchanged and should be read more cautiously for it. Phase 1's code
 is merged and none of its exit criteria are met, which is a different kind of
 remaining work from integration — closing the Storage seam, paying or cutting
 the coercion-resistance debt, and building a network path that the admission
-policy can govern. Phase 2's M7.5e–M7.8 stack is landed; M7.10 is built and
-enforced; M7.9 is underway with three of its four named gaps closed and one
-remaining — the end-to-end proof. Phase 3 onward is genuine new engineering.
+policy can govern. Phase 2's M7.5e–M7.8 stack is landed; M7.9 and M7.10 are
+both done. Phase 3 onward is genuine new engineering.

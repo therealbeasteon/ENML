@@ -1,5 +1,11 @@
 # M7.9 - User-space driver framework
 
+**Status: done.** All four gaps below are closed and `kernel-arm64-native`
+gates on the end-to-end marker sequence in "Design: the boot proof." The rest
+of this document is left as written during the work, including the parts
+that were true only until they weren't - see the correction under "The ABI
+surface" and the resolved open question below.
+
 `docs/ROADMAP.md` names this milestone in one line: "Interrupt handlers inside
 driver processes, connected to a vector by a kernel call, under M6.0 device
 access policy. This is the piece that makes 'no drivers in the kernel' true
@@ -272,17 +278,20 @@ document's addition is the step before that: who may come to hold one.
 
 ## Open questions
 
-**Which device source the first proof uses.** `virt`'s device roster under
-QEMU without additional `-device` flags is thin - PL011 UART, the GICv3
-itself, virtio-mmio slots, the architected timer. The UART is the most
-realistic *driver* to prove first (Cookie's own boot code already depends on
-it working), but wiring UART RX interrupts is more machinery than the proof
-strictly needs to demonstrate the capability-gated attach path. Reusing the
-already-discovered timer PPI as a stand-in *device* source for the first
-proof - deliberately not through `PreemptionCoordinator`, straight through
-`Kernel::dispatch_interrupt()` instead - proves the new path without also
-building a UART driver. Owner's call; recorded rather than assumed, per this
-project's own convention.
+**Which device source the first proof uses - decided.** `virt`'s device
+roster under QEMU without additional `-device` flags is thin - PL011 UART,
+the GICv3 itself, virtio-mmio slots, the architected timer. The UART is the
+most realistic *driver* to prove first (Cookie's own boot code already
+depends on it working), but wiring UART RX interrupts is more machinery than
+the proof strictly needs to demonstrate the capability-gated attach path.
+Decided in favor of the timer node's *virtual* PPI - not the physical PPI
+`PreemptionCoordinator` already owns, a second, independent interrupt line
+from the same already-discovered DTB node (`discover_architected_timer`
+extended to read both) - routed straight through
+`Kernel::dispatch_interrupt()`, never through `PreemptionCoordinator`. Proves
+the whole path (discovery, capability, attach, machine-layer routing,
+delivery, complete) against a real, distinct hardware line without also
+building a UART driver.
 
 **Whether driver capabilities should be M7.8 execution-authority-bound from
 the start.** M7.8 added `ExecutionAuthority`-bound capabilities specifically
