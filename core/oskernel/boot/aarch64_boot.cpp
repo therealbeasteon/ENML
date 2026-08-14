@@ -70,6 +70,15 @@ constexpr os::kernel::ThreadId process_a_thread = 1U;
 constexpr os::kernel::ThreadId process_b_thread = 2U;
 constexpr os::kernel::Priority process_priority = 4U;
 
+// The kernel's own namespace for the one interrupt source this boot image
+// currently routes through Kernel::dispatch_interrupt() rather than
+// PreemptionCoordinator - the discovered virtual-timer PPI, reused as a
+// stand-in device source per docs/M7_9_USER_SPACE_DRIVERS.md. Source numbers
+// are the kernel's own assignment, not something a device tree provides
+// (interrupt.hpp), so this is a constant here rather than a discovery result,
+// the same way process_a_thread and process_b_thread are.
+constexpr os::kernel::InterruptSource boot_device_interrupt_source = 1U;
+
 volatile std::uint32_t* boot_uart = nullptr;
 std::uint64_t boot_start_now = 0U;
 std::uint32_t el0_yield_count = 0U;
@@ -487,11 +496,27 @@ extern "C" void cookie_kernel_syscall_entry(
         const auto source_capability =
             static_cast<os::kernel::CapabilityId>(frame->x[0]);
 
+        // This boot image wires exactly one device source
+        // (boot_device_interrupt_source, at boot_gic.device_intid) - the
+        // capability check inside each call below already refused anything
+        // that names a different object, so a call reaching this point can
+        // only be about that one source. That is what makes it safe to name
+        // boot_gic.device_intid directly here rather than threading an INTID
+        // back out of the Kernel:: composition, which returns only what the
+        // driver needs (attached/not, must-service-again) and deliberately
+        // not the machine-layer detail of which controller line it maps to.
+        // The day a second device source exists this stops being sound and
+        // must change with it.
         if (call.value().call == os::kernel::KernelCall::interrupt_attach) {
             if (!boot_kernel.interrupt_attach(current, source_capability)) {
                 uart_write("COOKIE:PANIC:INTERRUPT_ATTACH\n");
                 halt();
             }
+            // Configured but left disabled at boot (see
+            // initialize_gic_v3_primary_cpu) so nothing can assert against a
+            // source with no owner yet; enabled here, the instant one exists.
+            os::kernel::aarch64::gic_v3_set_ppi_masked(
+                boot_gic.redistributor, boot_gic.device_intid, false);
             return;
         }
         if (call.value().call == os::kernel::KernelCall::interrupt_detach) {
@@ -499,6 +524,11 @@ extern "C" void cookie_kernel_syscall_entry(
                 uart_write("COOKIE:PANIC:INTERRUPT_DETACH\n");
                 halt();
             }
+            // InterruptTable's own contract: a detached source is left
+            // masked. An owner-less source that can still assert is a
+            // livelock nobody is positioned to stop.
+            os::kernel::aarch64::gic_v3_set_ppi_masked(
+                boot_gic.redistributor, boot_gic.device_intid, true);
             return;
         }
 
@@ -510,6 +540,16 @@ extern "C" void cookie_kernel_syscall_entry(
         if (!completed) {
             uart_write("COOKIE:PANIC:INTERRUPT_COMPLETE\n");
             halt();
+        }
+        // Unmask only when the answer is "nothing outstanding" (false):
+        // end_service already re-armed InterruptTable's own state to pending
+        // rather than attached when the device asserted again mid-service, and
+        // unmasking the controller in that case would let a second interrupt
+        // arrive for a source InterruptTable still considers masked - the
+        // exact state mismatch the mask-until-complete rule exists to prevent.
+        if (!completed.value()) {
+            os::kernel::aarch64::gic_v3_set_ppi_masked(
+                boot_gic.redistributor, boot_gic.device_intid, false);
         }
         frame->x[0] = completed.value() ? 1ULL : 0ULL;
         return;
@@ -595,6 +635,35 @@ extern "C" void cookie_aarch64_irq_dispatch(
     if (frame == nullptr || !boot_gic.initialized) halt();
     const auto intid = os::kernel::aarch64::gic_v3_acknowledge();
     if (intid >= 1020U && intid <= 1023U) return;
+
+    if (intid == boot_gic.device_intid) {
+        // Routed straight through Kernel::dispatch_interrupt(), never through
+        // PreemptionCoordinator - a device asserting is not the scheduling
+        // decision point the timer's own PPI is, so it must not reuse that
+        // path. No caller in this boot proof has attached to
+        // boot_device_interrupt_source yet - the driver process that will is
+        // M7.9's remaining gap - so this branch is unreached until then,
+        // wired ahead of its caller for the same reason
+        // cookie_kernel_syscall_entry's interrupt decode was.
+        auto dispatched = boot_kernel.dispatch_interrupt(boot_device_interrupt_source);
+        if (!dispatched) {
+            uart_write("COOKIE:PANIC:INTERRUPT_DISPATCH\n");
+            halt();
+        }
+        // Masked until interrupt_complete unmasks it. True for an owned
+        // source because dispatch() just moved it out of `attached`, and
+        // true for a spurious one too (dispatched.value().owner is
+        // invalid_thread: nobody has attached) - InterruptTable has no slot
+        // to ask in that case, is_masked() would only return not_attached,
+        // and leaving an asserting line enabled with no driver behind it is
+        // a livelock at the controller regardless of whether InterruptTable
+        // has anyone to charge it to. So this masks unconditionally rather
+        // than consulting InterruptTable's state first.
+        os::kernel::aarch64::gic_v3_set_ppi_masked(boot_gic.redistributor, intid, true);
+        os::kernel::aarch64::gic_v3_end_interrupt(intid);
+        return;
+    }
+
     if (intid != boot_gic.timer_intid) {
         uart_write("COOKIE:PANIC:UNEXPECTED_IRQ\n");
         halt();
@@ -705,6 +774,10 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     auto timer = os::kernel::discover_architected_timer(fdt.value());
     if (!timer) fail("NO_TIMER_NODE");
     if ((timer.value().trigger_flags & 0xFU) != 4U) fail("TIMER_TRIGGER");
+    if ((timer.value().virtual_trigger_flags & 0xFU) != 4U) fail("TIMER_VIRT_TRIGGER");
+    if (timer.value().virtual_intid == timer.value().nonsecure_physical_intid) {
+        fail("TIMER_VIRT_ALIAS");
+    }
 
     const auto image_begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(__cookie_image_start));
@@ -924,7 +997,9 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     uart_write("COOKIE:M7.5d:MMU\n");
 
     auto gic = os::kernel::aarch64::initialize_gic_v3_primary_cpu(
-        gic_topology.value(), timer.value().nonsecure_physical_intid);
+        gic_topology.value(),
+        timer.value().nonsecure_physical_intid,
+        timer.value().virtual_intid);
     if (!gic) {
         uart_write("COOKIE:PANIC:GICV3\n");
         halt();

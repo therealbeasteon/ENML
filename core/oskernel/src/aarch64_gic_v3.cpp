@@ -18,6 +18,7 @@ constexpr std::uint64_t gicr_typer = 0x0008ULL;
 constexpr std::uint64_t gicr_waker = 0x0014ULL;
 constexpr std::uint64_t gicr_igroupr0 = gicr_sgi_base + 0x0080ULL;
 constexpr std::uint64_t gicr_isenabler0 = gicr_sgi_base + 0x0100ULL;
+constexpr std::uint64_t gicr_icenabler0 = gicr_sgi_base + 0x0180ULL;
 constexpr std::uint64_t gicr_icpendr0 = gicr_sgi_base + 0x0280ULL;
 constexpr std::uint64_t gicr_ipriorityr = gicr_sgi_base + 0x0400ULL;
 constexpr std::uint64_t gicr_icfgr1 = gicr_sgi_base + 0x0C04ULL;
@@ -31,7 +32,10 @@ constexpr std::uint32_t gicr_waker_processor_sleep = 1U << 1U;
 constexpr std::uint32_t gicr_waker_children_asleep = 1U << 2U;
 constexpr std::uint64_t gicr_typer_last = 1ULL << 4U;
 constexpr std::uint32_t max_poll_iterations = 1'000'000U;
-constexpr std::uint8_t timer_priority = 0x80U;
+// Shared by every PPI this port enables - there is exactly one priority
+// level in use today, so nothing yet depends on the timer preempting the
+// M7.9 device PPI or vice versa. Per-PPI priority is a later concern.
+constexpr std::uint8_t ppi_priority = 0x80U;
 
 [[nodiscard]] constexpr os::core::Error gic_error(std::uint32_t code) noexcept {
     return os::core::make_error(os::core::ErrorDomain::kernel, code);
@@ -105,6 +109,38 @@ void write32(std::uintptr_t base, std::uint64_t offset, std::uint32_t value) noe
     return false;
 }
 
+// Groups, configures as level-triggered, prioritizes and clears any latched
+// pending state for one PPI at an already-woken redistributor. Shared by
+// every PPI this port enables, so the timer and the M7.9 device PPI are
+// configured identically rather than by two hand-copied blocks that could
+// drift. Whether the line is left enabled is the caller's decision, not this
+// function's - the timer must be live from the first scheduling decision,
+// but a device PPI with no owner yet should not be able to assert at all, so
+// it stays disabled here and is enabled only once something attaches to it
+// (cookie_kernel_syscall_entry's interrupt_attach dispatch).
+void configure_ppi(std::uintptr_t redistributor, std::uint32_t intid, bool enabled) noexcept {
+    // IGROUPR0/ISENABLER0/ICENABLER0/ICPENDR0 are one 32-bit register each,
+    // spanning SGIs 0-15 and PPIs 16-31 together, indexed directly by intid.
+    // ICFGR1 is not - it covers only the PPI half (ICFGR0 holds the SGIs),
+    // two bits per interrupt, indexed by intid - 16. The two shifts below are
+    // not the same quantity and must not be collapsed into one.
+    const std::uint32_t bit = 1U << intid;
+
+    auto group = read32(redistributor, gicr_igroupr0);
+    group |= bit;
+    write32(redistributor, gicr_igroupr0, group);
+
+    auto config = read32(redistributor, gicr_icfgr1);
+    const std::uint32_t ppi_index = intid - 16U;
+    const std::uint32_t field_shift = ppi_index * 2U;
+    config &= ~(0x3U << field_shift);
+    write32(redistributor, gicr_icfgr1, config);
+
+    *reg<std::uint8_t>(redistributor, gicr_ipriorityr + intid) = ppi_priority;
+    write32(redistributor, gicr_icpendr0, bit);
+    write32(redistributor, enabled ? gicr_isenabler0 : gicr_icenabler0, bit);
+}
+
 [[nodiscard]] bool enable_system_register_interface() noexcept {
     std::uint64_t sre = 0ULL;
     asm volatile("mrs %0, icc_sre_el1" : "=r"(sre));
@@ -128,9 +164,12 @@ void write32(std::uintptr_t base, std::uint64_t offset, std::uint32_t value) noe
 
 os::core::Result<GicV3PrimaryCpu> initialize_gic_v3_primary_cpu(
     const GicV3Discovery& topology,
-    std::uint32_t timer_intid) noexcept {
+    std::uint32_t timer_intid,
+    std::uint32_t device_intid) noexcept {
     if (!topology.valid()) return gic_error(gic_v3_errors::invalid_topology);
-    if (timer_intid < 16U || timer_intid > 31U) {
+    if (timer_intid < 16U || timer_intid > 31U ||
+        device_intid < 16U || device_intid > 31U ||
+        device_intid == timer_intid) {
         return gic_error(gic_v3_errors::unsupported_interrupt);
     }
 
@@ -142,20 +181,8 @@ os::core::Result<GicV3PrimaryCpu> initialize_gic_v3_primary_cpu(
     if (!wait_distributor(distributor)) return gic_error(gic_v3_errors::distributor_timeout);
     if (!wake_redistributor(redistributor)) return gic_error(gic_v3_errors::wake_timeout);
 
-    const std::uint32_t bit = 1U << timer_intid;
-    auto group = read32(redistributor, gicr_igroupr0);
-    group |= bit;
-    write32(redistributor, gicr_igroupr0, group);
-
-    auto config = read32(redistributor, gicr_icfgr1);
-    const std::uint32_t ppi_index = timer_intid - 16U;
-    const std::uint32_t field_shift = ppi_index * 2U;
-    config &= ~(0x3U << field_shift);
-    write32(redistributor, gicr_icfgr1, config);
-
-    *reg<std::uint8_t>(redistributor, gicr_ipriorityr + timer_intid) = timer_priority;
-    write32(redistributor, gicr_icpendr0, bit);
-    write32(redistributor, gicr_isenabler0, bit);
+    configure_ppi(redistributor, timer_intid, true);
+    configure_ppi(redistributor, device_intid, false);
 
     write32(distributor, gicd_ctlr, gicd_ctlr_are_ns | gicd_ctlr_enable_grp1ns);
     if (!wait_distributor(distributor)) return gic_error(gic_v3_errors::distributor_timeout);
@@ -167,6 +194,7 @@ os::core::Result<GicV3PrimaryCpu> initialize_gic_v3_primary_cpu(
         .distributor = distributor,
         .redistributor = redistributor,
         .timer_intid = timer_intid,
+        .device_intid = device_intid,
         .initialized = true,
     };
 }
@@ -181,6 +209,12 @@ void gic_v3_end_interrupt(std::uint32_t intid) noexcept {
     const std::uint64_t value = intid;
     asm volatile("msr icc_eoir1_el1, %0" :: "r"(value) : "memory");
     asm volatile("isb" ::: "memory");
+}
+
+void gic_v3_set_ppi_masked(
+    std::uintptr_t redistributor, std::uint32_t intid, bool masked) noexcept {
+    const std::uint32_t bit = 1U << intid;
+    write32(redistributor, masked ? gicr_icenabler0 : gicr_isenabler0, bit);
 }
 
 } // namespace os::kernel::aarch64

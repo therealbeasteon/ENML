@@ -134,6 +134,48 @@ bool property(
     return false;
 }
 
+[[nodiscard]] bool decode_timer_entry(
+    os::core::ByteSpan interrupts,
+    std::size_t index,
+    std::uint32_t& intid,
+    std::uint32_t& raw_trigger_flags,
+    std::uint32_t& error_code) noexcept {
+    const std::size_t offset = index * 12U;
+    std::uint32_t type = 0U;
+    std::uint32_t number = 0U;
+    std::uint32_t flags = 0U;
+    if (!read_be32(interrupts, offset, type) ||
+        !read_be32(interrupts, offset + 4U, number) ||
+        !read_be32(interrupts, offset + 8U, flags)) {
+        error_code = arch_timer_discovery_errors::malformed;
+        return false;
+    }
+
+    if (type == 1U) {
+        if (number > 15U) {
+            error_code = arch_timer_discovery_errors::malformed;
+            return false;
+        }
+        intid = 16U + number;
+    } else if (type == 3U) {
+        if (number > 63U) {
+            error_code = arch_timer_discovery_errors::malformed;
+            return false;
+        }
+        intid = 1056U + number;
+    } else {
+        error_code = arch_timer_discovery_errors::unsupported_interrupt_type;
+        return false;
+    }
+
+    if (!architected_timer_trigger_supported(flags)) {
+        error_code = arch_timer_discovery_errors::unsupported_trigger;
+        return false;
+    }
+    raw_trigger_flags = flags;
+    return true;
+}
+
 bool end_node(void* opaque, std::size_t depth) noexcept {
     auto& context = *static_cast<Context*>(opaque);
     if (depth >= context.nodes.size()) {
@@ -158,49 +200,44 @@ bool end_node(void* opaque, std::size_t depth) noexcept {
     }
 
     std::size_t physical_index = 0U;
+    std::size_t virtual_index = 0U;
     if (!node.interrupt_names.empty()) {
-        if (!name_index(node.interrupt_names, "phys", physical_index) || physical_index >= count) {
+        if (!name_index(node.interrupt_names, "phys", physical_index) || physical_index >= count ||
+            !name_index(node.interrupt_names, "virt", virtual_index) || virtual_index >= count) {
             fail(context, arch_timer_discovery_errors::malformed);
             return false;
         }
     } else {
+        // Standard ARM ordering is sec-phys, phys, virt[, hyp-phys]. A node
+        // naming its interrupts always takes the branch above on real
+        // hardware and under QEMU virt; this is the defensive fallback for a
+        // DTB that omits interrupt-names.
         physical_index = count >= 3U ? 1U : 0U;
-    }
-
-    const std::size_t offset = physical_index * 12U;
-    std::uint32_t type = 0U;
-    std::uint32_t number = 0U;
-    std::uint32_t flags = 0U;
-    if (!read_be32(node.interrupts, offset, type) ||
-        !read_be32(node.interrupts, offset + 4U, number) ||
-        !read_be32(node.interrupts, offset + 8U, flags)) {
-        fail(context, arch_timer_discovery_errors::malformed);
-        return false;
-    }
-
-    if (type == 1U) {
-        if (number > 15U) {
+        virtual_index = count >= 3U ? 2U : 1U;
+        if (virtual_index >= count) {
             fail(context, arch_timer_discovery_errors::malformed);
             return false;
         }
-        context.result.nonsecure_physical_intid = 16U + number;
-    } else if (type == 3U) {
-        if (number > 63U) {
-            fail(context, arch_timer_discovery_errors::malformed);
-            return false;
-        }
-        context.result.nonsecure_physical_intid = 1056U + number;
-    } else {
-        fail(context, arch_timer_discovery_errors::unsupported_interrupt_type);
-        return false;
     }
 
-    if (!architected_timer_trigger_supported(flags)) {
-        fail(context, arch_timer_discovery_errors::unsupported_trigger);
+    std::uint32_t error_code = 0U;
+    if (!decode_timer_entry(
+            node.interrupts, physical_index,
+            context.result.nonsecure_physical_intid,
+            context.result.raw_trigger_flags, error_code)) {
+        fail(context, error_code);
         return false;
     }
-    context.result.raw_trigger_flags = flags;
     context.result.trigger_flags = dt_irq_level_high;
+
+    if (!decode_timer_entry(
+            node.interrupts, virtual_index,
+            context.result.virtual_intid,
+            context.result.virtual_raw_trigger_flags, error_code)) {
+        fail(context, error_code);
+        return false;
+    }
+    context.result.virtual_trigger_flags = dt_irq_level_high;
     return true;
 }
 
