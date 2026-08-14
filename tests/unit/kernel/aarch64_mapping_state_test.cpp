@@ -252,5 +252,81 @@ int main() {
     require(!private_execute);
     require(private_execute.error().code == machine_errors::kernel_object_alias);
 
+    // ---------------------------------------------------------------------
+    // Teardown: a space gives back everything it holds, or nothing.
+    // ---------------------------------------------------------------------
+    {
+        alignas(4096) std::array<std::byte, 16U * 4096U> tables_c{};
+        const auto c_begin = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(tables_c.data()));
+        EarlyPageArena arena_c{c_begin, c_begin + tables_c.size()};
+        EarlyStage1Builder builder_c{arena_c};
+        require(static_cast<bool>(builder_c.initialize()));
+
+        NativePhysicalLedger own_ledger{};
+        NativeAddressSpaceState doomed{};
+        require(static_cast<bool>(doomed.bind(own_ledger, builder_c)));
+        require(doomed.bound());
+
+        constexpr std::uint64_t va = 0x0000'0000'2000'0000ULL;
+        constexpr std::uint64_t pa = 0x0000'0000'9000'0000ULL;
+        require(static_cast<bool>(doomed.reserve_physical(
+            0x0000'0000'9800'0000ULL, 4096ULL,
+            PhysicalReservationKind::kernel_object)));
+        require(static_cast<bool>(doomed.map(
+            va, pa, 2ULL * 4096ULL,
+            MachinePermissions::read_write, MachineMemoryKind::normal)));
+        require(own_ledger.occupied == 1U);
+        require(own_ledger.reserved == 1U);
+
+        // Unbinding while anything is still held fails closed. An unbound space
+        // cannot be asked about later, so leaving its ledger entries behind
+        // would leave an owner pointer nobody consults again.
+        auto premature = doomed.unbind();
+        require(!premature);
+        require(premature.error().code == machine_errors::mapping_ledger_inconsistent);
+        require(doomed.bound());
+
+        // Reservations gone but a mapping remaining is still not releasable.
+        require(static_cast<bool>(doomed.release_reservations()));
+        require(own_ledger.reserved == 0U);
+        require(!doomed.unbind());
+
+        // The teardown loop: ask, unmap, retire, ask again.
+        for (;;) {
+            auto mapping = doomed.any_mapping();
+            if (!mapping) {
+                require(mapping.error().code == machine_errors::not_mapped);
+                break;
+            }
+            const auto pages = mapping.value().length / 4096ULL;
+            for (std::uint64_t page = 0ULL; page < pages; ++page) {
+                require(static_cast<bool>(builder_c.unmap_page(
+                    mapping.value().virtual_base + page * 4096ULL)));
+            }
+            require(static_cast<bool>(doomed.retire_unmapped(
+                mapping.value().virtual_base, mapping.value().length)));
+        }
+        require(doomed.mapping_count() == 0U);
+        require(own_ledger.occupied == 0U);
+
+        require(static_cast<bool>(doomed.unbind()));
+        require(!doomed.bound());
+
+        // Every operation on an unbound space is refused rather than silently
+        // acting on a ledger it no longer belongs to.
+        require(!doomed.any_mapping());
+        require(!doomed.release_reservations());
+        require(!doomed.unbind());
+        require(!doomed.map(va, pa, 4096ULL,
+                            MachinePermissions::read, MachineMemoryKind::normal));
+
+        // Rebinding is allowed once released - the slot is genuinely free, not
+        // merely marked. This is what makes an address space reusable rather
+        // than one-shot.
+        require(static_cast<bool>(doomed.bind(own_ledger, builder_c)));
+        require(doomed.bound());
+    }
+
     return 0;
 }

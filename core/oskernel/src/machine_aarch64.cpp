@@ -6,6 +6,7 @@
 #include <os/core/error.hpp>
 #include <os/core/panic.hpp>
 #include <os/kernel/aarch64.hpp>
+#include <os/kernel/aarch64_asid.hpp>
 #include <os/kernel/aarch64_translation.hpp>
 #include <os/kernel/machine_aarch64.hpp>
 
@@ -132,11 +133,67 @@ os::core::Result<void> aarch64_validate_user_context(
 }
 
 os::core::Result<void> machine_release_address_space(MachineAddressSpace& space) noexcept {
-    // Bulk release waits until the scheduler/process lifetime layer can prove no
-    // CPU is executing in this space. Individual mappings now have real TLBI-
-    // backed teardown through machine_unmap().
+    // Still unsupported, and now for a stated reason rather than a missing
+    // implementation. Bulk release is safe only once no CPU can be executing
+    // in the space, and this signature cannot carry that proof: it takes the
+    // space and nothing else. aarch64_release_address_space takes the retiring
+    // epoch that establishes it. The portable contract asks for a guarantee
+    // from an argument list that cannot express it, which is a defect in the
+    // contract rather than a gap in this port.
     (void)space;
     return machine_error(machine_errors::unsupported);
+}
+
+os::core::Result<void> aarch64_release_address_space(
+    MachineAddressSpace& space,
+    RetiringAddressSpaceEpoch retiring) noexcept {
+    if (space.early_builder == nullptr || space.physical_ledger == nullptr) {
+        return machine_error(machine_errors::address_space_unbound);
+    }
+    if (!retiring.valid()) return machine_error(machine_errors::invalid_range);
+
+    // Mappings first, one at a time through the same path an individual unmap
+    // takes. Reservations are dropped only after the last translation is gone:
+    // a reserved range that stops being reserved while it is still mapped is
+    // briefly mappable from EL0 by anyone, which is the window the reservation
+    // exists to close.
+    for (;;) {
+        auto mapping = space.mappings.any_mapping();
+        if (!mapping) {
+            const auto error = mapping.error();
+            if (error.domain == os::core::ErrorDomain::kernel &&
+                error.code == machine_errors::not_mapped) break;
+            return error;
+        }
+        auto unmapped = machine_unmap(
+            space,
+            static_cast<std::uintptr_t>(mapping.value().virtual_base),
+            static_cast<std::size_t>(mapping.value().length));
+        if (!unmapped) return unmapped.error();
+    }
+
+    auto released = space.mappings.release_reservations();
+    if (!released) return released.error();
+
+    // The ASID's own invalidation, which the epoch authority requires before it
+    // will complete retirement. Ordered after the per-mapping TLBIs rather than
+    // instead of them: those retire the translations, this retires the tag they
+    // were cached under, and a later space reusing the ASID must not inherit
+    // either.
+    auto asid_retired = aarch64::retire_process_asid(retiring);
+    if (!asid_retired) return asid_retired.error();
+
+    auto unbound = space.mappings.unbind();
+    if (!unbound) return unbound.error();
+
+    // Clear the outer handle too, or release is a one-way trip:
+    // machine_bind_address_space refuses a space whose physical_ledger is still
+    // set, so leaving these would make a released MachineAddressSpace
+    // permanently unusable and defeat the reuse this milestone exists for.
+    // Ordered last, after unbind() has proved nothing is still owned.
+    space.physical_ledger = nullptr;
+    space.early_builder = nullptr;
+    return {};
 }
 
 void machine_switch_context(MachineContext& from, MachineContext& to) noexcept {

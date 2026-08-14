@@ -688,11 +688,26 @@ not_kernel=(
 # than a slice later, and the two reschedule sites passing the earliest
 # deadline - the reschedule after a blocking receive is what arms the timer at
 # all, and on an idle system there is no later tick to fall back on.
+# Raised a twenty-eighth time, by address-space release: machine 3,038 ->
+# 3,114, total 8,979 -> 9,054. core unchanged.
+#
+# aarch64_release_address_space unmaps every mapping through the ordinary
+# machine_unmap path, drops the space's reservations, retires the ASID and
+# unbinds. Deliberately slower than walking the tables directly: bulk teardown
+# that reimplements unmapping is a second place for break-before-make ordering
+# to be got wrong, and M7.5e's own justification says a stale TLB entry after
+# an unmap is a use-after-free with hardware caching it.
+#
+# It takes a RetiringAddressSpaceEpoch, and machine_release_address_space stays
+# unsupported beside it. That is not an omission. Bulk release is safe only
+# once no CPU can be executing in the space, and the portable signature takes
+# the space and nothing else - it asks for a guarantee from an argument list
+# that cannot express it. The typed entry point takes the token that does.
 core_ceiling=3535
-machine_ceiling=3038
+machine_ceiling=3114
 discovery_ceiling=1272
-entry_ceiling=1134
-total_ceiling=8979
+entry_ceiling=1133
+total_ceiling=9054
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
