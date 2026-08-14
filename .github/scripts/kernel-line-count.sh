@@ -499,11 +499,35 @@ not_kernel=(
 # incarnation" from the failure alone. Closes M7.8.2's second increment; the
 # ExecutionAuthority-bound driver-capability question M7.9's own design doc
 # left open remains separately undecided.
+# Raised an eighteenth time, closing "the pre-MMU window" question
+# docs/ROADMAP.md had left open since M7.5d: entry 951 -> 1,006, total
+# 8,463 -> 8,518. FdtView::parse and discover_hardware ran with translation
+# off, so every unaligned access the compiler emits inside them depended on
+# -mstrict-align holding for every future contributor and file added to that
+# target - a compiler flag, not an invariant the type system or a review
+# enforces. cookie_aarch64_boot_main now builds and activates a second,
+# minimal, throwaway identity map - covering exactly the kernel image (by
+# segment, so .text/.rodata/.data+.bss keep the RX/R/RW split the real map
+# gives them) and the DTB's exact extent - before FdtView::parse runs, then
+# activates the real discovered map over it exactly as before. Not TF-A's or
+# Linux's answer copied: both map a conservative fixed window generous enough
+# to cover a DTB they have not yet measured, because at their equivalent point
+# they have no cheaper option. Cookie already does: bounded_dtb's byte-wise
+# read_be32 header parse - four single-byte reads and shifts, alignment-safe
+# by construction - already determines the DTB's exact physical extent before
+# any unsafe parsing runs, so the window mapped here is the DTB's real size,
+# not a ceiling. The two new EarlyPageArena/EarlyStage1Builder/
+# MachineAddressSpace instances share boot_physical_ledger with the real map
+# rather than getting a dedicated one: every range either map creates uses the
+# same permission, from the same add_identity_symbols calls, so the ledger's
+# writable/executable-alias check - the only thing it rejects across spaces -
+# never trips between them, and a dedicated ledger would have cost roughly
+# 10 KiB of static state for isolation this throwaway map does not need.
 core_ceiling=3419
 machine_ceiling=2821
 discovery_ceiling=1272
-entry_ceiling=951
-total_ceiling=8463
+entry_ceiling=1006
+total_ceiling=8518
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

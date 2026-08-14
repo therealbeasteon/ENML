@@ -52,6 +52,13 @@ using os::kernel::MachinePermissions;
 constexpr std::uint64_t page_size = os::kernel::aarch64::architectural_page_size;
 constexpr std::size_t max_boot_dtb_bytes = 2U * 1024U * 1024U;
 constexpr std::size_t early_page_table_pages = 128U;
+// Backing for the throwaway identity map built before the device tree can be
+// safely parsed - see build_early_identity_map's call site. It covers at most
+// four ranges (the kernel image's three segments plus the DTB, up to
+// max_boot_dtb_bytes), against early_page_table_pages' 128 for three full,
+// discovered address spaces, so a quarter of that budget is generous margin
+// rather than a matched size.
+constexpr std::size_t early_identity_table_pages = 32U;
 constexpr std::size_t runtime_stack_pages = 8U;
 constexpr std::uint64_t runtime_stack_virtual = 0x0000'007F'FEF0'0000ULL;
 constexpr std::uint64_t user_code_virtual = 0x0000'0000'1000'0000ULL;
@@ -119,6 +126,14 @@ os::kernel::AddressSpaceEpochAuthority boot_epochs{};
 os::kernel::ProcessTranslationTable boot_translations{};
 os::kernel::Kernel boot_kernel{};
 os::kernel::aarch64::PreemptionCoordinator boot_preemption{};
+
+// Storage and address-space state for the early identity map. Bound to
+// boot_physical_ledger (not a dedicated ledger) once cookie_aarch64_boot_main
+// starts building it - see the comment at that call site for why sharing it
+// is safe rather than merely convenient.
+alignas(4096) std::byte early_identity_table_storage[
+    early_identity_table_pages * static_cast<std::size_t>(page_size)] {};
+os::kernel::MachineAddressSpace early_identity_space{};
 
 [[noreturn]] void halt() noexcept {
     asm volatile("msr daifset, #0xf" ::: "memory");
@@ -202,6 +217,23 @@ void uart_write(std::string_view text) noexcept {
 }
 [[gnu::noinline]] [[noreturn]] void halt_no_vectors() noexcept {
     asm volatile("mov x20, #5" ::: "x20");
+    halt();
+}
+// Covers every step of building the early identity map short of activating
+// it - arena/builder setup, binding, manifest construction, replay. All of
+// it operates on link-time-known symbols and an already-validated DTB range,
+// so failure here means a real defect rather than a data-dependent case worth
+// distinguishing further, the same reasoning halt_no_vectors already rests on.
+[[gnu::noinline]] [[noreturn]] void halt_early_identity_map() noexcept {
+    asm volatile("mov x20, #6" ::: "x20");
+    halt();
+}
+// The early map's own activate_stage1_translation call, split from
+// halt_early_identity_map because it is the highest-risk step - the first
+// point translation turns on for this image - and deserves its own address
+// the same way the real map's later activation gets its own fail("ACTIVATE_MMU").
+[[gnu::noinline]] [[noreturn]] void halt_early_mmu() noexcept {
+    asm volatile("mov x20, #7" ::: "x20");
     halt();
 }
 
@@ -871,12 +903,115 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // machine executes flash. That is how the M7.5d boot fault stayed
     // invisible: nothing halted, because nothing reached a halt.
     //
-    // They stay valid across the MMU transition because the identity mapping
-    // built below keeps the address they point at.
+    // They stay valid across both MMU transitions below because both identity
+    // mappings keep the address they point at.
     if (!os::kernel::aarch64::install_exception_vectors()) halt_no_vectors();
 
     const auto dtb_blob = bounded_dtb(dtb_physical);
     if (dtb_blob.empty()) halt_no_dtb();
+
+    // The DTB's exact physical extent is already known here, safely:
+    // bounded_dtb read only the header's magic and total-size fields, four
+    // bytes at a time through read_be32, which never performs an unaligned
+    // access regardless of the blob's own alignment. FdtView::parse below
+    // does not have that property - it walks the blob as typed structures,
+    // the access pattern Device-nGnRnE memory (what every access is under
+    // with translation off) forbids unaligned - so translation has to be
+    // live before that call runs, not after it.
+    //
+    // What to map for that is known for the same reason: the kernel's own
+    // image bounds are link-time constants, and the DTB's bounds just came
+    // out of a parse that is safe with translation off. TF-A and Linux solve
+    // the equivalent problem with a conservative fixed window, generous
+    // enough to cover a DTB they have not yet measured - Cookie does not
+    // need one, because bounded_dtb already measured this one.
+    const auto image_begin = static_cast<std::uint64_t>(
+        reinterpret_cast<std::uintptr_t>(__cookie_image_start));
+    const auto image_end = static_cast<std::uint64_t>(
+        reinterpret_cast<std::uintptr_t>(__cookie_image_end));
+    std::uint64_t dtb_end = 0ULL;
+    if (dtb_physical > UINT64_MAX - dtb_blob.size() ||
+        !align_up(static_cast<std::uint64_t>(dtb_physical) + dtb_blob.size(), dtb_end)) {
+        halt_early_identity_map();
+    }
+
+    const HardwareRange image_range{align_down(image_begin), image_end - align_down(image_begin)};
+    const HardwareRange dtb_range{
+        align_down(static_cast<std::uint64_t>(dtb_physical)),
+        dtb_end - align_down(static_cast<std::uint64_t>(dtb_physical))};
+    if (!image_range.valid() || !dtb_range.valid()) halt_early_identity_map();
+
+    // A minimal, throwaway identity map covering exactly the kernel's own
+    // image (by segment, so .text/.rodata/.data+.bss keep the same
+    // permissions the real map gives them further down) and the DTB's exact
+    // extent - nothing else, since nothing else is known yet. Its page
+    // tables live in early_identity_table_storage, a small static buffer
+    // with no discovery dependency, distinct from plan.value().page_tables
+    // below (which cannot exist yet: it comes from the boot memory plan,
+    // which comes from the inventory, which comes from the parse this map
+    // exists to protect).
+    //
+    // It shares boot_physical_ledger with the real map rather than getting a
+    // dedicated ledger: every range built here uses the exact same
+    // permission as the corresponding range in the real map, because both
+    // come from the same add_identity_symbols calls against the same
+    // symbols and constants. The ledger's cross-space check only rejects a
+    // writable/executable alias between spaces, never a same-permission
+    // overlap, so it never trips between these two maps. A dedicated ledger
+    // would only add roughly 10 KiB of otherwise-idle static state for
+    // isolation this map does not need.
+    const auto early_identity_storage_begin = static_cast<std::uint64_t>(
+        reinterpret_cast<std::uintptr_t>(early_identity_table_storage));
+    os::kernel::aarch64::EarlyPageArena early_identity_arena{
+        early_identity_storage_begin,
+        early_identity_storage_begin + early_identity_table_pages * page_size};
+    if (!early_identity_arena.valid()) halt_early_identity_map();
+    os::kernel::aarch64::EarlyStage1Builder early_identity_builder{early_identity_arena};
+    auto early_identity_root = early_identity_builder.initialize();
+    if (!early_identity_root) halt_early_identity_map();
+
+    if (!os::kernel::machine_bind_address_space(early_identity_space, boot_physical_ledger)) {
+        halt_early_identity_map();
+    }
+    if (!os::kernel::aarch64_attach_early_stage1(early_identity_space, early_identity_builder)) {
+        halt_early_identity_map();
+    }
+
+    os::kernel::aarch64::KernelMappingManifest early_identity_manifest{};
+    if (!add_identity_symbols(
+            early_identity_manifest, __cookie_text_start, __cookie_text_end,
+            MachinePermissions::read_execute) ||
+        !add_identity_symbols(
+            early_identity_manifest, __cookie_rodata_start, __cookie_rodata_end,
+            MachinePermissions::read) ||
+        !add_identity_symbols(
+            early_identity_manifest, __cookie_data_start, __bss_end,
+            MachinePermissions::read_write)) {
+        halt_early_identity_map();
+    }
+    if (!os::kernel::aarch64::replay_kernel_mapping_manifest(
+            early_identity_manifest, early_identity_space)) {
+        halt_early_identity_map();
+    }
+    if (!os::kernel::machine_map(
+            early_identity_space,
+            static_cast<std::uintptr_t>(dtb_range.base),
+            static_cast<std::uintptr_t>(dtb_range.base),
+            static_cast<std::size_t>(dtb_range.size),
+            MachinePermissions::read,
+            MachineMemoryKind::normal)) {
+        halt_early_identity_map();
+    }
+
+    // First of two activations. The second, much further down, replaces
+    // TTBR0_EL1 wholesale with the full discovered mapping once one exists;
+    // both are safe because both keep the currently-executing image (code,
+    // rodata, globals, stack) mapped identically, and
+    // activate_stage1_translation's own MAIR/TCR/TTBR programming has no
+    // dependency on anything this call has not already established.
+    if (!os::kernel::aarch64::activate_stage1_translation(early_identity_root.value())) {
+        halt_early_mmu();
+    }
 
     auto fdt = os::kernel::FdtView::parse(dtb_blob);
     if (!fdt) halt_unparsable_fdt();
@@ -915,22 +1050,8 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         fail("TIMER_VIRT_ALIAS");
     }
 
-    const auto image_begin = static_cast<std::uint64_t>(
-        reinterpret_cast<std::uintptr_t>(__cookie_image_start));
-    const auto image_end = static_cast<std::uint64_t>(
-        reinterpret_cast<std::uintptr_t>(__cookie_image_end));
-    std::uint64_t dtb_end = 0ULL;
-    if (dtb_physical > UINT64_MAX - dtb_blob.size() ||
-        !align_up(static_cast<std::uint64_t>(dtb_physical) + dtb_blob.size(), dtb_end)) {
-        fail("DTB_RANGE");
-    }
-
-    const HardwareRange image_range{align_down(image_begin), image_end - align_down(image_begin)};
-    const HardwareRange dtb_range{
-        align_down(static_cast<std::uint64_t>(dtb_physical)),
-        dtb_end - align_down(static_cast<std::uint64_t>(dtb_physical))};
-    if (!image_range.valid() || !dtb_range.valid()) fail("IMAGE_RANGE");
-
+    // image_range and dtb_range were computed above, before FdtView::parse,
+    // to build the early identity map - reused here rather than recomputed.
     const std::array<HardwareRange, 2U> protected_ranges{image_range, dtb_range};
     auto plan = os::kernel::plan_early_boot_memory(
         inventory.value(), std::span<const HardwareRange>{protected_ranges},
@@ -1141,6 +1262,13 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // Vectors already installed at entry; reinstalling here would imply the
     // activation on this line ran without a handler, which is the arrangement
     // that made the M7.5d fault unreportable.
+    //
+    // Second activation, not first: the early identity map built before
+    // FdtView::parse already turned translation on once, covering only the
+    // kernel image and the DTB. This unconditionally overwrites TTBR0_EL1
+    // with the full discovered mapping built above - safe because both maps
+    // identity-map the currently-executing image (code, rodata, globals,
+    // stack) identically, so nothing this function is still using moves.
     if (!os::kernel::aarch64::activate_stage1_translation(boot_root.value())) fail("ACTIVATE_MMU");
     uart_write("COOKIE:M7.5d:MMU\n");
 

@@ -293,16 +293,55 @@ image is therefore compiled `-mstrict-align`, which
 `core/oskernel/CMakeLists.txt` documents as a requirement rather than a
 hardening preference.
 
-That leaves an open design question, and it should be decided rather than
-inherited: **shorten the window, or keep compiling for it.** Shortening means
-mapping a minimal identity region and enabling translation before the device
-tree is parsed, so that FDT reading, hardware discovery and boot memory planning
-all run on Normal memory with the alignment rules the compiler assumes. Keeping
-it means the current arrangement, where correctness in the largest and most
-data-driven part of boot rests on a compiler flag holding for every future
-contributor and every future file added to that target. The first is more work
-and removes a class of fault; the second is what exists and is one careless
-`CMakeLists.txt` edit away from returning. No decision has been made.
+That left an open design question: **shorten the window, or keep compiling for
+it.** It is decided now, closing M7.10's own line-count raise for the change:
+shortened.
+
+`cookie_aarch64_boot_main` builds and activates a second, minimal identity map
+before `FdtView::parse` runs, then activates the real, fully discovered map
+over it exactly as before — so FDT reading, hardware discovery and boot
+memory planning all run on Normal memory with the alignment rules the
+compiler assumes, and `-mstrict-align` stops being the thing correctness
+rests on for that code. What made shortening cheap rather than merely
+possible is a capability the reference implementations this hazard was
+checked against — TF-A, Linux's `head.S` — do not have at their equivalent
+point: they map a conservative fixed window, generous enough to cover a
+device tree they have not yet measured, because they have no cheaper option
+that early. Cookie already had one. `bounded_dtb`'s header read — four
+individual byte loads through `read_be32`, alignment-safe by construction
+where a struct-based parse is not — was already computing the DTB's *exact*
+physical extent before this change, to size the `ByteSpan` handed to
+`FdtView::parse`. The minimal map reuses that exact extent instead of a
+ceiling: it maps precisely the kernel's own image, by segment (so
+`.text`/`.rodata`/`.data`+`.bss` keep the same RX/R/RW split the real map
+gives them), and precisely the DTB's measured bytes. Nothing wider, because
+nothing wider was ever needed to answer this question — only unmeasured.
+
+The two identity maps' page tables come from independent arenas — the
+minimal map cannot use `plan.value().page_tables`, which is itself a product
+of the boot memory plan the map exists to run before — but share
+`boot_physical_ledger` rather than each getting a dedicated one. Every range
+either map creates uses the same permission for the same physical range,
+since both are built from the same `add_identity_symbols` calls against the
+same symbols; the ledger's cross-space check exists only to reject a
+writable/executable alias between spaces sharing it, so two spaces agreeing
+on a range's permission never trips it. `activate_stage1_translation` runs
+twice as a result, once for each map — confirmed safe to call a second time
+before relying on it: it unconditionally reprograms `MAIR_EL1`/`TCR_EL1`/
+`TTBR0_EL1` and re-invalidates the TLB rather than assuming anything about
+prior state, and both maps identity-map the currently-executing kernel image
+identically, so nothing the CPU is using moves under it.
+
+`-mstrict-align` stays, and `core/oskernel/CMakeLists.txt` keeps documenting
+it as a requirement. Shortening the window did not eliminate it: `_start`,
+`install_exception_vectors`, `bounded_dtb` and the map construction itself
+all still execute before the first activation, and that code is now the
+window rather than most of boot. The flag is what protects the remainder. It
+is a much smaller thing to depend on than it was — a fixed prologue of
+link-time-known work, not the largest and most data-driven part of boot —
+which is the actual result of this change: the dependency is bounded, not
+removed. Removing the flag would be a separate decision needing its own
+evidence, and this change does not make it.
 
 Then M7.9, which the roadmap called unstarted for longer than it was true and
 is now done. It has a design document, `docs/M7_9_USER_SPACE_DRIVERS.md`, and
