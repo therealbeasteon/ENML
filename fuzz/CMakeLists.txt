@@ -18,6 +18,30 @@ target_link_options(ipc_decoder_fuzz PRIVATE
     -fsanitize=fuzzer,address,undefined
 )
 
+add_executable(kernel_ipc_syscall_fuzz kernel/ipc_syscall_fuzz.cpp)
+target_link_libraries(kernel_ipc_syscall_fuzz PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_ipc_syscall_fuzz PRIVATE
+    -fno-exceptions
+    -fno-rtti
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+)
+target_link_options(kernel_ipc_syscall_fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+)
+
+add_executable(kernel_capability_fuzz kernel/capability_fuzz.cpp)
+target_link_libraries(kernel_capability_fuzz PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_capability_fuzz PRIVATE
+    -fno-exceptions
+    -fno-rtti
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+)
+target_link_options(kernel_capability_fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+)
+
 add_executable(osidlc_compiler_fuzz osidlc/compiler_fuzz.cpp)
 target_link_libraries(osidlc_compiler_fuzz PRIVATE osidlc_lib emnl_warnings)
 target_compile_options(osidlc_compiler_fuzz PRIVATE

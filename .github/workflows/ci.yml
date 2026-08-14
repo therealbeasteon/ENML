@@ -94,6 +94,8 @@ jobs:
           boot_state_fuzz=5000
           device_access_fuzz=5000
           time_protection_fuzz=5000
+          kernel_ipc_syscall_fuzz=1000
+          kernel_capability_fuzz=1000
 
   arm64-native:
     runs-on: ubuntu-24.04-arm
