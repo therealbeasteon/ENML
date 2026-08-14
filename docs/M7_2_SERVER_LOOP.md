@@ -159,7 +159,24 @@ callback, no priority queue. The table is the same fixed array scanned linearly,
 because `max_threads` is small and a heap would be mutable kernel structure
 bought for an asymptotic improvement nothing here needs.
 
-**The ABI still refuses.** This increment buys the mechanism; the wake path —
+### Landed: one armed time, one owner of it
+
+`narrow_decision_timer` clamps a scheduling `Decision`'s timer to the soonest
+bounded receive before the deadline authority prepares it. Narrowing only — it
+can bring a wakeup forward, never postpone or remove one, so an IPC deadline
+cannot weaken a scheduling guarantee.
+
+The ordering is the whole point and the obvious alternative is wrong.
+`SchedulerDeadlineAuthority::accept_interrupt` rejects a delivered deadline
+whose absolute time differs from its own, and rejects an interrupt arriving
+before that time as `early`. Clamping the `ExecutionUniversePlan` *after* commit
+— where a reader naturally reaches, since that is what calls
+`machine_set_timer` — arms hardware the authority does not know about, and the
+interrupt it produces is refused by the authority's own staleness check. The
+receive deadline would simply never fire, and nothing would say so. Clamping the
+`Decision` keeps one armed time and one owner of it.
+
+**The ABI still refuses.** These increments buy the mechanism; the wake path —
 arming the hardware timer and completing the expired receiver with no message —
 is what removes the refusal, and until it exists a deadline that nothing checks
 would be the same accept-and-ignore failure the refusal was added to prevent.

@@ -638,11 +638,24 @@ not_kernel=(
 # an asymptotic improvement nothing here needs. The ABI still refuses a
 # non-zero deadline; this raise buys the mechanism, and the increment that
 # removes the refusal buys the wake path.
-core_ceiling=3479
+# Raised a twenty-fourth time, by narrow_decision_timer: core 3,479 -> 3,491,
+# total 8,888 -> 8,900. Twelve lines, and they exist because the obvious place
+# to put this clamp was wrong in a way that would not have shown up until a
+# receive deadline silently never fired.
+#
+# SchedulerDeadlineAuthority::accept_interrupt rejects a delivered deadline
+# whose absolute time differs from current_, and rejects an interrupt arriving
+# before current_ as `early`. Narrowing the armed timer after the authority has
+# committed - clamping the ExecutionUniversePlan, which is where a reader
+# naturally reaches - therefore arms hardware the authority does not know
+# about, and the resulting interrupt is refused by its own staleness check.
+# Clamping the Decision *before* prepare() keeps one armed time and one owner
+# of it.
+core_ceiling=3491
 machine_ceiling=3015
 discovery_ceiling=1272
 entry_ceiling=1122
-total_ceiling=8888
+total_ceiling=8900
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
