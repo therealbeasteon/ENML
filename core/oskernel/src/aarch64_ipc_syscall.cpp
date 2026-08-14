@@ -6,6 +6,7 @@
 #include <os/core/error.hpp>
 #include <os/kernel/aarch64_user_access.hpp>
 #include <os/kernel/ipc_syscall.hpp>
+#include <os/kernel/machine.hpp>
 #include <os/kernel/user_access.hpp>
 
 #if !defined(__aarch64__)
@@ -130,16 +131,16 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
         auto decoded = decode_ipc_receive_syscall(frame.x[0], frame.x[1], frame.x[2]);
         if (!decoded) return decoded.error();
 
-        // The ABI carries a deadline; this path cannot yet arm one. Refuse
-        // rather than proceed as an unbounded receive: a caller that asked for
-        // a bound and silently did not get one waits forever believing it will
-        // not, which is a worse failure than being told no. The shape is fixed
-        // here because a register contract is the expensive thing to change
-        // later; honouring it is the next increment.
+        // Relative at the ABI, absolute in the kernel, converted exactly here.
+        // Saturating rather than wrapping: a relative deadline large enough to
+        // overflow the monotonic clock is a request to wait effectively
+        // forever, and a wrapped sum is a small absolute value that reads as
+        // already expired - the precise opposite of what was asked for.
+        std::uint64_t deadline = 0ULL;
         if (decoded.value().bounded()) {
-            return os::core::make_error(
-                os::core::ErrorDomain::kernel,
-                ipc_syscall_errors::deadline_unsupported);
+            const auto now = machine_monotonic_nanoseconds();
+            const auto requested = decoded.value().deadline_nanoseconds;
+            deadline = (now > UINT64_MAX - requested) ? UINT64_MAX : now + requested;
         }
 
         // Arm before rendezvous state can block. Immediate delivery cancels the
@@ -150,7 +151,8 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
             binding.value().epoch,
             decoded.value().endpoint_capability,
             decoded.value().exchange_address,
-            epochs);
+            epochs,
+            deadline);
         if (!armed) return armed.error();
 
         auto received = kernel.ipc_receive(current, decoded.value().endpoint_capability);
@@ -207,6 +209,24 @@ os::core::Result<bool> complete_ipc_current(
     const AddressSpaceEpochAuthority& epochs) noexcept {
     auto binding = current_binding(current, translations, epochs);
     if (!binding) return binding.error();
+
+    // Checked before the armed-receive path, because expiry has already taken
+    // the continuation: receive_armed() is false for a thread woken by its own
+    // deadline, and without this it would fall through to ipc_take_reply,
+    // report reply_unavailable, and be reported as "not complete" - leaving a
+    // runnable thread that can never resume.
+    auto expired = kernel.ipc_take_deadline_expiry(current);
+    if (!expired) return expired.error();
+    if (expired.value()) {
+        // No transaction and no bytes. A timed-out receive returns the same
+        // shape a successful one does, with the fields that would identify a
+        // sender left empty - there was no sender, and inventing a
+        // distinguishable encoding here would leak that the wait ended for a
+        // reason other than a message.
+        frame.x[0] = 0U;
+        frame.x[1] = 0U;
+        return true;
+    }
 
     if (kernel.ipc_continuations().receive_armed(current)) {
         auto continuation = kernel.ipc_take_receive_continuation(

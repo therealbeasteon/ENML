@@ -87,6 +87,16 @@ public:
     // impossible.
     [[nodiscard]] os::core::Result<void> expire_receive(ThreadId self) noexcept;
 
+    // Reports whether this thread's pending wake is an expired bounded receive,
+    // and clears it if so. Consuming rather than observing, and that is forced
+    // rather than stylistic: every other wake has a payload whose removal is
+    // the consumption - a reply is taken, a delivered message is taken - but an
+    // expiry has nothing to take, because the whole point is that no message
+    // arrived. Without a consuming read the completion path would report the
+    // same timeout on every switch back to the thread and overwrite its
+    // registers each time.
+    [[nodiscard]] os::core::Result<bool> take_deadline_expiry(ThreadId self) noexcept;
+
     // Narrow cancellation primitive used by endpoint retirement. It can only
     // release a caller that is currently blocked on the exact expected server;
     // arbitrary thread wakeup remains impossible. If a blocked receive had

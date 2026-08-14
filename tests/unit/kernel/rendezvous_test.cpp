@@ -275,6 +275,25 @@ int main() {
         // may have moved on.
         if (!check(!r.expire_receive(60U), "expiry repeated on a ready thread")) return 1;
 
+        // Consumed once, not once per switch. An expiry has no payload whose
+        // removal would end it, so without this the completion path would
+        // report the same timeout every time the thread was scheduled.
+        auto first_take = r.take_deadline_expiry(60U);
+        if (!check(static_cast<bool>(first_take) && first_take.value(),
+                   "expiry not reported to its own thread")) return 1;
+        auto second_take = r.take_deadline_expiry(60U);
+        if (!check(static_cast<bool>(second_take) && !second_take.value(),
+                   "expiry reported twice")) return 1;
+
+        // A thread whose wake is something else is not claimed by this path.
+        if (!check(static_cast<bool>(r.wait_receive(60U)),
+                   "receiver did not re-block")) return 1;
+        auto none_take = r.take_deadline_expiry(60U);
+        if (!check(static_cast<bool>(none_take) && !none_take.value(),
+                   "blocked thread reported an expiry")) return 1;
+        if (!check(!r.take_deadline_expiry(9999U),
+                   "unknown thread accepted by expiry take")) return 1;
+
         // The sibling path still reports its own reason.
         if (!check(static_cast<bool>(r.wait_receive(61U)),
                    "sibling receiver did not block")) return 1;

@@ -731,8 +731,13 @@ extern "C" void cookie_kernel_syscall_entry(
         if (!ipc.value().reschedule) return;
 
         const auto now = os::kernel::machine_monotonic_nanoseconds();
+        // The reschedule that follows a blocking receive is what arms the
+        // timer for it. Without the deadline here a bounded wait would only be
+        // noticed at the next scheduling tick, and on an otherwise idle system
+        // there is no next tick - the wait would never end.
         auto next = boot_preemption.reschedule(
-            boot_kernel.runqueue(), boot_translations, boot_epochs, now, *frame);
+            boot_kernel.runqueue(), boot_translations, boot_epochs, now, *frame,
+            boot_kernel.ipc_earliest_receive_deadline());
         if (!next || !commit_result(next.value(), now) ||
             !complete_after_switch(next.value().next, *frame)) {
             uart_write("COOKIE:PANIC:IPC_SWITCH\n");
@@ -866,7 +871,8 @@ extern "C" void cookie_kernel_syscall_entry(
         // establish. Genuine elapsed time returns for the on_timer() paths
         // below, which take their timestamp from the delivered interrupt.
         auto rescheduled = boot_preemption.reschedule(
-            boot_kernel.runqueue(), boot_translations, boot_epochs, boot_start_now, *frame);
+            boot_kernel.runqueue(), boot_translations, boot_epochs, boot_start_now, *frame,
+            boot_kernel.ipc_earliest_receive_deadline());
         if (!rescheduled || rescheduled.value().next != process_a_thread ||
             rescheduled.value().switched || !rescheduled.value().deadline.active ||
             !commit_result(rescheduled.value(), boot_start_now) ||
@@ -966,8 +972,26 @@ extern "C" void cookie_aarch64_irq_dispatch(
 
     const auto delivered = boot_preemption.current_deadline();
     const auto now = os::kernel::machine_monotonic_nanoseconds();
+
+    // Drain before choosing. A waiter whose bounded receive has run out is
+    // runnable, and the scheduler must see it as runnable in this decision
+    // rather than the next one - otherwise the wakeup this timer exists for is
+    // deferred by a whole slice. A loop rather than a single take because
+    // several deadlines can fall inside one timer grain, and leaving the later
+    // ones armed would need another interrupt to collect what is already due.
+    for (;;) {
+        auto expired = boot_kernel.ipc_expire_one_receive(now);
+        if (!expired) {
+            uart_write("COOKIE:PANIC:IPC_EXPIRY
+");
+            halt();
+        }
+        if (!expired.value()) break;
+    }
+
     auto next = boot_preemption.on_timer(
-        boot_kernel.runqueue(), boot_translations, boot_epochs, delivered, now, *frame);
+        boot_kernel.runqueue(), boot_translations, boot_epochs, delivered, now, *frame,
+        boot_kernel.ipc_earliest_receive_deadline());
     if (!next || !commit_result(next.value(), now) ||
         !complete_after_switch(next.value().next, *frame)) {
         uart_write("COOKIE:PANIC:PREEMPT\n");

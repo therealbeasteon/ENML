@@ -185,6 +185,15 @@ os::core::Result<void> Rendezvous::expire_receive(ThreadId self) noexcept {
     return {};
 }
 
+os::core::Result<bool> Rendezvous::take_deadline_expiry(ThreadId self) noexcept {
+    if (self == invalid_thread) return rendezvous_error(rendezvous_errors::invalid_thread_id);
+    Slot* slot = find(self);
+    if (slot == nullptr) return rendezvous_error(rendezvous_errors::unknown_thread);
+    if (slot->wake != WakeReason::deadline_expired) return false;
+    slot->wake = WakeReason::none;
+    return true;
+}
+
 os::core::Result<void> Rendezvous::send(ThreadId from, ThreadId to) noexcept {
     Slot* target = find(to);
     if (target != nullptr && target->state == ThreadState::receive_blocked &&

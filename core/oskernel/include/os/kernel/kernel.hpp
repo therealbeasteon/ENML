@@ -104,6 +104,14 @@ public:
     // complete whichever waiter that timer belongs to, without reaching into
     // continuation state itself.
     [[nodiscard]] std::uint64_t ipc_earliest_receive_deadline() const noexcept;
+    // Expires one waiter whose bounded receive has run out: takes its
+    // continuation and wakes it with WakeReason::deadline_expired. Returns
+    // false when nothing has expired, so a timer handler can drain in a loop.
+    [[nodiscard]] os::core::Result<bool> ipc_expire_one_receive(
+        std::uint64_t now_nanoseconds) noexcept;
+    // Consumed by the completion path; see Rendezvous::take_deadline_expiry.
+    [[nodiscard]] os::core::Result<bool> ipc_take_deadline_expiry(
+        ThreadId thread) noexcept;
     [[nodiscard]] os::core::Result<IpcReceiveContinuation>
     ipc_take_expired_receive_continuation(std::uint64_t now_nanoseconds) noexcept;
     [[nodiscard]] os::core::Result<IpcReceiveContinuation> ipc_take_receive_continuation(
