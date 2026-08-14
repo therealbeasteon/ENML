@@ -38,6 +38,13 @@ Landed so far, each in its own reviewable diff:
    destroy-and-recreate stops resolving on its own, with the ordinary
    not-found error rather than a distinguishing one. Decoders for calls 7 and 8
    exist; nothing dispatches them yet.
+8. **The kernel decides who may create and destroy one.**
+   `Kernel::address_space_create` and the two-phase
+   `address_space_begin_destroy`/`address_space_complete_destroy`, plus
+   `AddressSpaceEpochAuthority::resolve` to recover an epoch from the identity
+   a capability carries. The exit criterion about stale references is tested
+   directly: a capability minted over a destroyed space does not reach the
+   space that later occupies its slot.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -139,10 +146,36 @@ space's root reservation, which breaks the cycle too but puts teardown
 ownership in the wrong place: `release_reservations` drops what a space owns,
 and a root the creator owns would outlive the space it belonged to.
 
-**Still missing: the capability gate and the epoch.** These are machine-layer
-primitives, not yet a capability-checked syscall, and nothing mints an
-`AddressSpaceEpoch` for a space created this way. Both are needed before a
-process rather than the boot routine can create one.
+**The capability gate and the epoch now exist.** `Kernel::address_space_create`
+checks a capability, acquires an epoch, and mints a capability naming that
+epoch's identity; `address_space_begin_destroy`/`address_space_complete_destroy`
+check a capability, resolve the space it names, and drive the two-phase
+retirement the ASID lifecycle requires. None of it touches a page table - the
+kernel owns which lifetimes exist and who may name them, the machine layer owns
+the tables, and the `aarch64_*` calls above run between them.
+
+`AddressSpaceEpochAuthority::resolve` was the missing piece that made
+capability-driven destroy possible at all: a capability names a space by
+identity, because that is what an object id can carry, while retirement needs
+the epoch, which also carries an ASID. It stores nothing to close that gap,
+because the ASID was never independent information - `acquire()` derives it
+from the slot and `active()` already re-derives it to validate what it is
+handed.
+
+**Still missing: the syscall dispatch and the boot proof.** Nothing decodes
+calls 7 and 8 at the AArch64 syscall entry, so the composition is reachable
+from the boot routine and from host tests but not yet from EL0. And every
+claim above is host-tested only; under `kernel-arm64-native` no address space
+has yet been created after boot. That proof - create, donate, build a root,
+map, destroy, and refuse a stale capability, under QEMU - is what would let
+this milestone claim its first exit criterion rather than describe it.
+
+**Also still missing: what creation should really be authorized by.** The
+creation authority is a distinguished object, and it is a placeholder. In the
+finished design the authority to create a space is the authority over the page
+it is built from, since the no-allocator decision makes memory the only
+authority there is and the caller already supplies that page. When memory
+capabilities land, that object should disappear rather than sit beside them.
 
 **The fault is described but not yet answerable.** This entry used to read
 "there is no fault path," and half of it is now false: `describe_fault` decodes
