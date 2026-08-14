@@ -536,7 +536,15 @@ processes, delivers timer and device interrupts to user-space handlers, passes
 the full EMNL wire-format and capability fuzz corpus, and reports a trusted line
 count under the declared ceiling.
 
-Four of the five are met, one is not. Taken in order:
+All five are met. That closes the checklist, not the phase: Phase 2's own
+opening line sets a bigger bar than these five bullets ever measured - "finish
+the AArch64 kernel until it can run Cookie's own services" - and nothing here
+runs a Cookie service. Two EL0 processes proving IPC, preemption and interrupt
+mechanisms are not services; they are the mechanisms services will need. What
+these five bullets actually gate is that the mechanisms are real and CI-proven
+rather than claimed, which is worth having exactly because it is narrower than
+"self-hosting" and can be checked by a machine instead of asserted in prose.
+Taken in order:
 
 - *Boots on QEMU virt* — **met**, and gated: `kernel-arm64-native` greps the
   serial log for both markers and fails the workflow without them.
@@ -565,16 +573,23 @@ Four of the five are met, one is not. Taken in order:
   redirects A straight into `interrupt_complete` the instant its delivery
   arrives, observed via `COOKIE:M7.9:ATTACHED` → `..:DISPATCHED` →
   `..:SERVICED` → `..:COMPLETED` in that order.
-- *Passes the full EMNL wire-format and capability fuzz corpus* — **not met,
-  and not currently measurable.** `fuzz/` gained an `ipc/` target during this
-  stack, but it fuzzes `os::ipc` — the service-layer RPC decoder used over the
-  Linux substrate's `SOCK_SEQPACKET` transport — not `os::kernel`'s own native
-  IPC syscall decoders (`decode_ipc_send_syscall` and siblings) or capability
-  model that M7.6a and M7.8 just added. Those remain unfuzzed. Both are
-  bounded typed formats of exactly the kind every other target in that
-  directory is fuzzed as, and the M7.0 argument that the kernel is the part
-  small enough to review completely applies with more force, not less, to the
-  part that parses untrusted syscall arguments from unprivileged EL0 code.
+- *Passes the full EMNL wire-format and capability fuzz corpus* — **met.**
+  `fuzz/ipc/` fuzzes `os::ipc` — the service-layer RPC decoder used over the
+  Linux substrate's `SOCK_SEQPACKET` transport. `os::kernel`'s own surface
+  needed its own coverage, since a well-formed RPC envelope proves nothing
+  about a hostile register value at the syscall boundary: `fuzz/kernel/
+  ipc_syscall_fuzz.cpp` now exercises `decode_ipc_send_syscall`/
+  `decode_ipc_receive_syscall`/`decode_ipc_reply_syscall` directly against raw
+  register values, and `fuzz/kernel/capability_fuzz.cpp` runs a bounded script
+  of mint/grant/revoke/describe/holds operations - both the legacy
+  `ThreadId`-only surface and M7.8's `ExecutionAuthority`-bound one - against
+  a single `CapabilityTable`, reusing previously-minted ids so the
+  transitions between operations (derive past the depth limit, revoke racing
+  a grant, describe after teardown) are what gets exercised, not just each
+  call's own argument validation in isolation. Both are smoke-tested every
+  push (`fuzz-smoke` in `ci.yml`) and fuzzed nightly for real wall-clock time
+  (`fuzz-nightly.yml`), the same discipline every other target in the
+  directory already gets.
 - *Reports a trusted line count under the declared ceiling* — **met**, and has
   been since M7.10 landed. The ceiling moved fifteen times across this stack —
   once per milestone plus three defect fixes — each raise landing in the same diff

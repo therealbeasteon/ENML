@@ -68,6 +68,10 @@ jobs:
             dictionary: fuzz/dict/device_access.dict
           - target: time_protection_fuzz
             dictionary: ''
+          - target: kernel_ipc_syscall_fuzz
+            dictionary: ''
+          - target: kernel_capability_fuzz
+            dictionary: ''
     steps:
       - uses: actions/checkout@v4
 
