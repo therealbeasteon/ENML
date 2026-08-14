@@ -704,6 +704,10 @@ accepted deliberately and should stay visible.
 
 ## Phase 2b — Memory as a first-class object (M7.11)
 
+Design document: `docs/M7_11_MEMORY.md`, which makes the decisions listed
+below rather than restating them — in particular the one that cannot be
+revisited later, that **the kernel has no dynamic allocator**.
+
 Added because a gap review found it missing rather than deferred, and it
 blocks Phase 3 whether or not it is written down. Everything M7 built —
 address spaces, epochs, capabilities, IPC, interrupts — assumes memory that
