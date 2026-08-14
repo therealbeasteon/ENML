@@ -53,5 +53,45 @@ int main() {
     require(!after_cancel);
     require(after_cancel.error().code == scheduler_deadline_errors::inactive);
 
+    // ------------------------------------------------------------------
+    // narrow_decision_timer: an IPC deadline may only bring a wakeup forward.
+    // ------------------------------------------------------------------
+    {
+        using os::kernel::narrow_decision_timer;
+        os::kernel::Decision slice{};
+        slice.thread = 4U;
+        slice.timer_nanoseconds = 2'000'000U; // a 2ms round-robin slice
+
+        // Nothing waiting: untouched.
+        require(narrow_decision_timer(slice, 0ULL, 1'000U).timer_nanoseconds
+                == 2'000'000U);
+
+        // A later receive deadline does not postpone the slice.
+        require(narrow_decision_timer(slice, 1'000U + 9'000'000U, 1'000U)
+                    .timer_nanoseconds == 2'000'000U);
+
+        // An earlier one brings the wakeup forward.
+        require(narrow_decision_timer(slice, 1'000U + 500'000U, 1'000U)
+                    .timer_nanoseconds == 500'000U);
+
+        // With no scheduling timer at all, the receive deadline supplies one.
+        os::kernel::Decision idle{};
+        idle.thread = 4U;
+        idle.timer_nanoseconds = 0U;
+        require(narrow_decision_timer(idle, 1'000U + 750U, 1'000U)
+                    .timer_nanoseconds == 750U);
+        require(narrow_decision_timer(idle, 0ULL, 1'000U).timer_nanoseconds == 0U);
+
+        // Already past: the smallest expressible wait, never zero - zero means
+        // "no timer" and would cancel the wakeup it was asked to hasten.
+        require(narrow_decision_timer(slice, 500U, 1'000U).timer_nanoseconds == 1U);
+        require(narrow_decision_timer(idle, 1'000U, 1'000U).timer_nanoseconds == 1U);
+
+        // Narrowing never touches anything but the timer.
+        const auto narrowed = narrow_decision_timer(slice, 1'000U + 10U, 1'000U);
+        require(narrowed.thread == slice.thread);
+        require(narrowed.preempted == slice.preempted);
+    }
+
     return 0;
 }
