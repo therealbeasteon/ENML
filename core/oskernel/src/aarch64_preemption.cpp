@@ -16,7 +16,8 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
     const Decision& decision,
     std::uint64_t now_nanoseconds,
     ExceptionFrame& live,
-    bool capture_current) noexcept {
+    bool capture_current,
+    std::uint64_t earliest_receive_deadline) noexcept {
     (void)scheduler;
     if (decision.thread == invalid_thread) {
         return preemption_error(preemption_errors::no_runnable_thread);
@@ -40,7 +41,13 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::apply_decision(
     auto restore_ok = frames_.validate_restore(decision.thread);
     if (!restore_ok) return restore_ok.error();
 
-    auto prepared_deadline = deadlines_.prepare(decision, now_nanoseconds);
+    // Narrow before prepare, never after commit. The authority is the single
+    // source of truth for what is armed, and accept_interrupt refuses a
+    // delivered deadline that does not match it - so arming the hardware
+    // earlier behind its back yields an interrupt it discards.
+    const auto narrowed = narrow_decision_timer(
+        decision, earliest_receive_deadline, now_nanoseconds);
+    auto prepared_deadline = deadlines_.prepare(narrowed, now_nanoseconds);
     if (!prepared_deadline) return prepared_deadline.error();
 
     auto committed_deadline = deadlines_.commit(prepared_deadline.value());
@@ -74,13 +81,15 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::start(
     const ProcessTranslationTable& translations,
     const AddressSpaceEpochAuthority& epochs,
     std::uint64_t now_nanoseconds,
-    ExceptionFrame& live) noexcept {
+    ExceptionFrame& live,
+    std::uint64_t earliest_receive_deadline) noexcept {
     if (running_ != invalid_thread) {
         return preemption_error(preemption_errors::wrong_running_thread);
     }
     const auto decision = scheduler.choose(now_nanoseconds);
     return apply_decision(
-        scheduler, translations, epochs, decision, now_nanoseconds, live, false);
+        scheduler, translations, epochs, decision, now_nanoseconds, live, false,
+        earliest_receive_deadline);
 }
 
 os::core::Result<PreemptionResult> PreemptionCoordinator::reschedule(
@@ -88,13 +97,15 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::reschedule(
     const ProcessTranslationTable& translations,
     const AddressSpaceEpochAuthority& epochs,
     std::uint64_t now_nanoseconds,
-    ExceptionFrame& live) noexcept {
+    ExceptionFrame& live,
+    std::uint64_t earliest_receive_deadline) noexcept {
     if (running_ == invalid_thread || scheduler.running() != running_) {
         return preemption_error(preemption_errors::wrong_running_thread);
     }
     const auto decision = scheduler.choose(now_nanoseconds);
     return apply_decision(
-        scheduler, translations, epochs, decision, now_nanoseconds, live, true);
+        scheduler, translations, epochs, decision, now_nanoseconds, live, true,
+        earliest_receive_deadline);
 }
 
 os::core::Result<PreemptionResult> PreemptionCoordinator::on_timer(
@@ -103,7 +114,8 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::on_timer(
     const AddressSpaceEpochAuthority& epochs,
     const SchedulerDeadline& delivered,
     std::uint64_t now_nanoseconds,
-    ExceptionFrame& live) noexcept {
+    ExceptionFrame& live,
+    std::uint64_t earliest_receive_deadline) noexcept {
     auto accepted = deadlines_.accept_interrupt(delivered, now_nanoseconds);
     if (!accepted) return accepted.error();
     if (running_ == invalid_thread || scheduler.running() != running_) {
@@ -112,7 +124,8 @@ os::core::Result<PreemptionResult> PreemptionCoordinator::on_timer(
 
     const auto decision = scheduler.choose(now_nanoseconds);
     return apply_decision(
-        scheduler, translations, epochs, decision, now_nanoseconds, live, true);
+        scheduler, translations, epochs, decision, now_nanoseconds, live, true,
+        earliest_receive_deadline);
 }
 
 } // namespace os::kernel::aarch64

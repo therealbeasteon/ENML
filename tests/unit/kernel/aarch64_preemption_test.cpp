@@ -105,8 +105,31 @@ int main() {
     require(static_cast<bool>(preemption.admit_frame(2U, b)));
 
     ExceptionFrame live{};
+
+    // A bounded receive expiring sooner than the scheduling slice must bring
+    // the armed wakeup forward, and the deadline authority must be the thing
+    // that knows - current_deadline() is what accept_interrupt later checks a
+    // delivered interrupt against, so if narrowing did not reach it the timer
+    // would fire at a time the authority calls `early` and discards.
+    {
+        PreemptionCoordinator narrow_preemption{};
+        require(static_cast<bool>(narrow_preemption.admit_frame(1U, a)));
+        require(static_cast<bool>(narrow_preemption.admit_frame(2U, b)));
+        ExceptionFrame narrow_live{};
+        auto narrowed = narrow_preemption.start(
+            scheduler, translations, epochs, 1'000'000U, narrow_live,
+            1'000'000U + 250U);
+        require(static_cast<bool>(narrowed));
+        require(narrow_preemption.current_deadline().active);
+        require(narrow_preemption.current_deadline().absolute_nanoseconds ==
+                1'000'000U + 250U);
+    }
+
     auto start = preemption.start(scheduler, translations, epochs, 1'000'000U, live);
     require(static_cast<bool>(start));
+    // Zero leaves the scheduling slice alone, which is why every existing
+    // caller keeps working untouched.
+    require(start.value().deadline.absolute_nanoseconds > 1'000'000U + 250U);
     require(start.value().translation.root_physical == root_a.value().root_physical());
     auto start_plan = prepare_execution_universe(start.value());
     require(static_cast<bool>(start_plan));

@@ -47,7 +47,8 @@ public:
         const ProcessTranslationTable& translations,
         const AddressSpaceEpochAuthority& epochs,
         std::uint64_t now_nanoseconds,
-        ExceptionFrame& live) noexcept;
+        ExceptionFrame& live,
+        std::uint64_t earliest_receive_deadline = 0ULL) noexcept;
 
     // Event-driven scheduling transition for kernel calls, wakeups and other
     // runnable-state changes. This is intentionally distinct from on_timer():
@@ -59,15 +60,22 @@ public:
         const ProcessTranslationTable& translations,
         const AddressSpaceEpochAuthority& epochs,
         std::uint64_t now_nanoseconds,
-        ExceptionFrame& live) noexcept;
+        ExceptionFrame& live,
+        std::uint64_t earliest_receive_deadline = 0ULL) noexcept;
 
+    // `earliest_receive_deadline` is the soonest bounded receive across the
+    // continuation table, absolute, zero when none is armed. It can only bring
+    // this decision's wakeup forward - see narrow_decision_timer, and note that
+    // it is applied here rather than after commit because the deadline
+    // authority must remain the only thing that knows what is armed.
     [[nodiscard]] os::core::Result<PreemptionResult> on_timer(
         Scheduler& scheduler,
         const ProcessTranslationTable& translations,
         const AddressSpaceEpochAuthority& epochs,
         const SchedulerDeadline& delivered,
         std::uint64_t now_nanoseconds,
-        ExceptionFrame& live) noexcept;
+        ExceptionFrame& live,
+        std::uint64_t earliest_receive_deadline = 0ULL) noexcept;
 
     [[nodiscard]] ThreadId running() const noexcept { return running_; }
     [[nodiscard]] SchedulerDeadline current_deadline() const noexcept {
@@ -82,7 +90,8 @@ private:
         const Decision& decision,
         std::uint64_t now_nanoseconds,
         ExceptionFrame& live,
-        bool capture_current) noexcept;
+        bool capture_current,
+        std::uint64_t earliest_receive_deadline = 0ULL) noexcept;
 
     UserFrameTable frames_ {};
     SchedulerDeadlineAuthority deadlines_ {};

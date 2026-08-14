@@ -662,11 +662,20 @@ not_kernel=(
 # later caller to pass the wrong one. Both retain the same guard: only a thread
 # genuinely receive-blocked with no partner can be moved, so arbitrary thread
 # wakeup stays impossible.
+# Raised a twenty-sixth time, by threading the earliest bounded-receive
+# deadline through PreemptionCoordinator: machine 3,015 -> 3,028, total
+# 8,913 -> 8,926. core unchanged.
+#
+# Thirteen lines of parameter and narrowing call, defaulted to zero, so every existing caller keeps
+# its exact behaviour - narrowing against no armed receive is the identity.
+# It goes through the coordinator rather than around it because the clamp has
+# to reach deadlines_.prepare(); anything that arms the hardware without the
+# authority's knowledge produces an interrupt accept_interrupt discards.
 core_ceiling=3504
-machine_ceiling=3015
+machine_ceiling=3028
 discovery_ceiling=1272
 entry_ceiling=1122
-total_ceiling=8913
+total_ceiling=8926
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
