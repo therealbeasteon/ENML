@@ -238,5 +238,53 @@ int main() {
                    "a dead caller kept donating its priority")) return 1;
     }
 
+    // ------------------------------------------------------------------
+    // expire_receive: a bounded wait that ran out, distinguishable from a
+    // retired endpoint.
+    // ------------------------------------------------------------------
+    {
+        os::kernel::Rendezvous r{};
+        if (!check(static_cast<bool>(r.create_thread(60U, 1U)),
+                   "expiry fixture thread 60 not created")) return 1;
+        if (!check(static_cast<bool>(r.create_thread(61U, 1U)),
+                   "expiry fixture thread 61 not created")) return 1;
+
+        // Only a genuinely receive-blocked thread can be expired, so this is
+        // not an arbitrary thread-wakeup primitive.
+        if (!check(!r.expire_receive(60U), "ready thread expired")) return 1;
+        if (!check(!r.expire_receive(9999U), "unknown thread expired")) return 1;
+
+        if (!check(static_cast<bool>(r.wait_receive(60U)),
+                   "receiver did not block")) return 1;
+        if (!check(in_state(r, 60U, os::kernel::ThreadState::receive_blocked),
+                   "receiver not receive-blocked")) return 1;
+
+        if (!check(static_cast<bool>(r.expire_receive(60U)),
+                   "expiry refused for a blocked receiver")) return 1;
+        if (!check(in_state(r, 60U, os::kernel::ThreadState::ready),
+                   "expired receiver not ready")) return 1;
+
+        auto why = r.wake_reason_of(60U);
+        if (!check(static_cast<bool>(why), "no wake reason after expiry")) return 1;
+        // Distinct from endpoint_retired: a routine timeout must not read as a
+        // dead peer, or a service treats a retry-able wait as a fatal one.
+        if (!check(why.value() == os::kernel::WakeReason::deadline_expired,
+                   "expiry did not report deadline_expired")) return 1;
+
+        // Already awake: refused rather than silently re-waking a thread that
+        // may have moved on.
+        if (!check(!r.expire_receive(60U), "expiry repeated on a ready thread")) return 1;
+
+        // The sibling path still reports its own reason.
+        if (!check(static_cast<bool>(r.wait_receive(61U)),
+                   "sibling receiver did not block")) return 1;
+        if (!check(static_cast<bool>(r.cancel_receive(61U)),
+                   "sibling cancel refused")) return 1;
+        auto sibling = r.wake_reason_of(61U);
+        if (!check(static_cast<bool>(sibling), "no sibling wake reason")) return 1;
+        if (!check(sibling.value() == os::kernel::WakeReason::endpoint_retired,
+                   "cancel_receive reason changed")) return 1;
+    }
+
     return 0;
 }

@@ -39,6 +39,12 @@ enum class WakeReason : std::uint8_t {
     replied = 2U,
     peer_exited = 3U,
     endpoint_retired = 4U,
+    // A bounded receive reached its deadline with no message. Distinct from
+    // endpoint_retired on purpose: that says the endpoint is gone and retrying
+    // is pointless, this says nothing arrived in time and retrying is the
+    // normal thing to do. Collapsing them would make a service treat a routine
+    // timeout as a dead peer.
+    deadline_expired = 5U,
 };
 
 // Pure synchronous scheduling/relationship state. Payloads, endpoint identity,
@@ -70,6 +76,16 @@ public:
         ThreadId self,
         ThreadId caller) noexcept;
     [[nodiscard]] os::core::Result<void> cancel_receive(ThreadId self) noexcept;
+
+    // Wakes a receiver whose bounded wait expired. Same transition as
+    // cancel_receive and deliberately a separate entry point rather than a
+    // reason parameter on it: cancel_receive is reached from endpoint
+    // retirement, this from the kernel's own timer, and a shared parameter
+    // would let a future caller pass the wrong one by accident. Like
+    // cancel_receive it can only move a thread that is genuinely
+    // receive-blocked with no partner, so arbitrary thread wakeup stays
+    // impossible.
+    [[nodiscard]] os::core::Result<void> expire_receive(ThreadId self) noexcept;
 
     // Narrow cancellation primitive used by endpoint retirement. It can only
     // release a caller that is currently blocked on the exact expected server;

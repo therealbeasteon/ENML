@@ -651,11 +651,22 @@ not_kernel=(
 # about, and the resulting interrupt is refused by its own staleness check.
 # Clamping the Decision *before* prepare() keeps one armed time and one owner
 # of it.
-core_ceiling=3491
+# Raised a twenty-fifth time, by WakeReason::deadline_expired and
+# Rendezvous::expire_receive: core 3,491 -> 3,504, total 8,900 -> 8,913.
+#
+# The transition already existed - cancel_receive moves a receive-blocked
+# thread to ready - so this buys a second entry point and a fifth wake reason
+# rather than new machinery. It is a separate function rather than a reason
+# parameter on cancel_receive because the two have different callers (endpoint
+# retirement, and the kernel's own timer) and a shared parameter is a way for a
+# later caller to pass the wrong one. Both retain the same guard: only a thread
+# genuinely receive-blocked with no partner can be moved, so arbitrary thread
+# wakeup stays impossible.
+core_ceiling=3504
 machine_ceiling=3015
 discovery_ceiling=1272
 entry_ceiling=1122
-total_ceiling=8900
+total_ceiling=8913
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

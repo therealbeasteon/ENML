@@ -176,6 +176,43 @@ interrupt it produces is refused by the authority's own staleness check. The
 receive deadline would simply never fire, and nothing would say so. Clamping the
 `Decision` keeps one armed time and one owner of it.
 
+### Landed: the wake reason
+
+`WakeReason::deadline_expired` and `Rendezvous::expire_receive`. The transition
+already existed — `cancel_receive` moves a receive-blocked thread to ready — so
+this buys a fifth reason and a second entry point rather than new machinery.
+
+Distinct from `endpoint_retired` deliberately: that says the endpoint is gone
+and retrying is pointless, this says nothing arrived in time and retrying is the
+normal thing to do. Collapsing them would make a service treat a routine timeout
+as a dead peer. A separate function rather than a reason parameter for the same
+class of reason — the callers differ (endpoint retirement; the kernel's own
+timer) and a shared parameter is a way for a later caller to pass the wrong one.
+
+Both keep the same guard: only a thread genuinely receive-blocked with no
+partner can be moved, so this is not an arbitrary thread-wakeup primitive.
+
+### What is still missing, precisely
+
+Three things, all in the AArch64/boot tier and all needing the QEMU proof rather
+than host tests:
+
+1. **Convert and arm.** The receive syscall reads
+   `machine_monotonic_nanoseconds()`, adds the relative deadline *saturating*
+   (an overflowing sum wraps to a small absolute value, which reads as
+   already-expired — the exact opposite of the intent), and passes the absolute
+   result to `ipc_arm_receive_continuation`.
+2. **Narrow at every scheduling decision.** Each `scheduler.choose()` result
+   passes through `narrow_decision_timer` with
+   `kernel.ipc_earliest_receive_deadline()` before the deadline authority
+   prepares it.
+3. **Drain on expiry.** The timer handler calls
+   `ipc_take_expired_receive_continuation(now)` and, for each, `expire_receive`,
+   and `complete_ipc_current` learns to see `deadline_expired` and return an
+   empty result (transaction 0, size 0) rather than falling through to
+   `ipc_take_reply`, which would report `reply_unavailable` and leave the woken
+   thread unable to resume.
+
 **The ABI still refuses.** These increments buy the mechanism; the wake path —
 arming the hardware timer and completing the expired receiver with no message —
 is what removes the refusal, and until it exists a deadline that nothing checks
