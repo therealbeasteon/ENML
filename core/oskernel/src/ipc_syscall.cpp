@@ -38,16 +38,24 @@ os::core::Result<IpcSendSyscall> decode_ipc_send_syscall(
 
 os::core::Result<IpcReceiveSyscall> decode_ipc_receive_syscall(
     std::uint64_t x0_capability,
-    std::uint64_t x1_exchange_address) noexcept {
+    std::uint64_t x1_exchange_address,
+    std::uint64_t x2_deadline_nanoseconds) noexcept {
     if (x0_capability == 0ULL) {
         return ipc_syscall_error(ipc_syscall_errors::invalid_capability);
     }
     if (x1_exchange_address == 0ULL) {
         return ipc_syscall_error(ipc_syscall_errors::invalid_exchange);
     }
+    // Every register value is a legal deadline: zero is no deadline and any
+    // other value is a relative nanosecond count the scheduler will clamp
+    // against its own horizon. Nothing to reject here, which is the point of
+    // relative-and-unsigned - there is no negative timeout, no absolute value
+    // already in the past, and no encoding a hostile caller can use to mean
+    // something the decoder did not intend.
     return IpcReceiveSyscall{
         .endpoint_capability = static_cast<CapabilityId>(x0_capability),
         .exchange_address = x1_exchange_address,
+        .deadline_nanoseconds = x2_deadline_nanoseconds,
     };
 }
 

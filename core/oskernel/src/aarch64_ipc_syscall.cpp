@@ -127,8 +127,20 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
     }
 
     case KernelCall::receive: {
-        auto decoded = decode_ipc_receive_syscall(frame.x[0], frame.x[1]);
+        auto decoded = decode_ipc_receive_syscall(frame.x[0], frame.x[1], frame.x[2]);
         if (!decoded) return decoded.error();
+
+        // The ABI carries a deadline; this path cannot yet arm one. Refuse
+        // rather than proceed as an unbounded receive: a caller that asked for
+        // a bound and silently did not get one waits forever believing it will
+        // not, which is a worse failure than being told no. The shape is fixed
+        // here because a register contract is the expensive thing to change
+        // later; honouring it is the next increment.
+        if (decoded.value().bounded()) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                ipc_syscall_errors::deadline_unsupported);
+        }
 
         // Arm before rendezvous state can block. Immediate delivery cancels the
         // continuation again; failure never leaves a sleeping syscall without
