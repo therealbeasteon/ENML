@@ -79,7 +79,8 @@ os::core::Result<void> IpcContinuationTable::arm_receive(
     AddressSpaceEpoch epoch,
     CapabilityId endpoint_capability,
     std::uint64_t exchange_address,
-    const AddressSpaceEpochAuthority& epochs) noexcept {
+    const AddressSpaceEpochAuthority& epochs,
+    std::uint64_t deadline_nanoseconds) noexcept {
     if (server == invalid_thread) return continuation_error(ipc_continuation_errors::invalid_thread);
     if (!epoch.valid() || !epochs.active(epoch)) return continuation_error(ipc_continuation_errors::invalid_epoch);
     if (endpoint_capability == invalid_capability) return continuation_error(ipc_continuation_errors::invalid_capability);
@@ -94,6 +95,7 @@ os::core::Result<void> IpcContinuationTable::arm_receive(
             .epoch = epoch,
             .endpoint_capability = endpoint_capability,
             .exchange_address = exchange_address,
+            .deadline_nanoseconds = deadline_nanoseconds,
         };
         ++occupied_;
         return {};
@@ -115,6 +117,44 @@ os::core::Result<IpcReceiveContinuation> IpcContinuationTable::take_receive(
     if (!expected.valid() || !epochs.active(expected) || !(continuation.epoch == expected)) {
         return continuation_error(ipc_continuation_errors::stale);
     }
+    return continuation;
+}
+
+std::uint64_t IpcContinuationTable::earliest_receive_deadline() const noexcept {
+    std::uint64_t earliest = 0ULL;
+    for (const auto& slot : receive_slots_) {
+        if (!slot.occupied || !slot.continuation.bounded()) continue;
+        if (earliest == 0ULL || slot.continuation.deadline_nanoseconds < earliest) {
+            earliest = slot.continuation.deadline_nanoseconds;
+        }
+    }
+    return earliest;
+}
+
+os::core::Result<IpcReceiveContinuation> IpcContinuationTable::take_expired_receive(
+    std::uint64_t now_nanoseconds) noexcept {
+    ReceiveSlot* chosen = nullptr;
+    for (auto& slot : receive_slots_) {
+        if (!slot.occupied || !slot.continuation.expired_at(now_nanoseconds)) continue;
+        // Deterministic tie-break on ThreadId rather than first-found. Two
+        // waiters that expire in the same instant must not learn their relative
+        // order from where the table happened to place them.
+        if (chosen == nullptr ||
+            slot.continuation.server < chosen->continuation.server) {
+            chosen = &slot;
+        }
+    }
+    if (chosen == nullptr) return continuation_error(ipc_continuation_errors::not_armed);
+
+    const IpcReceiveContinuation continuation = chosen->continuation;
+    *chosen = ReceiveSlot{};
+    --occupied_;
+    // Deliberately no epoch check here, unlike take_receive. Expiry is the
+    // kernel's own timer firing, not a thread presenting a reference that has
+    // to be proven current; a stale epoch means the address space died while
+    // the receiver waited, and the caller of this function decides what a dead
+    // space's expired waiter deserves. Returning it is what lets the slot be
+    // reclaimed either way.
     return continuation;
 }
 

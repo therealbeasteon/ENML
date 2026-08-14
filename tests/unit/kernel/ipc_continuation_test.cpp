@@ -57,5 +57,54 @@ int main() {
     continuations.release_thread(3U);
     require(continuations.count() == 0U);
 
+    // ------------------------------------------------------------------
+    // Bounded receive: deadlines are absolute, one timer serves the table.
+    // ------------------------------------------------------------------
+    {
+        os::kernel::AddressSpaceEpochAuthority deadline_epochs{};
+        auto e1 = deadline_epochs.acquire();
+        require(static_cast<bool>(e1));
+        os::kernel::IpcContinuationTable table{};
+
+        // Unbounded by default: an unbounded waiter never arms a timer and
+        // never expires, however far the clock runs.
+        require(static_cast<bool>(table.arm_receive(
+            7U, e1.value(), 5U, 0x1000U, deadline_epochs)));
+        require(table.earliest_receive_deadline() == 0ULL);
+        require(!table.take_expired_receive(~0ULL - 1ULL));
+        require(static_cast<bool>(table.cancel_receive(7U)));
+
+        // Three bounded waiters; the timer is armed against the soonest, not
+        // one timer per waiter.
+        require(static_cast<bool>(table.arm_receive(
+            7U, e1.value(), 5U, 0x1000U, deadline_epochs, 900U)));
+        require(static_cast<bool>(table.arm_receive(
+            8U, e1.value(), 5U, 0x2000U, deadline_epochs, 300U)));
+        require(static_cast<bool>(table.arm_receive(
+            9U, e1.value(), 5U, 0x3000U, deadline_epochs, 600U)));
+        require(table.earliest_receive_deadline() == 300U);
+
+        // Nothing expires early.
+        require(!table.take_expired_receive(299U));
+
+        // At the deadline exactly, not one tick after.
+        auto first = table.take_expired_receive(300U);
+        require(static_cast<bool>(first));
+        require(first.value().server == 8U);
+        require(first.value().deadline_nanoseconds == 300U);
+        require(table.earliest_receive_deadline() == 600U);
+
+        // A far-future now expires the rest, lowest ThreadId first, so two
+        // equally-expired waiters cannot read their order off table layout.
+        auto second = table.take_expired_receive(10'000U);
+        require(static_cast<bool>(second));
+        require(second.value().server == 7U);
+        auto third = table.take_expired_receive(10'000U);
+        require(static_cast<bool>(third));
+        require(third.value().server == 9U);
+        require(table.earliest_receive_deadline() == 0ULL);
+        require(!table.take_expired_receive(10'000U));
+    }
+
     return 0;
 }
