@@ -85,6 +85,20 @@ public:
         const AddressSpaceEpochAuthority& epochs) noexcept;
     [[nodiscard]] os::core::Result<void> ipc_cancel_receive_continuation(ThreadId server) noexcept;
 
+    // Capability-checked. InterruptTable deliberately does not consult
+    // CapabilityTable itself - see interrupt.hpp - so the check happens here,
+    // at the same composition layer ipc_send/ipc_receive/ipc_reply already
+    // check IPC capabilities at.
+    [[nodiscard]] os::core::Result<void> interrupt_attach(
+        ThreadId driver, CapabilityId source_capability) noexcept;
+    [[nodiscard]] os::core::Result<void> interrupt_detach(
+        ThreadId driver, CapabilityId source_capability) noexcept;
+    // Returns whether the source must be serviced again immediately, exactly
+    // as InterruptTable::end_service does - the capability check in front of
+    // it does not change what the driver needs to know.
+    [[nodiscard]] os::core::Result<bool> interrupt_complete(
+        ThreadId driver, CapabilityId source_capability) noexcept;
+
     os::core::Result<Dispatch> dispatch_interrupt(InterruptSource source) noexcept;
     Decision schedule(std::uint64_t now_nanoseconds) noexcept;
 

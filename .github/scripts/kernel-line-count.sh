@@ -377,11 +377,22 @@ not_kernel=(
 # unusable through the legacy ThreadId-only IPC path rather than silently
 # losing their generation binding, until M7.8.2 adds the explicit
 # ExecutionAuthority IPC path.
-core_ceiling=3052
+# Raised an eleventh time, by M7.9's first increment: core 3052 -> 3117,
+# total 7896 -> 7961. interrupt_attach/interrupt_detach/interrupt_complete
+# are capability-checked at the Kernel composition layer, closing the gap
+# docs/M6_0_DEVICE_ACCESS.md and docs/M7_1_INTERRUPT.md both named and
+# deferred: "no interrupt authority... needs its own threat model" and
+# "attaching the interrupt capability to the source" respectively.
+# InterruptTable itself is unchanged and still does not consult
+# CapabilityTable - the check lives here, matching where ipc_send/
+# ipc_receive already check IPC capabilities, and re-validates fresh on
+# every call rather than caching, so a capability revoked between attach
+# and complete cannot still authorize either.
+core_ceiling=3117
 machine_ceiling=2772
 discovery_ceiling=1234
 entry_ceiling=838
-total_ceiling=7896
+total_ceiling=7961
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
