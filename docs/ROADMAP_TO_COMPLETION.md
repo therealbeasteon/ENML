@@ -1,5 +1,41 @@
 # Cookie OS — Roadmap to Completion
 
+> **Superseded, 2026-08-13.** `docs/ROADMAP.md` replaced this document the day
+> after it was written and has been the actively maintained plan of record
+> since. This file was never updated to match and is kept only as a historical
+> record of the original M7.8.1–M7.8.4 sub-milestone breakdown and the P8–P15
+> future-phase sketch, neither of which `docs/ROADMAP.md` has fully absorbed
+> at this granularity yet.
+>
+> Two things below are actively wrong, not just stale, and both are the same
+> mistake: trusting a milestone number instead of checking the milestone's own
+> content.
+>
+> - **"M7.8 Context-Bound Authority (`ACTIVE`)" below is done.** It merged as
+>   part of the M7.5e–M7.8 kernel stack; `docs/ROADMAP.md` records it landed
+>   and raised the M7.10 line-count gate for it. M7.8.2 (context-bound IPC)
+>   remains genuinely open — `docs/ROADMAP.md` tracks that one correctly, by
+>   name, under M7.8's own entry — but M7.8.3's exit gate ("resolve the caller
+>   from the live `ProcessTranslationTable` at the syscall boundary, never
+>   from a user register") already appears to be satisfied by the shipped
+>   `cookie_kernel_syscall_entry`, which derives `current` from
+>   `boot_preemption.running()` and never from a caller-supplied register.
+>   Unconfirmed by a dedicated adversarial test - worth verifying explicitly
+>   before relying on this note rather than re-deriving it.
+> - **"M7.9 — User virtual-memory lifecycle (`LOCKED`)" below is a different
+>   milestone from the M7.9 anyone reading `docs/ROADMAP.md` today means.**
+>   The current M7.9 is the user-space driver framework - interrupt handlers
+>   in driver processes, connected to a vector by a capability-gated kernel
+>   call - and it is complete: `docs/M7_9_USER_SPACE_DRIVERS.md` records all
+>   four of its gaps closed and `kernel-arm64-native` gating on the end-to-end
+>   marker sequence. The virtual-memory-lifecycle milestone this file
+>   describes under the same number was never started under any name and
+>   remains real, undone work - it simply needs a number that does not already
+>   mean something else.
+>
+> Use `docs/ROADMAP.md` for current status. Treat every status word below
+> ("ACTIVE", "NEXT", "LOCKED") as a claim from 2026-08-12, not from now.
+
 Status legend: `DONE` means its gate has been demonstrated; `ACTIVE` is the only milestone being advanced; `NEXT` is unblocked by the active milestone; `LOCKED` depends on earlier gates.
 
 ## Operating rule

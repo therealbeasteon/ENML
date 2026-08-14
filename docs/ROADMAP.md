@@ -457,7 +457,16 @@ thread alone — so a recycled ASID with a fresh generation is a different
 holder even at the same `ThreadId`. The migration is deliberately
 fail-closed: bound capabilities are unusable through the legacy
 `ThreadId`-only IPC path rather than silently losing their generation
-binding, until M7.8.2 adds the explicit `ExecutionAuthority` IPC path. An
+binding, until M7.8.2 adds the explicit `ExecutionAuthority` IPC path — the
+finer-grained M7.8.1–M7.8.4 breakdown this number comes from is
+`docs/ROADMAP_TO_COMPLETION.md`, superseded by this document but kept as a
+historical record of that breakdown; its own M7.8.3 (trusted syscall
+identity) looks likely already satisfied by the shipped
+`cookie_kernel_syscall_entry`, which resolves the caller from
+`PreemptionCoordinator::running()` rather than a user register, but that is
+unconfirmed by a dedicated test and stated there rather than claimed here.
+Do not read anything else in that file as current — its own "M7.9" names a
+different milestone than this document's. An
 eleventh raise, by M7.9's first increment, closes a gap M6.0 and M7.1 both
 named and deferred: core 3,052 → 3,117, total 7,896 → 7,961.
 `interrupt_attach`, `interrupt_detach` and `interrupt_complete` are now
