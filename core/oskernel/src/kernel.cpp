@@ -113,6 +113,7 @@ os::core::Result<Teardown> Kernel::destroy_thread(ThreadId thread) noexcept {
     teardown.ipc_endpoints_retired = retired_endpoints;
     teardown.capabilities_revoked = capabilities_.revoke_all_held_by(thread);
     teardown.interrupt_sources_released = interrupts_.detach_all_owned_by(thread);
+    teardown.interrupt_delivery_released = interrupt_deliveries_.release(thread);
     (void)scheduler_.retire(thread);
 
     untrack(thread);
@@ -309,10 +310,34 @@ os::core::Result<bool> Kernel::interrupt_complete(
 os::core::Result<Dispatch> Kernel::dispatch_interrupt(InterruptSource source) noexcept {
     auto taken = interrupts_.dispatch(source);
     if (!taken) return taken;
+
     if (taken.value().wake && taken.value().owner != invalid_thread) {
-        synchronise_thread(taken.value().owner);
+        const auto owner = taken.value().owner;
+        // begin_service runs here rather than waiting for a syscall that does
+        // not exist - docs/M7_1_INTERRUPT.md: "it is the transition the
+        // kernel performs when it makes the driver runnable, and the count
+        // rides back on the wakeup." wake is only true on the attached->
+        // pending transition dispatch() just made, which is exactly
+        // begin_service's own precondition, so this call is expected to
+        // succeed by construction; if interrupt_deliveries_ already has an
+        // outstanding delivery for this driver (a second source, not yet
+        // exercised by anything built so far - see interrupt_delivery.hpp),
+        // begin_service is skipped and the source stays pending in
+        // InterruptTable rather than being collected into a slot that would
+        // silently overwrite what the driver has not picked up yet.
+        if (!interrupt_deliveries_.armed(owner)) {
+            auto serviced = interrupts_.begin_service(owner, source);
+            if (serviced) {
+                (void)interrupt_deliveries_.arm(owner, source, serviced.value());
+            }
+        }
+        synchronise_thread(owner);
     }
     return taken;
+}
+
+os::core::Result<Service> Kernel::take_delivered_service(ThreadId driver) noexcept {
+    return interrupt_deliveries_.take(driver);
 }
 
 Decision Kernel::schedule(std::uint64_t now_nanoseconds) noexcept {

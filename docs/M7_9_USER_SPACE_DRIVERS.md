@@ -50,6 +50,21 @@ the driver runnable, and the count rides back on the wakeup, so a fourth call
 would grow the surface for information the driver is about to be handed
 anyway.
 
+*Correction, found while preparing this milestone's own boot proof:* the
+sentence above was aspirational, not descriptive, until it was. Nothing in
+the tree called `begin_service` or delivered its result anywhere, which meant
+`interrupt_complete` could never have succeeded outside a test that skipped
+straight to it - no path ever moved a source from `pending` to `in_service`.
+`InterruptDeliveryTable` (`interrupt_delivery.hpp`) and
+`complete_interrupt_current` (`aarch64_interrupt_syscall.hpp`) close this:
+`Kernel::dispatch_interrupt` now calls `begin_service` itself the instant a
+driver is woken, and the driver's own resume collects the result from `x2`/
+`x3`, mirroring how `complete_ipc_current` already delivers a receive
+completion to a resuming thread's `x0`/`x1`. Host-tested in
+`kernel_composition_test` and `kernel_interrupt_delivery_test` before this
+milestone's boot proof ever tried to reach `interrupt_complete` and
+discovered it could not.
+
 ## What is missing
 
 Four gaps, each named already, in the place that named it:
@@ -243,6 +258,12 @@ document's addition is the step before that: who may come to hold one.
   than a hardcoded constant.
 - `cookie_kernel_syscall_entry` decodes and dispatches all three interrupt
   syscalls from EL0.
+- `begin_service`'s result reaches the driver on its own resume without a
+  syscall, matching the claim `docs/M7_1_INTERRUPT.md` made before anything
+  implemented it: `Kernel::dispatch_interrupt` calls it and
+  `InterruptDeliveryTable` holds the result until `complete_interrupt_current`
+  delivers it, host-tested in both `kernel_composition_test` and
+  `kernel_interrupt_delivery_test`.
 - `kernel-arm64-native` gates on an end-to-end marker sequence proving a real
   EL0 driver process attached to, was woken by, serviced and completed a
   device interrupt.

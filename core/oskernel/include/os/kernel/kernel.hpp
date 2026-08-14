@@ -7,6 +7,7 @@
 #include <os/core/result.hpp>
 #include <os/kernel/capability.hpp>
 #include <os/kernel/interrupt.hpp>
+#include <os/kernel/interrupt_delivery.hpp>
 #include <os/kernel/ipc_continuation.hpp>
 #include <os/kernel/ipc_endpoint.hpp>
 #include <os/kernel/rendezvous.hpp>
@@ -22,6 +23,7 @@ struct Teardown final {
     std::size_t threads_released {0U};
     std::size_t capabilities_revoked {0U};
     std::size_t interrupt_sources_released {0U};
+    bool interrupt_delivery_released {false};
     std::size_t ipc_endpoints_retired {0U};
 
     [[nodiscard]] friend constexpr bool operator==(const Teardown&, const Teardown&) = default;
@@ -100,6 +102,12 @@ public:
         ThreadId driver, CapabilityId source_capability) noexcept;
 
     os::core::Result<Dispatch> dispatch_interrupt(InterruptSource source) noexcept;
+    // What begin_service collected the instant this driver was last woken, if
+    // it has not already been delivered. See interrupt_delivery.hpp -
+    // dispatch_interrupt is what arms this, and a driver's resume is meant to
+    // consume it without a syscall, the same way a receive-blocked thread's
+    // resume consumes its delivered request.
+    [[nodiscard]] os::core::Result<Service> take_delivered_service(ThreadId driver) noexcept;
     Decision schedule(std::uint64_t now_nanoseconds) noexcept;
 
     [[nodiscard]] CapabilityTable& capabilities() noexcept { return capabilities_; }
@@ -124,6 +132,7 @@ private:
     Rendezvous threads_ {};
     CapabilityTable capabilities_ {};
     InterruptTable interrupts_ {};
+    InterruptDeliveryTable interrupt_deliveries_ {};
     IpcEndpointTable ipc_ {};
     IpcContinuationTable ipc_continuations_ {};
     Scheduler scheduler_ {};

@@ -227,6 +227,71 @@ int main() {
                    "a fresh capability could not attach after release")) return 1;
     }
 
+    // M7.9: begin_service's result rides the wakeup. docs/M7_1_INTERRUPT.md
+    // says begin_service is not a syscall because "the count rides back on
+    // the wakeup" - dispatch_interrupt is what makes that literally true now,
+    // collecting it immediately so a driver's resume only has to take what is
+    // already waiting. take_delivered_service stands in here for that resume,
+    // since this host test has no EL0 to actually resume.
+    {
+        os::kernel::Kernel kernel;
+        (void)kernel.create_thread(alice);
+
+        auto cap = kernel.capabilities().mint(
+            alice, os::kernel::interrupt_object_id(line),
+            os::kernel::interrupt_right_attach, false);
+        if (!check(static_cast<bool>(cap), "mint refused")) return 1;
+        if (!check(static_cast<bool>(kernel.interrupt_attach(alice, cap.value())),
+                   "attach refused")) return 1;
+
+        // Nothing delivered before the device ever asserts.
+        if (!check(!static_cast<bool>(kernel.take_delivered_service(alice)),
+                   "a delivery existed before any interrupt fired")) return 1;
+
+        auto taken = kernel.dispatch_interrupt(line);
+        if (!check(static_cast<bool>(taken) && taken.value().wake, "dispatch refused")) return 1;
+
+        // begin_service already ran as part of dispatch - the source is
+        // in_service, not merely pending, before the driver has done anything.
+        auto state = kernel.interrupts().state_of(line);
+        if (!check(state && state.value() == os::kernel::InterruptState::in_service,
+                   "begin_service did not run on dispatch")) return 1;
+
+        auto delivered = kernel.take_delivered_service(alice);
+        if (!check(static_cast<bool>(delivered), "delivery missing after dispatch")) return 1;
+        if (!check(delivered.value().assertions == 1U,
+                   "wrong assertion count delivered")) return 1;
+        if (!check(!delivered.value().saturated, "wrong saturated flag delivered")) return 1;
+
+        // Taken once; a second take before another dispatch finds nothing -
+        // there is no undelivered work left to hand out twice.
+        if (!check(!static_cast<bool>(kernel.take_delivered_service(alice)),
+                   "a delivery was available twice")) return 1;
+
+        // interrupt_complete now succeeds, because the source really went
+        // through begin_service rather than jumping straight from pending.
+        if (!check(static_cast<bool>(kernel.interrupt_complete(alice, cap.value())),
+                   "complete refused after a real begin_service transition")) return 1;
+
+        // Thread death releases an armed-but-uncollected delivery too, not
+        // just the interrupt source itself - an orphaned delivery nobody will
+        // ever take is exactly the kind of leak destroy_thread exists to
+        // close for every other table it tears down. end_service above left
+        // the source attached again (nothing asserted while alice was
+        // servicing it), so a fresh dispatch arms a new, uncollected delivery.
+        auto fresh_dispatch = kernel.dispatch_interrupt(line);
+        if (!check(static_cast<bool>(fresh_dispatch) && fresh_dispatch.value().wake,
+                   "second dispatch refused")) return 1;
+        auto second_state = kernel.interrupts().state_of(line);
+        if (!check(second_state && second_state.value() == os::kernel::InterruptState::in_service,
+                   "second begin_service did not run")) return 1;
+
+        const auto teardown = kernel.destroy_thread(alice);
+        if (!check(static_cast<bool>(teardown), "destroy refused")) return 1;
+        if (!check(teardown.value().interrupt_delivery_released,
+                   "an uncollected delivery was not released on death")) return 1;
+    }
+
     // Yield goes through the scheduler and forfeits the remainder, and a thread
     // the kernel does not know cannot yield.
     {

@@ -28,7 +28,7 @@ jobs:
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
-          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test kernel_interrupt_delivery_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-gcc' --preset host-debug
@@ -56,7 +56,7 @@ jobs:
           kernel_aarch64_translation_test kernel_aarch64_kernel_translation_domain_test kernel_aarch64_asid_test kernel_aarch64_page_tables_test
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
-          kernel_arch_timer_discovery_test kernel_boot_memory_test kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
+          kernel_arch_timer_discovery_test kernel_boot_memory_test kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test kernel_interrupt_delivery_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates with sanitizers
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-sanitizers' --preset host-asan
@@ -81,7 +81,7 @@ jobs:
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
-          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test kernel_interrupt_delivery_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test --parallel 2
       - name: Test kernel gates
         run: .github/scripts/run-ctest.sh '^m7-kernel$' 'kernel-clang' --test-dir build/m5-kernel-clang
@@ -112,7 +112,7 @@ jobs:
           kernel_aarch64_mapping_state_test kernel_fdt_test
           kernel_hardware_inventory_test kernel_gic_v3_discovery_test
           kernel_arch_timer_discovery_test kernel_boot_memory_test
-          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test
+          kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test kernel_interrupt_delivery_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test
           oskernel_machine_aarch64 cookie_kernel_aarch64_boot --parallel 2
       - name: Test kernel gates natively
