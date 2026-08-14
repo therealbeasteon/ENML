@@ -702,6 +702,66 @@ accepted deliberately and should stay visible.
 
 ---
 
+## Phase 2b — Memory as a first-class object (M7.11)
+
+Added because a gap review found it missing rather than deferred, and it
+blocks Phase 3 whether or not it is written down. Everything M7 built —
+address spaces, epochs, capabilities, IPC, interrupts — assumes memory that
+was mapped once at boot from a plan computed before any process existed.
+There is no way to create an address space after boot, no way to grant or
+revoke a mapping, no fault path that resolves anything, and no allocator
+that outlives `plan_early_boot_memory`. The two identity maps this phase's
+own pre-MMU work added are the whole of Cookie's virtual memory story.
+
+Phase 3 cannot start without this: a service that restarts (the M2.10
+fixture, Phase 3's exit criterion) needs its address space torn down and
+rebuilt, which is precisely the operation that does not exist.
+
+- **A physical page allocator that is not a boot-time bump arena.** `EarlyPageArena`
+  hands out pages monotonically and never reclaims; page-table pages are
+  explicitly documented as never freed. Both are correct for boot and neither
+  survives a process exiting.
+- **Address-space lifecycle**: create, map, unmap, revoke, destroy, as
+  capability-gated operations rather than boot-routine calls, reusing the
+  generation-bound epoch machinery M7.5i/M7.8 already built so a stale
+  reference to a destroyed space fails closed the way a stale capability does.
+- **A fault path that resolves rather than panics.** Today an EL0 data abort
+  is a kill; demand paging, stack growth and copy-on-write all need a
+  translation fault to be a question the kernel can answer.
+- **The kernel-heap decision, made explicitly and before anything allocates.**
+  The alternative Cookie should weigh seriously is *no kernel dynamic
+  allocation at all*: kernel objects derived from memory a process already
+  holds authority over, with fixed sizes, so that a syscall can never fail for
+  want of kernel memory and per-process memory quota is structural rather than
+  accounted. The cost is real — userland must run an explicit memory manager
+  and the API is harder to use. The reason to decide it now is that it cannot
+  be retrofitted: a kernel heap makes every user-triggerable allocation a
+  denial-of-service channel and a cross-process side channel, and by the time
+  that is visible, every subsystem depends on it.
+- **Policy stays out of the kernel.** The kernel should expose the primitives
+  to manipulate translation structures; where a process's regions *go* is a
+  userland decision. This is the same argument M7.0 already made for keeping
+  transport out of the kernel, applied to layout.
+
+**Exit criteria:** a process is created, runs, faults, has the fault resolved,
+exits, and every page it held is reused by a later process — proven under
+`kernel-arm64-native`, not on the host. The M7.10 line count is reported and
+its raise justified in the same diff, as every M7 milestone has been.
+
+**Ordering hazard, recorded here because it is cheap now and expensive later:**
+Phase 4 lists IOMMU programming under hardware bring-up, which is the right
+place for the *programming* and the wrong place for the *decision*. DMA
+isolation has to exist before the first DMA-capable driver, not after: a
+driver written against physical addresses cannot be retrofitted behind an
+SMMU without being rewritten, and an identity/bypass window opened "for now"
+at boot is the kind of thing that is never closed. The rule Cookie should
+adopt is that a device capability and its stream mapping are granted
+together or not at all — there is no interval during which a device can DMA
+and is not confined. That rule costs nothing to state today and cannot be
+imposed once drivers exist.
+
+---
+
 ## Phase 3 — Substrate cutover (M8)
 
 Move the service layer off Linux and onto the Cookie Kernel. This is the phase
