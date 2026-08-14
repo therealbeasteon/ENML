@@ -768,7 +768,41 @@ not_kernel=(
 # Two rights rather than one for the same reason interrupt sources have one:
 # there are genuinely two authorities. A pager needs to hold spaces it services
 # and must not be able to destroy them.
-core_ceiling=3605
+#
+# Raised again, by M7.11's Kernel composition: core 3,605 -> 3,759, total
+# 9,216 -> 9,370. The largest single raise to core this milestone, and the
+# category the QNX comparison is about, so the argument has to be worth it.
+#
+# What it buys is the answer to "who may create an address space, who may
+# destroy one, and what is a capability over a destroyed one worth" - the last
+# being M7.11's stated exit criterion. The lines are mostly two capability
+# helpers and a two-phase destroy, and three decisions inside them are the
+# real content:
+#
+# Creation unwinds its own epoch. A capability table full at exactly the wrong
+# moment would otherwise leave a space active that no capability names, and so
+# one no destroy can reach, because destroy is reached through a capability.
+# With 63 slots, a caller able to provoke that repeatedly exhausts address
+# spaces without ever holding one.
+#
+# Destroy is two phases because ASID retirement genuinely is: begin invalidates
+# the software epoch so nothing new binds, the machine layer then tears down
+# translations and invalidates TLBs, and only then does complete release the
+# ASID. Collapsing them hands an ASID to a new space while stale translations
+# for the old one may still be cached.
+#
+# Completion re-checks that the capability names the space being retired.
+# Without it, a holder of one space's destroy capability could complete
+# another's retirement, releasing an ASID early - the same hazard from a
+# different direction.
+#
+# AddressSpaceEpochAuthority also gains resolve(). A capability names a space
+# by identity because that is what an object id can carry; retirement needs the
+# epoch, which also carries an ASID. resolve() closes that gap while storing
+# nothing, because the ASID was never independent information - acquire()
+# derives it from the slot and active() already re-derives it to validate what
+# it is handed.
+core_ceiling=3759
 machine_ceiling=3191
 discovery_ceiling=1272
 #
@@ -801,7 +835,7 @@ discovery_ceiling=1272
 # was justified on: the evidence exists at the moment of failure and costs
 # nothing to print, and reconstructing it afterwards costs hours.
 entry_ceiling=1148
-total_ceiling=9216
+total_ceiling=9370
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

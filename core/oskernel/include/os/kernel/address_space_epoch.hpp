@@ -85,6 +85,22 @@ public:
     [[nodiscard]] os::core::Result<void> complete_retire(
         RetiringAddressSpaceEpoch retiring) noexcept;
 
+    // Recovers the live epoch an identity names, or refuses.
+    //
+    // A capability names an address space by identity - slot and generation -
+    // because that is what an object id can carry and what makes a stale
+    // reference fail closed on its own. Retirement needs the epoch, which also
+    // carries an ASID. This closes that gap without storing anything: the ASID
+    // was never independent information. acquire() derives it from the slot and
+    // active() already re-derives it to validate what it is handed, so an
+    // identity determines its epoch exactly.
+    //
+    // Refuses rather than returning an invalid epoch: an identity whose slot is
+    // free, retiring, or holding a different generation names a space that no
+    // longer exists, and `stale` says so without saying which of those it was.
+    [[nodiscard]] os::core::Result<AddressSpaceEpoch> resolve(
+        AddressSpaceIdentity identity) const noexcept;
+
     [[nodiscard]] bool active(AddressSpaceEpoch epoch) const noexcept;
     [[nodiscard]] bool retiring(RetiringAddressSpaceEpoch epoch) const noexcept;
     [[nodiscard]] std::size_t active_count() const noexcept;

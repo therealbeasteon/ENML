@@ -5,6 +5,8 @@
 #include <cstdint>
 
 #include <os/core/result.hpp>
+#include <os/kernel/address_space_epoch.hpp>
+#include <os/kernel/address_space_syscall.hpp>
 #include <os/kernel/capability.hpp>
 #include <os/kernel/interrupt.hpp>
 #include <os/kernel/interrupt_delivery.hpp>
@@ -18,6 +20,26 @@ namespace os::kernel {
 namespace kernel_errors {
 inline constexpr std::uint32_t creation_incomplete = 1U;
 } // namespace kernel_errors
+
+// What address_space_create hands back: the lifetime it opened, and the
+// capability naming it. Both, because they answer different questions - the
+// epoch is what the machine layer needs to build tables against, and the
+// capability is what the creator will present to do anything with the space
+// afterwards. Returning only the epoch would leave the creator holding
+// authority it cannot name; returning only the capability would force the
+// machine layer to re-derive an epoch from an object id, which is precisely
+// the lookup this milestone had to add to make destroy work at all.
+struct AddressSpaceCreation final {
+    AddressSpaceEpoch epoch {};
+    CapabilityId capability {invalid_capability};
+
+    [[nodiscard]] constexpr bool valid() const noexcept {
+        return epoch.valid() && capability != invalid_capability;
+    }
+
+    [[nodiscard]] friend constexpr bool operator==(
+        const AddressSpaceCreation&, const AddressSpaceCreation&) = default;
+};
 
 struct Teardown final {
     std::size_t threads_released {0U};
@@ -133,6 +155,37 @@ public:
     // it does not change what the driver needs to know.
     [[nodiscard]] os::core::Result<bool> interrupt_complete(
         ThreadId driver, CapabilityId source_capability) noexcept;
+
+    // Address-space lifecycle, capability-checked at this layer for the same
+    // reason interrupt_attach is: AddressSpaceEpochAuthority does not consult
+    // CapabilityTable and must not learn to.
+    //
+    // These deliberately do not touch page tables. The kernel owns *which
+    // lifetimes exist and who may name them*; the machine layer owns the
+    // tables, and aarch64_create_address_space/aarch64_release_address_space
+    // are what run between the calls below. Splitting it here is what keeps
+    // the portable half of this milestone free of AArch64.
+    [[nodiscard]] os::core::Result<AddressSpaceCreation> address_space_create(
+        ThreadId creator,
+        CapabilityId authority,
+        AddressSpaceEpochAuthority& epochs) noexcept;
+
+    // Two phases, because retirement genuinely has two. begin invalidates the
+    // software epoch so nothing new can bind to the space, and only then may
+    // the machine layer tear down translations and invalidate TLBs; complete
+    // releases the ASID for reuse once it has. Collapsing them would hand an
+    // ASID to a new space while stale translations for the old one could still
+    // be cached - the exact hazard AddressSpaceEpochAuthority's own one-way
+    // lifecycle exists to prevent.
+    [[nodiscard]] os::core::Result<RetiringAddressSpaceEpoch> address_space_begin_destroy(
+        ThreadId owner,
+        CapabilityId space,
+        AddressSpaceEpochAuthority& epochs) noexcept;
+    [[nodiscard]] os::core::Result<void> address_space_complete_destroy(
+        ThreadId owner,
+        CapabilityId space,
+        RetiringAddressSpaceEpoch retiring,
+        AddressSpaceEpochAuthority& epochs) noexcept;
 
     os::core::Result<Dispatch> dispatch_interrupt(InterruptSource source) noexcept;
     // What begin_service collected the instant this driver was last woken, if
