@@ -624,11 +624,25 @@ not_kernel=(
 # expensive thing to change once callers exist. Accepting a deadline and
 # ignoring it would have been free and much worse: a caller that asked for a
 # bound and silently did not get one waits forever believing it will not.
-core_ceiling=3427
+# Raised a twenty-third time, by the receive-deadline mechanism: core 3,427 ->
+# 3,479, total 8,836 -> 8,888. An armed receive can now carry an absolute
+# deadline, the table reports the soonest one so a tickless scheduler arms a
+# single timer for all waiters rather than one each, and an expired waiter can
+# be taken out deterministically.
+#
+# 52 core lines is the largest single core raise in M7.11 so far and the first
+# that is not zero, so it is worth saying what was not spent. There is no timer
+# object, no wait set, no per-waiter callback and no priority queue - the table
+# is the same fixed array it already was, scanned linearly, because
+# max_threads is small and a heap would be mutable kernel structure bought for
+# an asymptotic improvement nothing here needs. The ABI still refuses a
+# non-zero deadline; this raise buys the mechanism, and the increment that
+# removes the refusal buys the wake path.
+core_ceiling=3479
 machine_ceiling=3015
 discovery_ceiling=1272
 entry_ceiling=1122
-total_ceiling=8836
+total_ceiling=8888
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

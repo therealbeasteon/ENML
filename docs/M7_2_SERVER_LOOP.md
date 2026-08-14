@@ -138,6 +138,31 @@ model above a server has no reason to need one.
 
 **The AArch64 path refuses a non-zero deadline** with
 `ipc_syscall_errors::deadline_unsupported` until the timer wiring lands.
+
+### Landed: the continuation side
+
+`IpcReceiveContinuation` now carries an **absolute** deadline — the ABI's
+relative value converted once, at arm time. Absolute is what makes it immune to
+being silently extended: a relative value re-based on each wakeup drifts, and
+drift in a bound is indistinguishable from not having one.
+
+`earliest_receive_deadline()` reports the soonest across all armed receivers, so
+a tickless scheduler arms **one** timer for the whole table rather than one per
+waiter. `take_expired_receive(now)` removes exactly one expired waiter,
+**breaking ties on the lowest `ThreadId`** — two waiters that expire in the same
+instant must not learn their relative order from where the table happened to
+place them — and reports only that waiter's own continuation, never how many
+others were queued.
+
+What was deliberately *not* built: no timer object, no wait set, no per-waiter
+callback, no priority queue. The table is the same fixed array scanned linearly,
+because `max_threads` is small and a heap would be mutable kernel structure
+bought for an asymptotic improvement nothing here needs.
+
+**The ABI still refuses.** This increment buys the mechanism; the wake path —
+arming the hardware timer and completing the expired receiver with no message —
+is what removes the refusal, and until it exists a deadline that nothing checks
+would be the same accept-and-ignore failure the refusal was added to prevent.
 Accepting a deadline and ignoring it would have cost nothing and been far worse:
 a caller that asked for a bound and silently did not get one blocks forever
 believing it will not. The register contract is fixed now because that is the

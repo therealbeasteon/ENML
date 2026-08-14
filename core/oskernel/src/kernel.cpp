@@ -305,13 +305,24 @@ os::core::Result<void> Kernel::ipc_arm_receive_continuation(
     AddressSpaceEpoch epoch,
     CapabilityId endpoint_capability,
     std::uint64_t exchange_address,
-    const AddressSpaceEpochAuthority& epochs) noexcept {
+    const AddressSpaceEpochAuthority& epochs,
+    std::uint64_t deadline_nanoseconds) noexcept {
     if (!tracks(server)) {
         return os::core::make_error(os::core::ErrorDomain::kernel,
                                     rendezvous_errors::unknown_thread);
     }
     return ipc_continuations_.arm_receive(
-        server, epoch, endpoint_capability, exchange_address, epochs);
+        server, epoch, endpoint_capability, exchange_address, epochs,
+        deadline_nanoseconds);
+}
+
+std::uint64_t Kernel::ipc_earliest_receive_deadline() const noexcept {
+    return ipc_continuations_.earliest_receive_deadline();
+}
+
+os::core::Result<IpcReceiveContinuation> Kernel::ipc_take_expired_receive_continuation(
+    std::uint64_t now_nanoseconds) noexcept {
+    return ipc_continuations_.take_expired_receive(now_nanoseconds);
 }
 
 os::core::Result<IpcReceiveContinuation> Kernel::ipc_take_receive_continuation(

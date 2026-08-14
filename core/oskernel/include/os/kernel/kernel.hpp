@@ -98,7 +98,14 @@ public:
         AddressSpaceEpoch epoch,
         CapabilityId endpoint_capability,
         std::uint64_t exchange_address,
-        const AddressSpaceEpochAuthority& epochs) noexcept;
+        const AddressSpaceEpochAuthority& epochs,
+        std::uint64_t deadline_nanoseconds = 0ULL) noexcept;
+    // Forwarded so the machine layer can arm one timer for the whole table and
+    // complete whichever waiter that timer belongs to, without reaching into
+    // continuation state itself.
+    [[nodiscard]] std::uint64_t ipc_earliest_receive_deadline() const noexcept;
+    [[nodiscard]] os::core::Result<IpcReceiveContinuation>
+    ipc_take_expired_receive_continuation(std::uint64_t now_nanoseconds) noexcept;
     [[nodiscard]] os::core::Result<IpcReceiveContinuation> ipc_take_receive_continuation(
         ThreadId server,
         AddressSpaceEpoch expected,
