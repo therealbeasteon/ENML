@@ -137,6 +137,7 @@ core_files=(
     "core/oskernel/include/os/kernel/capability.hpp"
     "core/oskernel/include/os/kernel/execution_authority.hpp"
     "core/oskernel/include/os/kernel/interrupt.hpp"
+    "core/oskernel/include/os/kernel/interrupt_delivery.hpp"
     "core/oskernel/include/os/kernel/ipc_continuation.hpp"
     "core/oskernel/include/os/kernel/ipc_endpoint.hpp"
     "core/oskernel/include/os/kernel/ipc_syscall.hpp"
@@ -151,6 +152,7 @@ core_files=(
     "core/oskernel/src/address_space_epoch.cpp"
     "core/oskernel/src/capability.cpp"
     "core/oskernel/src/interrupt.cpp"
+    "core/oskernel/src/interrupt_delivery.cpp"
     "core/oskernel/src/ipc_continuation.cpp"
     "core/oskernel/src/ipc_endpoint.cpp"
     "core/oskernel/src/ipc_syscall.cpp"
@@ -169,6 +171,7 @@ machine_files=(
     "core/oskernel/include/os/kernel/aarch64_exception.hpp"
     "core/oskernel/include/os/kernel/aarch64_execution_universe.hpp"
     "core/oskernel/include/os/kernel/aarch64_gic_v3.hpp"
+    "core/oskernel/include/os/kernel/aarch64_interrupt_syscall.hpp"
     "core/oskernel/include/os/kernel/aarch64_ipc_syscall.hpp"
     "core/oskernel/include/os/kernel/aarch64_kernel_mapping_manifest.hpp"
     "core/oskernel/include/os/kernel/aarch64_mapping_state.hpp"
@@ -187,6 +190,7 @@ machine_files=(
     "core/oskernel/src/aarch64_execution_universe.cpp"
     "core/oskernel/src/aarch64_execution_universe_machine.cpp"
     "core/oskernel/src/aarch64_gic_v3.cpp"
+    "core/oskernel/src/aarch64_interrupt_syscall.cpp"
     "core/oskernel/src/aarch64_ipc_syscall.cpp"
     "core/oskernel/src/aarch64_preemption.cpp"
     "core/oskernel/src/aarch64_translation.cpp"
@@ -423,11 +427,29 @@ not_kernel=(
 # PR #74 landed, which decoded these calls but did not yet touch GIC state.
 # No caller exercises any of this yet - the driver process that will is M7.9's
 # last gap.
-core_ceiling=3117
-machine_ceiling=2790
+# Raised a fourteenth time, closing a gap review found rather than a milestone
+# adding a feature: core 3,117 -> 3,223, machine 2,790 -> 2,821, entry
+# 892 -> 896, total 8,071 -> 8,212. docs/M7_1_INTERRUPT.md and
+# docs/M7_9_USER_SPACE_DRIVERS.md both say begin_service is deliberately not a
+# syscall because "the count rides back on the wakeup" - but nothing called
+# begin_service or delivered its result anywhere in the tree, which means
+# interrupt_complete could never have succeeded outside a test that skips
+# straight to it: nothing ever moved a source from pending to in_service.
+# interrupt_delivery.hpp/.cpp add InterruptDeliveryTable, a one-slot-per-
+# thread handoff mirroring IpcContinuationTable's own shape; dispatch_interrupt
+# now calls begin_service itself the instant a driver is woken and arms the
+# result there (core). aarch64_interrupt_syscall.hpp/.cpp add
+# complete_interrupt_current, the interrupt analogue of complete_ipc_current,
+# writing the delivery into x2/x3 on every resume - not x0/x1, which
+# complete_ipc_current already uses and a driver that also does IPC would
+# otherwise collide with (machine). complete_after_switch in aarch64_boot.cpp
+# now calls both completions on every switch (entry). Found and closed before
+# M7.9's own boot proof tried to use interrupt_complete and could not have.
+core_ceiling=3223
+machine_ceiling=2821
 discovery_ceiling=1272
-entry_ceiling=892
-total_ceiling=8071
+entry_ceiling=896
+total_ceiling=8212
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

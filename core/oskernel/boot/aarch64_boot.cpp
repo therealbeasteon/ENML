@@ -9,6 +9,7 @@
 #include <os/kernel/aarch64_entry.hpp>
 #include <os/kernel/aarch64_execution_universe.hpp>
 #include <os/kernel/aarch64_gic_v3.hpp>
+#include <os/kernel/aarch64_interrupt_syscall.hpp>
 #include <os/kernel/aarch64_ipc_syscall.hpp>
 #include <os/kernel/aarch64_kernel_mapping_manifest.hpp>
 #include <os/kernel/aarch64_page_tables.hpp>
@@ -386,7 +387,13 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
     os::kernel::aarch64::ExceptionFrame& frame) noexcept {
     auto completed = os::kernel::aarch64::complete_ipc_current(
         next, frame, boot_kernel, boot_translations, boot_epochs);
-    return static_cast<bool>(completed);
+    if (!completed) return false;
+    // Interrupt delivery uses x2/x3, IPC completion x0/x1 (see
+    // aarch64_interrupt_syscall.hpp) - both run on every resume and neither
+    // depends on the other having found anything.
+    auto serviced = os::kernel::aarch64::complete_interrupt_current(
+        next, frame, boot_kernel);
+    return static_cast<bool>(serviced);
 }
 
 [[noreturn]] void guarded_runtime_main() noexcept {

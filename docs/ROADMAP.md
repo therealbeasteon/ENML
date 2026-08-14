@@ -25,7 +25,7 @@ Measured on `main` at `ed26bf6`, not claimed:
 | Trusted phone shell and product security (M4) | Through M4.15 merged; **exit criteria not all verified** |
 | Verified boot evidence (M5) | Designed and tested; nothing produces the evidence |
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
-| Cookie Kernel (M7) | Through M7.8 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption**; M7.9 underway — capability-gated attach/detach/complete, syscall-entry decode/dispatch and machine-layer device routing landed; the end-to-end proof remains |
+| Cookie Kernel (M7) | Through M7.8 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption**; M7.9 underway — capability-gated attach/detach/complete, syscall-entry decode/dispatch, machine-layer device routing, and begin_service delivery on wakeup (a review-found prerequisite, not one of the four originally named gaps) all landed; the end-to-end proof remains |
 
 Roughly 49,000 lines of implementation against 29,000 lines of test, both grown
 by the backlog rather than by new work. Zero `TODO`/`FIXME`/`HACK` markers in
@@ -317,12 +317,19 @@ four named gaps are closed; M7.10 is built and enforced by this change:
   three from EL0; machine-layer GICv3 routing of a real device source — the
   discovered virtual-timer PPI, reused as a stand-in — through
   `Kernel::dispatch_interrupt()`, mask-until-complete enforced at the
-  controller by the same syscall handlers. Remaining: the end-to-end QEMU
-  proof a real driver process gives it.
+  controller by the same syscall handlers; and a gap review found rather than
+  a milestone named - `begin_service` was documented as riding the driver's
+  wakeup but nothing ever called it, so `interrupt_complete` could never have
+  succeeded outside a test that skipped straight to it. `dispatch_interrupt`
+  now calls it and `InterruptDeliveryTable` holds the result until the
+  driver's resume collects it, the interrupt analogue of how a receive
+  completion already rides an IPC-blocked thread's own resume. Remaining: the
+  end-to-end QEMU proof a real driver process gives it - now able to
+  actually reach `interrupt_complete`, which nothing before this could have.
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 8,071 lines, a ratchet rather than the 605-line
+  ceiling is the measured 8,212 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -351,11 +358,11 @@ cannot be laundered between them:
 
 | Category | Lines |
 | --- | --- |
-| core — privileged portable runtime | 3,117 |
-| machine — the AArch64 port | 2,790 |
+| core — privileged portable runtime | 3,223 |
+| machine — the AArch64 port | 2,821 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
-| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing | 892 |
-| **total** | **8,071** |
+| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing | 896 |
+| **total** | **8,212** |
 
 `core` is the figure comparable to QNX's 605, and it is 5.2× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -478,9 +485,25 @@ to charge it to is a livelock at the controller regardless of whose fault it
 is; the same masking now extends to the interrupt syscall handlers the
 twelfth raise landed, which decoded the three calls but did not yet touch
 GIC state (entry). No caller exercises any of this yet — the driver process
-that will is M7.9's last gap. None of it is discretionary — see
-`.github/scripts/kernel-line-count.sh` for the full justification recorded
-beside each raise.
+that will is M7.9's last gap. A fourteenth raise closed something review
+found rather than a milestone gap: core 3,223, machine 2,821, entry 896,
+total 8,212. `docs/M7_1_INTERRUPT.md` and `docs/M7_9_USER_SPACE_DRIVERS.md`
+both say `begin_service` is deliberately not a syscall because "the count
+rides back on the wakeup" — but nothing in the tree ever called it or
+delivered its result anywhere, which meant `interrupt_complete` could never
+have succeeded outside a test that skips straight to it: nothing moved a
+source from pending to in_service. `InterruptDeliveryTable` (core) is a
+one-slot-per-thread handoff mirroring `IpcContinuationTable`'s own shape;
+`Kernel::dispatch_interrupt` now calls `begin_service` itself the instant a
+driver is woken. `complete_interrupt_current` (machine) is the interrupt
+analogue of `complete_ipc_current`, writing the delivery into `x2`/`x3` on
+every resume rather than `x0`/`x1`, which `complete_ipc_current` already uses
+and a driver that also does IPC would otherwise collide with.
+`complete_after_switch` in `aarch64_boot.cpp` now calls both completions on
+every switch (entry). Found and closed before M7.9's own boot proof tried to
+use `interrupt_complete` and could not have. None of it is discretionary —
+see `.github/scripts/kernel-line-count.sh` for the full justification
+recorded beside each raise.
 
 The ceilings are the measured values, not the aspiration — a ratchet. A gate set
 at 605 would be red on arrival and switched off within a week; one set
@@ -516,9 +539,13 @@ Three of the five are met, one is partially met, one is not. Taken in order:
   attach/detach/complete; `cookie_kernel_syscall_entry` decoding all three;
   `cookie_aarch64_irq_dispatch` routing the discovered virtual-timer PPI
   through `Kernel::dispatch_interrupt()` with mask-until-complete enforced at
-  the controller) but not yet proven end to end. A QEMU boot proof with a
-  real driver process remains — nothing has attached to the source yet, so
-  none of this has executed outside its host tests.
+  the controller), and a gap review found while preparing the boot proof is
+  closed too: `begin_service` was documented as riding the driver's wakeup
+  but nothing called it, so `interrupt_complete` could never have succeeded
+  outside a test that skipped straight to it (`InterruptDeliveryTable`,
+  `complete_interrupt_current`). None of this has executed outside host tests
+  yet — a QEMU boot proof with a real driver process remains, and is the only
+  piece left before this criterion is met.
 - *Passes the full EMNL wire-format and capability fuzz corpus* — **not met,
   and not currently measurable.** `fuzz/` gained an `ipc/` target during this
   stack, but it fuzzes `os::ipc` — the service-layer RPC decoder used over the
@@ -530,8 +557,8 @@ Three of the five are met, one is partially met, one is not. Taken in order:
   small enough to review completely applies with more force, not less, to the
   part that parses untrusted syscall arguments from unprivileged EL0 code.
 - *Reports a trusted line count under the declared ceiling* — **met**, and has
-  been since M7.10 landed. The ceiling moved thirteen times across this stack —
-  once per milestone plus two defect fixes — each raise landing in the same diff
+  been since M7.10 landed. The ceiling moved fourteen times across this stack —
+  once per milestone plus three defect fixes — each raise landing in the same diff
   as the lines it covers, with the justification recorded in
   `.github/scripts/kernel-line-count.sh` and restated in
   `docs/M7_10_LINE_COUNT.md`. The gate has never gone more than one commit
