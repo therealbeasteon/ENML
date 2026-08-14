@@ -64,6 +64,17 @@ capability instead of a filesystem trick.
 
 ## Order
 
+**Amended 2026-08-14 — step 1 had an unnamed prerequisite.** The three
+primitives listed above are real, but a server also has to *wait on many peers*,
+and every service main loop in the tree does that with `poll()` over a
+descriptor table while `KernelCall::receive` takes exactly one endpoint. No
+service loop could be written on the current ABI. `docs/M7_2_SERVER_LOOP.md`
+decides the shape — many clients send to one endpoint and the kernel attests who
+called, so the multiplexing is deleted rather than ported — and names the one
+genuine kernel gap that remains, a receive with a deadline. Note also that the
+claim below about supervision being unchanged in shape does **not** extend to
+servers: their loops change shape, and simplify.
+
 The order is chosen so the tree stays green throughout, not by how much is left:
 
 1. **IPC**, because everything else is layered on it and it is the one that gets
