@@ -13,6 +13,7 @@ namespace os::kernel::aarch64 {
 
 inline constexpr std::size_t max_native_mappings = 64U;
 inline constexpr std::size_t max_native_physical_mappings = 256U;
+inline constexpr std::size_t max_native_physical_reservations = 16U;
 
 struct NativeMapping final {
     std::uint64_t virtual_base {0ULL};
@@ -31,12 +32,41 @@ struct NativePhysicalMapping final {
     std::uint64_t physical_base {0ULL};
     std::uint64_t length {0ULL};
     MachinePermissions permissions {MachinePermissions::read};
+    bool user_accessible {false};
+    bool occupied {false};
+};
+
+// A physical range whose contents are kernel state rather than a process's
+// data - today the page-table arena, later any object derived from memory a
+// process holds authority over. Three rules follow from that and are enforced
+// wherever a mapping is created:
+//
+//   * nobody may reach it from EL0, owner included. A process that can write
+//     its own translation tables has no address space, and one that can read
+//     them learns the physical layout of every other.
+//   * nobody may execute it. Kernel state is not code, and the range is chosen
+//     by boot-time discovery rather than by the linker.
+//   * only the owning address space may write it. The kernel edits its own
+//     tables through exactly one translation; a second writable one is an
+//     alias with no legitimate use.
+//
+// The owner is an address space rather than a process because that is the
+// granularity the ledger already records. This is the field M7.11's design
+// adds to a structure the kernel already walks on every map, rather than the
+// separate derivation tree it declined to copy - a second source of truth
+// about physical memory can disagree with the first.
+struct NativePhysicalReservation final {
+    const void* owner {nullptr};
+    std::uint64_t physical_base {0ULL};
+    std::uint64_t length {0ULL};
     bool occupied {false};
 };
 
 struct NativePhysicalLedger final {
     std::array<NativePhysicalMapping, max_native_physical_mappings> mappings {};
+    std::array<NativePhysicalReservation, max_native_physical_reservations> reservations {};
     std::size_t occupied {0U};
+    std::size_t reserved {0U};
 };
 
 class NativeAddressSpaceState final {
@@ -52,6 +82,46 @@ public:
         }
         ledger_ = &ledger;
         builder_ = &builder;
+        return {};
+    }
+
+    // Declares a physical range to be the backing store of kernel state, owned
+    // by this address space. Intended to run before the range is mapped at all,
+    // but it does not assume so: a reservation made after the fact must not
+    // silently bless a translation it would have refused, so every live mapping
+    // of the range is re-checked against the rule about to start applying.
+    [[nodiscard]] os::core::Result<void> reserve_kernel_object(
+        std::uint64_t physical_base,
+        std::uint64_t length) noexcept {
+        if (ledger_ == nullptr || builder_ == nullptr) {
+            return error(machine_errors::address_space_unbound);
+        }
+        if (length == 0ULL || !page_aligned(length) || !page_aligned(physical_base) ||
+            !stage1_physical_address(physical_base) ||
+            physical_base > UINT64_MAX - (length - 1ULL) ||
+            !stage1_physical_address(physical_base + length - architectural_page_size)) {
+            return error(machine_errors::invalid_range);
+        }
+
+        for (const auto& existing : ledger_->reservations) {
+            if (existing.occupied && overlap(
+                    existing.physical_base, existing.length, physical_base, length)) {
+                return error(machine_errors::already_mapped);
+            }
+        }
+        for (const auto& existing : ledger_->mappings) {
+            if (!existing.occupied || !overlap(
+                    existing.physical_base, existing.length, physical_base, length)) continue;
+            if (forbidden_by_reservation(
+                    this, existing.owner, existing.permissions, existing.user_accessible)) {
+                return error(machine_errors::kernel_object_alias);
+            }
+        }
+
+        auto* slot = free_reservation();
+        if (slot == nullptr) return error(machine_errors::exhausted);
+        *slot = NativePhysicalReservation{this, physical_base, length, true};
+        ++ledger_->reserved;
         return {};
     }
 
@@ -264,6 +334,16 @@ private:
             }
         }
 
+        for (const auto& reservation : ledger_->reservations) {
+            if (!reservation.occupied || !overlap(
+                    reservation.physical_base, reservation.length,
+                    physical_base, length)) continue;
+            if (forbidden_by_reservation(
+                    reservation.owner, this, permissions, user_accessible)) {
+                return error(machine_errors::kernel_object_alias);
+            }
+        }
+
         auto* local_slot = free_local();
         auto* physical_slot = free_physical();
         if (local_slot == nullptr || physical_slot == nullptr) {
@@ -294,7 +374,7 @@ private:
             virtual_base, physical_base, length, permissions, kind,
             kernel_stack, user_stack, user_accessible, true};
         *physical_slot = NativePhysicalMapping{
-            this, physical_base, length, permissions, true};
+            this, physical_base, length, permissions, user_accessible, true};
         ++occupied_;
         ++ledger_->occupied;
         return {};
@@ -309,6 +389,18 @@ private:
     [[nodiscard]] static constexpr bool executable(MachinePermissions value) noexcept {
         return value == MachinePermissions::read_execute;
     }
+    // The one statement of what a reservation forbids, so the map-time check
+    // and the reserve-time re-check cannot drift apart. Both directions of the
+    // same question: at map time the reservation exists and the mapping is
+    // proposed; at reserve time the mapping exists and the reservation is.
+    [[nodiscard]] static constexpr bool forbidden_by_reservation(
+        const void* reservation_owner,
+        const void* mapping_owner,
+        MachinePermissions permissions,
+        bool user_accessible) noexcept {
+        return user_accessible || executable(permissions) ||
+               (writable(permissions) && mapping_owner != reservation_owner);
+    }
     [[nodiscard]] static constexpr bool overlap(
         std::uint64_t a_base, std::uint64_t a_length,
         std::uint64_t b_base, std::uint64_t b_length) noexcept {
@@ -321,6 +413,10 @@ private:
     }
     [[nodiscard]] NativePhysicalMapping* free_physical() noexcept {
         for (auto& mapping : ledger_->mappings) if (!mapping.occupied) return &mapping;
+        return nullptr;
+    }
+    [[nodiscard]] NativePhysicalReservation* free_reservation() noexcept {
+        for (auto& entry : ledger_->reservations) if (!entry.occupied) return &entry;
         return nullptr;
     }
 

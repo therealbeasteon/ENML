@@ -16,8 +16,8 @@ int main() {
     using namespace os::kernel;
     using namespace os::kernel::aarch64;
 
-    alignas(4096) std::array<std::byte, 14U * 4096U> tables_a{};
-    alignas(4096) std::array<std::byte, 14U * 4096U> tables_b{};
+    alignas(4096) std::array<std::byte, 24U * 4096U> tables_a{};
+    alignas(4096) std::array<std::byte, 24U * 4096U> tables_b{};
     const auto a_begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(tables_a.data()));
     const auto b_begin = static_cast<std::uint64_t>(
@@ -132,6 +132,83 @@ int main() {
     auto guard = builder_a.mapped(stack_va - 4096ULL);
     require(static_cast<bool>(guard));
     require(!guard.value());
+
+    // ---------------------------------------------------------------------
+    // Physical memory authority: a range that holds kernel state.
+    // ---------------------------------------------------------------------
+    constexpr std::uint64_t tables_pa = 0x0000'0000'8300'0000ULL;
+    require(static_cast<bool>(space_a.reserve_kernel_object(tables_pa, 2ULL * 4096ULL)));
+    require(ledger.reserved == 1U);
+
+    // The owner writes it - this is the kernel editing its own tables, and the
+    // only translation of the range that has a legitimate use.
+    require(static_cast<bool>(space_a.map(
+        0x0000'0000'6100'0000ULL, tables_pa, 4096ULL,
+        MachinePermissions::read_write, MachineMemoryKind::normal)));
+
+    // Nobody else writes it, even though W^X has no objection: two writable
+    // mappings of the same range are exactly what the old check permits.
+    auto foreign_write = space_b.map(
+        0x0000'0000'6100'0000ULL, tables_pa, 4096ULL,
+        MachinePermissions::read_write, MachineMemoryKind::normal);
+    require(!foreign_write);
+    require(foreign_write.error().code == machine_errors::kernel_object_alias);
+
+    // No EL0 translation at all, owner included. A process that can write its
+    // own page tables has no address space; one that can read them learns the
+    // physical layout of every other.
+    auto user_write = space_a.map_user(
+        0x0000'0000'1100'0000ULL, tables_pa, 4096ULL,
+        MachinePermissions::read_write);
+    require(!user_write);
+    require(user_write.error().code == machine_errors::kernel_object_alias);
+    auto user_read = space_b.map_user(
+        0x0000'0000'1100'0000ULL, tables_pa, 4096ULL,
+        MachinePermissions::read);
+    require(!user_read);
+    require(user_read.error().code == machine_errors::kernel_object_alias);
+
+    // Not executable by anyone: kernel state is not code, and this range was
+    // chosen by boot-time discovery rather than by the linker. Deliberately the
+    // reservation's second page, which nothing has mapped: on the first page the
+    // owner's writable translation makes the older W^X check fire first, so that
+    // arrangement would pass while proving nothing about this rule.
+    auto kernel_execute = space_a.map(
+        0x0000'0000'6200'0000ULL, tables_pa + 4096ULL, 4096ULL,
+        MachinePermissions::read_execute, MachineMemoryKind::normal);
+    require(!kernel_execute);
+    require(kernel_execute.error().code == machine_errors::kernel_object_alias);
+
+    // A read-only kernel translation is not forbidden - diagnosis is not an
+    // attack, and refusing it would buy nothing.
+    require(static_cast<bool>(space_b.map(
+        0x0000'0000'6300'0000ULL, tables_pa, 4096ULL,
+        MachinePermissions::read, MachineMemoryKind::normal)));
+
+    // Overlapping reservations are a disagreement about who owns a range, so
+    // the second one loses rather than silently narrowing the first.
+    auto overlapping = space_b.reserve_kernel_object(tables_pa + 4096ULL, 4096ULL);
+    require(!overlapping);
+    require(overlapping.error().code == machine_errors::already_mapped);
+    require(ledger.reserved == 1U);
+
+    // A reservation declared over a range some process can already reach must
+    // fail rather than appear to protect it. Boot declares before it maps; this
+    // is what happens to a caller that does not.
+    constexpr std::uint64_t late_pa = 0x0000'0000'8400'0000ULL;
+    require(static_cast<bool>(space_a.map_user(
+        0x0000'0000'1200'0000ULL, late_pa, 4096ULL,
+        MachinePermissions::read)));
+    auto late_reserve = space_a.reserve_kernel_object(late_pa, 4096ULL);
+    require(!late_reserve);
+    require(late_reserve.error().code == machine_errors::kernel_object_alias);
+    require(ledger.reserved == 1U);
+
+    // The same range, once no EL0 translation of it survives, is reservable.
+    require(static_cast<bool>(builder_a.unmap_page(0x0000'0000'1200'0000ULL)));
+    require(static_cast<bool>(space_a.retire_unmapped(0x0000'0000'1200'0000ULL, 4096ULL)));
+    require(static_cast<bool>(space_a.reserve_kernel_object(late_pa, 4096ULL)));
+    require(ledger.reserved == 2U);
 
     return 0;
 }

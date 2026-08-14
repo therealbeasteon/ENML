@@ -556,11 +556,37 @@ not_kernel=(
 # been holding all along took a QEMU instruction trace and several hours.
 # M7.11 replaces the halt with delivery to a userland pager; this
 # classification is what it will deliver, so the lines are not spent twice.
+# Raised a twentieth time, by M7.11's second increment: machine 2,920 ->
+# 2,997, entry 1,099 -> 1,105, total 8,710 -> 8,793. The physical ledger
+# gains a reservation table - a physical range declared to hold kernel state,
+# owned by one address space - and every map consults it: no EL0 translation
+# of the range at all, no executable one, and no writable one from a space
+# that does not own it. Boot declares the page-table arena before the first
+# mapping is drawn from it.
+#
+# The 77 machine lines are worth stating as a ratio rather than a count,
+# because this is the milestone the M7.0 claim is most likely to die in.
+# M7_11_MEMORY.md's design projected that a VM subsystem could push core past
+# 4,000; core is unchanged here, and the whole increment costs 0.9% of the
+# trusted image. That is the shape the rest of M7.11 has to keep: this rule
+# lands as a field and two loops on a structure the kernel already walks on
+# every map, rather than as the separate capability-derivation tree the
+# design deliberately declined to copy. The alternative was not cheaper - it
+# was a second source of truth about physical memory that can disagree with
+# the first, at more lines.
+#
+# The threat this closes is named in that design and was real in the code:
+# "a process that can write its own page tables has no address space", and
+# nothing expressed it. The pre-existing cross-space check answers only
+# whether two mappings disagree about W^X, so two writable translations of
+# the page-table arena - one the kernel's, one a process's - was a
+# combination it had no reason to reject. The 6 entry lines are the boot
+# routine saying which range that is; it is the only code that knows.
 core_ceiling=3419
-machine_ceiling=2920
+machine_ceiling=2997
 discovery_ceiling=1272
-entry_ceiling=1099
-total_ceiling=8710
+entry_ceiling=1105
+total_ceiling=8793
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

@@ -1266,6 +1266,19 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         fail("ATTACH_STAGE1");
     }
 
+    // The arena the three builders draw from is where every translation table on
+    // this machine lives, including the two processes' own. Declaring it kernel
+    // state here - before the manifest replays, before anything is mapped from
+    // it - makes "a process cannot write its own page tables" a property the
+    // ledger enforces on every later map, rather than a property of the order
+    // this routine happens to do things in.
+    if (!os::kernel::aarch64_reserve_kernel_object(
+            boot_kernel_space,
+            static_cast<std::uintptr_t>(plan.value().page_tables.base),
+            static_cast<std::size_t>(plan.value().page_tables.size))) {
+        fail("RESERVE_TABLES");
+    }
+
     os::kernel::aarch64::KernelMappingManifest kernel_manifest{};
     if (!add_identity_symbols(
             kernel_manifest, __cookie_text_start, __cookie_text_end,
