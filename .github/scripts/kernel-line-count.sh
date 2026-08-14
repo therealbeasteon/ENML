@@ -523,11 +523,27 @@ not_kernel=(
 # writable/executable-alias check - the only thing it rejects across spaces -
 # never trips between them, and a dedicated ledger would have cost roughly
 # 10 KiB of static state for isolation this throwaway map does not need.
+# Corrected within the same change, before merge, by the CI run that proved
+# both halves of that last sentence wrong: entry 1,006 -> 1,044, total
+# 8,518 -> 8,556. The early map cannot share boot_physical_ledger, because
+# the two maps really do disagree - each process's code page is writable in
+# the early map (boot installs a program into it) and read-execute in the
+# real one (the process runs it), which is a writable_executable_alias on
+# the information a ledger has, and the fact that the maps are sequential
+# rather than concurrent is not information a cross-space check can see. It
+# gets its own ledger. And "minimal" turned out to be the hazard rather than
+# the virtue: from the first activation until the real map replaces it the
+# minimal map is the whole address space, so every region selected out of
+# discovered RAM has to be added as it becomes known -
+# extend_early_identity_map, called for the page-table region, the four
+# process pages and the console. The console omission is why this was caught:
+# the Data Abort vectored to a handler whose own uart_write took the same
+# abort, and the machine looped in the vector reporting nothing at all.
 core_ceiling=3419
 machine_ceiling=2821
 discovery_ceiling=1272
-entry_ceiling=1006
-total_ceiling=8518
+entry_ceiling=1044
+total_ceiling=8556
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

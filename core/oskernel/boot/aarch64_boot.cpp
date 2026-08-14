@@ -127,12 +127,21 @@ os::kernel::ProcessTranslationTable boot_translations{};
 os::kernel::Kernel boot_kernel{};
 os::kernel::aarch64::PreemptionCoordinator boot_preemption{};
 
-// Storage and address-space state for the early identity map. Bound to
-// boot_physical_ledger (not a dedicated ledger) once cookie_aarch64_boot_main
-// starts building it - see the comment at that call site for why sharing it
-// is safe rather than merely convenient.
+// Storage, ledger and address-space state for the early identity map.
+//
+// The ledger is its own rather than boot_physical_ledger, because the two
+// maps genuinely do disagree about permissions on the same physical memory:
+// a_code and b_code are mapped writable here so the boot routine can install
+// each process's program into them, and read-execute in the real map so the
+// process can run it. Sharing a ledger would make that pair a
+// writable_executable_alias and refuse it - correctly, on the information a
+// ledger has. The two maps are sequential, not concurrent, and the early one
+// is abandoned before any of that memory becomes executable, which is a fact
+// about boot order that no cross-space check can see. Separating the ledgers
+// states the boundary instead of weakening the check.
 alignas(4096) std::byte early_identity_table_storage[
     early_identity_table_pages * static_cast<std::size_t>(page_size)] {};
+os::kernel::MachinePhysicalLedger early_identity_ledger{};
 os::kernel::MachineAddressSpace early_identity_space{};
 
 [[noreturn]] void halt() noexcept {
@@ -326,6 +335,38 @@ find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
     return add_manifest_range(
         manifest, begin, begin, end - begin,
         MachinePermissions::read_write, MachineMemoryKind::device);
+}
+
+// Adds one range to the early identity map while that map is already the
+// live address space. Everything boot touches physically between the two
+// activations has to arrive this way: the map built before the device tree
+// was parsed could only cover what was known then - the kernel image and the
+// DTB - and every region chosen out of discovered RAM afterwards is outside
+// it. Missing one does not corrupt anything; it takes a Data Abort, which
+// with the console itself unmapped means the fault handler's own uart_write
+// faults again and the machine loops in the vector reporting nothing.
+[[nodiscard]] bool extend_early_identity_map(
+    HardwareRange range,
+    MachinePermissions permissions,
+    MachineMemoryKind kind) noexcept {
+    if (!range.valid()) return false;
+    const auto begin = align_down(range.base);
+    std::uint64_t end = 0ULL;
+    if (range.base > UINT64_MAX - range.size ||
+        !align_up(range.base + range.size, end) || end <= begin) return false;
+    if (!os::kernel::machine_map(
+            early_identity_space,
+            static_cast<std::uintptr_t>(begin),
+            static_cast<std::uintptr_t>(begin),
+            static_cast<std::size_t>(end - begin),
+            permissions, kind)) return false;
+    // The descriptors were written as ordinary stores. The table walker is a
+    // separate observer, so they have to be published before the access that
+    // depends on them. No TLB invalidation: each entry moved from invalid to
+    // valid, so there is no stale translation to remove.
+    asm volatile("dsb ish" ::: "memory");
+    asm volatile("isb" ::: "memory");
+    return true;
 }
 
 void zero_page(std::uint64_t physical_page) noexcept {
@@ -951,15 +992,12 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // which comes from the inventory, which comes from the parse this map
     // exists to protect).
     //
-    // It shares boot_physical_ledger with the real map rather than getting a
-    // dedicated ledger: every range built here uses the exact same
-    // permission as the corresponding range in the real map, because both
-    // come from the same add_identity_symbols calls against the same
-    // symbols and constants. The ledger's cross-space check only rejects a
-    // writable/executable alias between spaces, never a same-permission
-    // overlap, so it never trips between these two maps. A dedicated ledger
-    // would only add roughly 10 KiB of otherwise-idle static state for
-    // isolation this map does not need.
+    // "Minimal" is load-bearing and also a hazard: this map is the entire
+    // address space from the activation below until the real one replaces
+    // it, so every physical region boot touches in that span must be added
+    // to it as it becomes known - see extend_early_identity_map's call
+    // sites. It gets its own ledger for the reason recorded at
+    // early_identity_ledger's declaration.
     const auto early_identity_storage_begin = static_cast<std::uint64_t>(
         reinterpret_cast<std::uintptr_t>(early_identity_table_storage));
     os::kernel::aarch64::EarlyPageArena early_identity_arena{
@@ -970,7 +1008,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     auto early_identity_root = early_identity_builder.initialize();
     if (!early_identity_root) halt_early_identity_map();
 
-    if (!os::kernel::machine_bind_address_space(early_identity_space, boot_physical_ledger)) {
+    if (!os::kernel::machine_bind_address_space(early_identity_space, early_identity_ledger)) {
         halt_early_identity_map();
     }
     if (!os::kernel::aarch64_attach_early_stage1(early_identity_space, early_identity_builder)) {
@@ -1032,6 +1070,15 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // whole boot presented as a QEMU timeout with an empty log.
     const auto* uart = find_pl011(inventory.value());
     if (uart == nullptr || !uart->registers.valid()) halt_no_console();
+    // The console must enter the early identity map before it can be written
+    // through. Translation is on now, so unlike every previous version of
+    // this sequence the discovered physical address is not automatically
+    // addressable - and a console that faults is worse than no console: the
+    // fault handler prints too, so its own uart_write takes the same abort
+    // and the machine loops in the vector reporting nothing at all.
+    if (!extend_early_identity_map(
+            uart->registers, MachinePermissions::read_write,
+            MachineMemoryKind::device)) halt_no_console();
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
 
@@ -1088,6 +1135,29 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         inventory.value(), page_size, page_size,
         std::span<const HardwareRange>{b_stack_protected});
     if (!b_stack) fail("RAM_B_STACK");
+
+    // Everything selected out of discovered RAM above is still outside the
+    // early identity map, and all of it is written before the real mapping
+    // takes over: the four process pages by the install/zero/write calls
+    // immediately below, the page-table region by the builders after them.
+    // Mapped writable here even though a_code and b_code end up read-execute
+    // in the real map - installing a program is a write, and executing it
+    // cannot happen until a map that is not this one is live.
+    if (!extend_early_identity_map(
+            plan.value().page_tables, MachinePermissions::read_write,
+            MachineMemoryKind::normal)) fail("EARLY_MAP_TABLES");
+    if (!extend_early_identity_map(
+            a_code.value(), MachinePermissions::read_write,
+            MachineMemoryKind::normal)) fail("EARLY_MAP_A_CODE");
+    if (!extend_early_identity_map(
+            a_stack.value(), MachinePermissions::read_write,
+            MachineMemoryKind::normal)) fail("EARLY_MAP_A_STACK");
+    if (!extend_early_identity_map(
+            b_code.value(), MachinePermissions::read_write,
+            MachineMemoryKind::normal)) fail("EARLY_MAP_B_CODE");
+    if (!extend_early_identity_map(
+            b_stack.value(), MachinePermissions::read_write,
+            MachineMemoryKind::normal)) fail("EARLY_MAP_B_STACK");
 
     install_process_a_program(a_code.value().base);
     install_process_b_program(b_code.value().base);

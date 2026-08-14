@@ -319,18 +319,39 @@ nothing wider was ever needed to answer this question — only unmeasured.
 
 The two identity maps' page tables come from independent arenas — the
 minimal map cannot use `plan.value().page_tables`, which is itself a product
-of the boot memory plan the map exists to run before — but share
-`boot_physical_ledger` rather than each getting a dedicated one. Every range
-either map creates uses the same permission for the same physical range,
-since both are built from the same `add_identity_symbols` calls against the
-same symbols; the ledger's cross-space check exists only to reject a
-writable/executable alias between spaces sharing it, so two spaces agreeing
-on a range's permission never trips it. `activate_stage1_translation` runs
-twice as a result, once for each map — confirmed safe to call a second time
-before relying on it: it unconditionally reprograms `MAIR_EL1`/`TCR_EL1`/
-`TTBR0_EL1` and re-invalidates the TLB rather than assuming anything about
-prior state, and both maps identity-map the currently-executing kernel image
-identically, so nothing the CPU is using moves under it.
+of the boot memory plan the map exists to run before — and each gets its own
+`MachinePhysicalLedger`. Sharing one was tried first and is wrong: the two
+maps genuinely disagree about permissions on the same physical memory, since
+each process's code page is writable in the early map (the boot routine
+installs a program into it) and read-execute in the real one (the process
+runs it). A shared ledger classifies that pair as a
+`writable_executable_alias` and refuses it — correctly, on the information a
+ledger has. The maps are sequential rather than concurrent and the early one
+is abandoned before any of that memory becomes executable, but that is a
+fact about boot order which no cross-space check can see. Separating the
+ledgers states the boundary rather than weakening the check.
+
+`activate_stage1_translation` runs twice as a result, once for each map —
+confirmed safe to call a second time before relying on it: it unconditionally
+reprograms `MAIR_EL1`/`TCR_EL1`/`TTBR0_EL1` and re-invalidates the TLB
+rather than assuming anything about prior state, and both maps identity-map
+the currently-executing kernel image identically, so nothing the CPU is
+using moves under it.
+
+**"Minimal" is also the hazard, and this is the part worth reading before
+touching this code.** From the first activation until the real map replaces
+it, the minimal map *is* the entire address space. Under the old arrangement
+translation was off, so any physical address the boot routine discovered was
+addressable the moment it was known; now it is addressable only if something
+mapped it. Every region chosen out of discovered RAM therefore has to be
+added as it becomes known — `extend_early_identity_map` does this for the
+page-table region, the four process pages, and the console. The console is
+the one that matters most: the first version of this change omitted it, and
+the resulting Data Abort vectored to a handler whose own `uart_write` took
+the same abort, so the machine looped in the vector printing nothing. A
+missing mapping here does not corrupt anything, but it can destroy the
+ability to report that it happened, which is the failure mode this whole
+section of the boot path is built to avoid.
 
 `-mstrict-align` stays, and `core/oskernel/CMakeLists.txt` keeps documenting
 it as a requirement. Shortening the window did not eliminate it: `_start`,
