@@ -95,9 +95,19 @@ public:
         if (ledger_ != nullptr || builder_ != nullptr) {
             return error(machine_errors::address_space_already_bound);
         }
-        if (builder.root_physical() == 0ULL) {
-            return error(machine_errors::address_space_unbound);
-        }
+        // An uninitialized builder is accepted, and this used to require a root.
+        // The old requirement encoded boot's order - fill the arena, build the
+        // root, bind - and that order is impossible after boot, because the
+        // pages a root is built from are donated by a caller and donation needs
+        // the space already bound to reserve through. Requiring a root here
+        // made creating an address space depend on itself.
+        //
+        // Safe to relax because a rootless builder already fails closed
+        // everywhere it matters: install_leaf and leaf_pointer both return
+        // address_space_unbound when root_ is zero, so every map, unmap and
+        // query through this space errors until the root exists. Only
+        // reserve_physical works in that window, which is exactly what donation
+        // needs and nothing more.
         ledger_ = &ledger;
         builder_ = &builder;
         return {};

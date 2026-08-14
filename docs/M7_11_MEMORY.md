@@ -101,9 +101,30 @@ re-check, written for boot and never exercised by boot, is what catches the
 donor. It was justified at the time as covering a caller that does not declare
 before it maps. This is that caller.
 
-**Still missing: the create call itself** - minting an epoch, initializing a
-builder from donated pages, sealing a root and binding a space, as one
-capability-gated operation. Every part it needs now exists.
+**Creation works, and its shape is not the one the design implied.** The
+sequence is `create` (bind a space to a ledger and a rootless builder) ->
+`donate` at least once -> `initialize_translation_root` -> map -> seal.
+
+It cannot be one call, and the reason is a genuine circular dependency rather
+than an implementation convenience. A translation root is a page. After boot,
+pages come from a caller's authority. Donating reserves through a space, so the
+space must already be bound. Binding used to require a root - which is what
+boot's order implies, because boot fills its arena before anything runs - and
+that requirement made creating an address space depend on itself.
+
+`bind` now accepts a rootless builder. Safe rather than lax: `install_leaf` and
+`leaf_pointer` already return `address_space_unbound` when the root is zero, so
+every map, unmap and query fails closed in that window, and only
+`reserve_physical` works - exactly what donation needs and nothing more. The
+alternative considered and rejected was letting the *creator* own the new
+space's root reservation, which breaks the cycle too but puts teardown
+ownership in the wrong place: `release_reservations` drops what a space owns,
+and a root the creator owns would outlive the space it belonged to.
+
+**Still missing: the capability gate and the epoch.** These are machine-layer
+primitives, not yet a capability-checked syscall, and nothing mints an
+`AddressSpaceEpoch` for a space created this way. Both are needed before a
+process rather than the boot routine can create one.
 
 **There is no fault path.** `cookie_aarch64_unhandled_exception` prints
 `COOKIE:PANIC:EXCEPTION` and halts. It does not read `ESR_EL1` or `FAR_EL1`. A

@@ -328,5 +328,65 @@ int main() {
         require(doomed.bound());
     }
 
+    // ---------------------------------------------------------------------
+    // Creation after boot: bind a rootless builder, donate, then build a root.
+    // The order boot cannot use, because boot has no caller to ask for pages.
+    // ---------------------------------------------------------------------
+    {
+        alignas(4096) std::array<std::byte, 6U * 4096U> donor{};
+        const auto donor_base = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(donor.data()));
+
+        EarlyPageArena fresh_arena{};
+        EarlyStage1Builder fresh_builder{fresh_arena};
+        NativePhysicalLedger fresh_ledger{};
+        NativeAddressSpaceState created{};
+
+        // Bind with no root at all. This is the change that breaks the cycle:
+        // a root is a page, post-boot pages are donated, and donation reserves
+        // through a space that must already be bound.
+        require(fresh_builder.root_physical() == 0ULL);
+        require(static_cast<bool>(created.bind(fresh_ledger, fresh_builder)));
+        require(created.bound());
+
+        // In that window a rootless space can reserve and nothing else. Every
+        // mapping path fails closed until the root exists.
+        auto premature_map = created.map(
+            0x0000'0000'3000'0000ULL, donor_base, 4096ULL,
+            MachinePermissions::read_write, MachineMemoryKind::normal);
+        require(!premature_map);
+
+        require(static_cast<bool>(created.reserve_physical(
+            donor_base, 4096ULL, PhysicalReservationKind::kernel_object)));
+        require(fresh_ledger.reserved == 1U);
+
+        // No pages yet, so there is no root to build - and it is an ordinary
+        // exhausted the caller fixes by donating, not a kernel failure.
+        require(!fresh_builder.initialize());
+
+        require(static_cast<bool>(fresh_arena.donate(donor_base)));
+        auto fresh_root = fresh_builder.initialize();
+        require(static_cast<bool>(fresh_root));
+        require(fresh_root.value() == donor_base);
+        require(fresh_builder.root_physical() == donor_base);
+
+        // With a root, the space maps normally. Two more donations cover the
+        // intermediate tables one page needs.
+        require(static_cast<bool>(fresh_arena.donate(donor_base + 4096ULL)));
+        require(static_cast<bool>(fresh_arena.donate(donor_base + 2ULL * 4096ULL)));
+        require(static_cast<bool>(created.map(
+            0x0000'0000'3000'0000ULL, 0x0000'0000'A000'0000ULL, 4096ULL,
+            MachinePermissions::read_write, MachineMemoryKind::normal)));
+        require(created.mapping_count() == 1U);
+
+        // And the space created this way tears down the same as any other.
+        require(static_cast<bool>(fresh_builder.unmap_page(0x0000'0000'3000'0000ULL)));
+        require(static_cast<bool>(created.retire_unmapped(
+            0x0000'0000'3000'0000ULL, 4096ULL)));
+        require(static_cast<bool>(created.release_reservations()));
+        require(static_cast<bool>(created.unbind()));
+        require(!created.bound());
+    }
+
     return 0;
 }

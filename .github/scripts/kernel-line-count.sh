@@ -721,11 +721,29 @@ not_kernel=(
 # other direction. The "declaring is not retroactive blessing" re-check written
 # for boot, which boot itself never exercises, is exactly what does the work
 # here.
+# Raised a thirtieth time, by post-boot address-space creation: machine
+# 3,168 -> 3,191, total 9,108 -> 9,131. core unchanged.
+#
+# Most of the 23 lines are two entry points and a comment explaining an
+# ordering that looks arbitrary and is not. The API a reader expects - one
+# create call that returns a usable space - cannot exist. A translation root is
+# a page; after boot, pages are donated by a caller; donation reserves through
+# a space that must therefore already be bound. Requiring a root at bind time,
+# which is what boot's order implies and what the code used to enforce, made
+# creating an address space depend on itself.
+#
+# So bind now accepts a rootless builder. That is safe rather than lax:
+# install_leaf and leaf_pointer already return address_space_unbound when root_
+# is zero, so every map, unmap and query fails closed in that window and only
+# reserve_physical works - exactly what donation needs and nothing more. The
+# relaxation is the smallest edit that breaks the cycle, and the alternative,
+# letting the creator own the new space's root reservation, would have put
+# teardown ownership in the wrong place.
 core_ceiling=3535
-machine_ceiling=3168
+machine_ceiling=3191
 discovery_ceiling=1272
 entry_ceiling=1133
-total_ceiling=9108
+total_ceiling=9131
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
