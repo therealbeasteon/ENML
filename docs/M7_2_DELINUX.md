@@ -64,6 +64,14 @@ capability instead of a filesystem trick.
 
 ## Order
 
+**Amended 2026-08-14 (second time) — the order cannot start at all yet.**
+`docs/M7_2_NO_DESTINATION.md` records the finding: not one of the eighteen files
+can move, because Cookie has no userland to move them to. No syscall stubs, no
+program format, no loader, no post-boot address space creation; the only code
+that has ever run at EL0 is raw instruction words this boot routine writes into
+pages by hand. Everything below remains correct about *what each dependency
+becomes* and is the fourth thing to do, not the first.
+
 **Amended 2026-08-14 — step 1 had an unnamed prerequisite.** The three
 primitives listed above are real, but a server also has to *wait on many peers*,
 and every service main loop in the tree does that with `poll()` over a
