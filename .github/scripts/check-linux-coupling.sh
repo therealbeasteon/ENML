@@ -31,7 +31,6 @@ permitted=(
     "core/ossandbox/src/substrate_linux.cpp"
     "core/osservice/include/os/service/identity.hpp"
     "system/app_manager/include/os/app/accessibility_control.hpp"
-    "system/app_manager/include/os/app/shell_lifecycle_control.hpp"
     "system/app_manager/src/manager_linux.cpp"
     "system/app_manager/src/runtime_session.cpp"
     "system/services/compositor/src/service.cpp"
