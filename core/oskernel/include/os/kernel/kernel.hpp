@@ -54,8 +54,8 @@ public:
     [[nodiscard]] os::core::Result<IpcReceived> ipc_receive(
         ThreadId server,
         CapabilityId endpoint_capability) noexcept;
-    // M7.8.2, first increment - see ipc_endpoint.hpp's own overloads for what
-    // this does and does not yet close.
+    // M7.8.2 - see ipc_endpoint.hpp's own ExecutionAuthority overloads for
+    // what each of these does.
     [[nodiscard]] os::core::Result<void> ipc_send(
         ExecutionAuthority caller,
         CapabilityId endpoint_capability,
@@ -67,11 +67,20 @@ public:
         ThreadId server,
         const IpcReplySeal& seal,
         IpcEnvelope response = {}) noexcept;
+    [[nodiscard]] os::core::Result<void> ipc_reply(
+        ExecutionAuthority server,
+        const IpcReplySeal& seal,
+        IpcEnvelope response = {}) noexcept;
     [[nodiscard]] os::core::Result<void> ipc_reply_transaction(
         ThreadId server,
         IpcTransactionId transaction,
         IpcEnvelope response = {}) noexcept;
+    [[nodiscard]] os::core::Result<void> ipc_reply_transaction(
+        ExecutionAuthority server,
+        IpcTransactionId transaction,
+        IpcEnvelope response = {}) noexcept;
     [[nodiscard]] os::core::Result<IpcEnvelope> ipc_take_reply(ThreadId caller) noexcept;
+    [[nodiscard]] os::core::Result<IpcEnvelope> ipc_take_reply(ExecutionAuthority caller) noexcept;
 
     [[nodiscard]] os::core::Result<void> ipc_arm_send_continuation(
         ThreadId caller,

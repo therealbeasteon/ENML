@@ -67,6 +67,13 @@ struct IpcReplySeal final {
     IpcTransactionId transaction {0U};
     ThreadId caller {invalid_thread};
     ThreadId server {invalid_thread};
+    // Present only when the corresponding side used the ExecutionAuthority
+    // overload of send/receive (M7.8.2). An invalid identity here means that
+    // side used the legacy ThreadId-only path and carries no generation to
+    // check - not that it is untrusted. See reply()'s and take_reply()'s own
+    // ExecutionAuthority overloads for what an invalid identity means there.
+    AddressSpaceIdentity caller_address_space {};
+    AddressSpaceIdentity server_address_space {};
     [[nodiscard]] constexpr bool valid() const noexcept {
         return endpoint.valid() && transaction != 0U &&
             caller != invalid_thread && server != invalid_thread;
@@ -134,15 +141,11 @@ public:
     // capability minted via CapabilityTable::mint(ExecutionAuthority, ...)
     // was previously unusable for IPC at all - the legacy overloads above
     // fail closed for it by design, on purpose, rather than silently
-    // checking only the reusable ThreadId. These are its usable path.
-    //
-    // What this does not yet do: pending calls, reply seals and completed
-    // replies below are still recorded and looked up by bare ThreadId, not
-    // by ExecutionAuthority. A capability check happens here, at send/
-    // receive; nothing yet re-checks that the caller collecting a reply, or
-    // the server completing one, is still the same address-space generation
-    // that the transaction was established under. That is M7.8.2's
-    // remaining gap, not this one - see docs/ROADMAP.md.
+    // checking only the reusable ThreadId. These are its usable path. Every
+    // transaction these establish carries its generation forward into the
+    // reply seal, pending slot and completed slot below - see reply()'s and
+    // take_reply()'s own ExecutionAuthority overloads for the second half of
+    // the migration, which checks it.
     [[nodiscard]] os::core::Result<void> send(
         ExecutionAuthority caller,
         CapabilityId endpoint_capability,
@@ -171,6 +174,30 @@ public:
     [[nodiscard]] os::core::Result<IpcEnvelope> take_reply(ThreadId caller) noexcept;
     [[nodiscard]] bool reply_available(ThreadId caller) const noexcept;
 
+    // M7.8.2, second increment. Where the seal recorded a generation for
+    // this side (receive()'s or send()'s ExecutionAuthority overload was
+    // used to establish it - see IpcReplySeal), the caller here must match
+    // it exactly, not just the thread: a same-ThreadId, different-generation
+    // caller is refused the same way a wrong thread already was, with the
+    // same error code, so a stale generation cannot distinguish "wrong
+    // thread" from "right thread, wrong incarnation" by the failure it gets
+    // back. Where the seal recorded no generation for this side (the legacy
+    // path was used there), this degenerates to the ThreadId check alone -
+    // there is nothing else to compare.
+    [[nodiscard]] os::core::Result<void> reply(
+        ExecutionAuthority server,
+        const IpcReplySeal& seal,
+        Rendezvous& rendezvous,
+        IpcEnvelope response = {}) noexcept;
+
+    [[nodiscard]] os::core::Result<void> reply_transaction(
+        ExecutionAuthority server,
+        IpcTransactionId transaction,
+        Rendezvous& rendezvous,
+        IpcEnvelope response = {}) noexcept;
+
+    [[nodiscard]] os::core::Result<IpcEnvelope> take_reply(ExecutionAuthority caller) noexcept;
+
     [[nodiscard]] bool active(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] bool receive_waiting(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] std::size_t active_endpoint_count() const noexcept { return active_; }
@@ -192,11 +219,17 @@ private:
         IpcEndpoint endpoint {};
         ThreadId caller {invalid_thread};
         ThreadId server {invalid_thread};
+        // Carried into the reply seal receive() creates from this slot - see
+        // IpcReplySeal::caller_address_space.
+        AddressSpaceIdentity caller_address_space {};
         IpcEnvelope request {};
         bool active {false};
     };
     struct CompletedSlot final {
         ThreadId caller {invalid_thread};
+        // Copied from the seal at reply() time - see take_reply()'s
+        // ExecutionAuthority overload, which is what checks it.
+        AddressSpaceIdentity caller_address_space {};
         IpcEnvelope response {};
         bool active {false};
     };
@@ -218,11 +251,13 @@ private:
     // caller used.
     [[nodiscard]] os::core::Result<void> send_to_endpoint(
         ThreadId caller,
+        AddressSpaceIdentity caller_address_space,
         IpcEndpoint endpoint,
         Rendezvous& rendezvous,
         IpcEnvelope request) noexcept;
     [[nodiscard]] os::core::Result<IpcReceived> receive_from_endpoint(
         ThreadId server,
+        AddressSpaceIdentity server_address_space,
         IpcEndpoint endpoint,
         Rendezvous& rendezvous) noexcept;
     [[nodiscard]] EndpointSlot* slot_for(IpcEndpoint endpoint) noexcept;
