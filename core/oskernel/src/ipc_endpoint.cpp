@@ -273,6 +273,7 @@ os::core::Result<IpcEndpoint> IpcEndpointTable::endpoint_for_capability(
 
 os::core::Result<void> IpcEndpointTable::send_to_endpoint(
     ThreadId caller,
+    AddressSpaceIdentity caller_address_space,
     IpcEndpoint endpoint,
     Rendezvous& rendezvous,
     IpcEnvelope request) noexcept {
@@ -295,6 +296,7 @@ os::core::Result<void> IpcEndpointTable::send_to_endpoint(
         .endpoint = endpoint,
         .caller = caller,
         .server = owner->server,
+        .caller_address_space = caller_address_space,
         .request = request,
         .active = true,
     };
@@ -311,7 +313,7 @@ os::core::Result<void> IpcEndpointTable::send(
     auto endpoint = endpoint_for_capability(
         caller, endpoint_capability, ipc_right_send, capabilities);
     if (!endpoint) return endpoint.error();
-    return send_to_endpoint(caller, endpoint.value(), rendezvous, request);
+    return send_to_endpoint(caller, AddressSpaceIdentity{}, endpoint.value(), rendezvous, request);
 }
 
 os::core::Result<void> IpcEndpointTable::send(
@@ -323,11 +325,13 @@ os::core::Result<void> IpcEndpointTable::send(
     auto endpoint = endpoint_for_capability(
         caller, endpoint_capability, ipc_right_send, capabilities);
     if (!endpoint) return endpoint.error();
-    return send_to_endpoint(caller.thread, endpoint.value(), rendezvous, request);
+    return send_to_endpoint(
+        caller.thread, caller.address_space, endpoint.value(), rendezvous, request);
 }
 
 os::core::Result<IpcReceived> IpcEndpointTable::receive_from_endpoint(
     ThreadId server,
+    AddressSpaceIdentity server_address_space,
     IpcEndpoint endpoint,
     Rendezvous& rendezvous) noexcept {
     auto* owner = slot_for(endpoint);
@@ -375,6 +379,8 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive_from_endpoint(
         .transaction = next_transaction_++,
         .caller = pending->caller,
         .server = server,
+        .caller_address_space = pending->caller_address_space,
+        .server_address_space = server_address_space,
     };
     *free = ReplySlot{.seal = seal, .active = true};
     ++reply_seals_;
@@ -393,7 +399,7 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     auto endpoint = endpoint_for_capability(
         server, endpoint_capability, ipc_right_receive, capabilities);
     if (!endpoint) return endpoint.error();
-    return receive_from_endpoint(server, endpoint.value(), rendezvous);
+    return receive_from_endpoint(server, AddressSpaceIdentity{}, endpoint.value(), rendezvous);
 }
 
 os::core::Result<IpcReceived> IpcEndpointTable::receive(
@@ -404,7 +410,8 @@ os::core::Result<IpcReceived> IpcEndpointTable::receive(
     auto endpoint = endpoint_for_capability(
         server, endpoint_capability, ipc_right_receive, capabilities);
     if (!endpoint) return endpoint.error();
-    return receive_from_endpoint(server.thread, endpoint.value(), rendezvous);
+    return receive_from_endpoint(
+        server.thread, server.address_space, endpoint.value(), rendezvous);
 }
 
 os::core::Result<void> IpcEndpointTable::reply(
@@ -432,6 +439,7 @@ os::core::Result<void> IpcEndpointTable::reply(
 
     *completed = CompletedSlot{
         .caller = seal.caller,
+        .caller_address_space = seal.caller_address_space,
         .response = response,
         .active = true,
     };
@@ -448,6 +456,25 @@ os::core::Result<void> IpcEndpointTable::reply(
     return {};
 }
 
+os::core::Result<void> IpcEndpointTable::reply(
+    ExecutionAuthority server,
+    const IpcReplySeal& seal,
+    Rendezvous& rendezvous,
+    IpcEnvelope response) noexcept {
+    if (!server.valid()) return ipc_error(ipc_errors::wrong_reply_server);
+    // A same-ThreadId, different-generation server must fail exactly like a
+    // wrong thread would - same code, so a stale generation cannot tell
+    // "wrong thread" from "right thread, wrong incarnation" from the error
+    // alone. If the seal recorded no generation for this side (receive()'s
+    // legacy overload established it), there is nothing to compare and this
+    // degenerates to the ThreadId check reply(ThreadId, ...) already does.
+    if (seal.server_address_space.valid() &&
+        !(server.address_space == seal.server_address_space)) {
+        return ipc_error(ipc_errors::wrong_reply_server);
+    }
+    return reply(server.thread, seal, rendezvous, response);
+}
+
 os::core::Result<void> IpcEndpointTable::reply_transaction(
     ThreadId server,
     IpcTransactionId transaction,
@@ -459,12 +486,38 @@ os::core::Result<void> IpcEndpointTable::reply_transaction(
     return reply(server, seal, rendezvous, response);
 }
 
+os::core::Result<void> IpcEndpointTable::reply_transaction(
+    ExecutionAuthority server,
+    IpcTransactionId transaction,
+    Rendezvous& rendezvous,
+    IpcEnvelope response) noexcept {
+    auto* slot = reply_slot(server.thread, transaction);
+    if (slot == nullptr) return ipc_error(ipc_errors::stale_reply_seal);
+    const IpcReplySeal seal = slot->seal;
+    return reply(server, seal, rendezvous, response);
+}
+
 os::core::Result<IpcEnvelope> IpcEndpointTable::take_reply(ThreadId caller) noexcept {
     auto* slot = completed_slot(caller);
     if (slot == nullptr) return ipc_error(ipc_errors::reply_unavailable);
     const IpcEnvelope response = slot->response;
     *slot = CompletedSlot{};
     return response;
+}
+
+os::core::Result<IpcEnvelope> IpcEndpointTable::take_reply(ExecutionAuthority caller) noexcept {
+    if (!caller.valid()) return ipc_error(ipc_errors::reply_unavailable);
+    const auto* slot = completed_slot(caller.thread);
+    if (slot == nullptr) return ipc_error(ipc_errors::reply_unavailable);
+    // Indistinguishable from nothing being there, on purpose: a stale
+    // generation must not learn that a reply exists for the thread it once
+    // was, only that take_reply found nothing it is entitled to - the same
+    // answer as the genuinely-empty case.
+    if (slot->caller_address_space.valid() &&
+        !(caller.address_space == slot->caller_address_space)) {
+        return ipc_error(ipc_errors::reply_unavailable);
+    }
+    return take_reply(caller.thread);
 }
 
 bool IpcEndpointTable::reply_available(ThreadId caller) const noexcept {

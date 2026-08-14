@@ -28,6 +28,8 @@ constexpr os::kernel::ExecutionAuthority client_recycled{
     client, os::kernel::AddressSpaceIdentity{6U, 4U}};
 constexpr os::kernel::ExecutionAuthority server_authority{
     server, os::kernel::AddressSpaceIdentity{7U, 5U}};
+constexpr os::kernel::ExecutionAuthority server_recycled{
+    server, os::kernel::AddressSpaceIdentity{7U, 6U}};
 
 } // namespace
 
@@ -35,15 +37,17 @@ constexpr os::kernel::ExecutionAuthority server_authority{
 // ExecutionAuthority overloads so a capability minted via
 // CapabilityTable::mint(ExecutionAuthority, ...) is actually usable for IPC -
 // tests/unit/kernel/ipc_endpoint_test.cpp already proves the legacy
-// ThreadId-only path correctly refuses one. This file is the other half:
-// proving the new path works, not just that the old one still fails closed.
+// ThreadId-only path correctly refuses one. This file proves the new path
+// works, not just that the old one still fails closed.
 //
-// What this does not cover, because the code does not do it yet: reply,
-// reply_transaction and take_reply still operate on bare ThreadId - an
-// IpcReplySeal produced by a context-bound receive() does not yet carry the
-// server's or caller's address-space generation, so nothing here can prove a
-// stale generation is refused at the reply step. That is M7.8.2's remaining
-// gap; docs/ROADMAP.md tracks it.
+// M7.8.2's second increment: reply, reply_transaction and take_reply gain
+// matching overloads. A reply seal produced by a context-bound receive()
+// carries the server's generation; a pending call created by a context-bound
+// send() carries the caller's, forwarded into the completed slot at reply()
+// time. Both are checked below - a same-ThreadId, different-generation
+// server or caller is refused exactly like a wrong thread would be, not with
+// a distinguishing error, so a stale generation cannot tell "wrong thread"
+// from "right thread, wrong incarnation" from the failure it gets back.
 int main() {
     using namespace os::kernel;
 
@@ -112,14 +116,33 @@ int main() {
     constexpr std::array<std::byte, 2U> response_bytes{std::byte{'o'}, std::byte{'k'}};
     auto response = IpcEnvelope::from(response_bytes);
     if (!check(static_cast<bool>(response), "response envelope refused")) return 1;
-    if (!check(static_cast<bool>(
-                   ipc.reply(server, received.value().reply, rendezvous, response.value())),
-               "reply refused")) return 1;
 
-    auto collected = ipc.take_reply(client);
-    if (!check(static_cast<bool>(collected), "reply not collected")) return 1;
+    // A recycled server generation must be refused at reply() with the same
+    // code a wrong thread gets - checked before the real server replies, so
+    // the seal is still live for the correct attempt right after.
+    if (!check(refused(
+                   ipc.reply(server_recycled, received.value().reply, rendezvous, response.value()),
+                   ipc_errors::wrong_reply_server),
+               "a recycled server generation completed a reply")) return 1;
+    if (!check(ipc.active_reply_seal_count() == 1U,
+               "a refused reply attempt consumed the seal anyway")) return 1;
+
+    if (!check(static_cast<bool>(
+                   ipc.reply(server_authority, received.value().reply, rendezvous, response.value())),
+               "context-bound reply refused")) return 1;
+
+    // A recycled caller generation must be refused at take_reply() the same
+    // way an empty completed slot would be - not with a distinguishing
+    // error - and must not consume the reply the real caller still needs.
+    if (!check(refused(ipc.take_reply(client_recycled), ipc_errors::reply_unavailable),
+               "a recycled caller generation collected a reply")) return 1;
+
+    auto collected = ipc.take_reply(client_authority);
+    if (!check(static_cast<bool>(collected), "context-bound take_reply refused")) return 1;
     if (!check(collected.value().view().size() == response_bytes.size(),
                "response payload did not survive the round trip")) return 1;
+    if (!check(!static_cast<bool>(ipc.take_reply(client_authority)),
+               "a second take_reply found something after the first collected it")) return 1;
 
     return 0;
 }

@@ -220,6 +220,16 @@ os::core::Result<void> Kernel::ipc_reply(
     return {};
 }
 
+os::core::Result<void> Kernel::ipc_reply(
+    ExecutionAuthority server,
+    const IpcReplySeal& seal,
+    IpcEnvelope response) noexcept {
+    auto replied = ipc_.reply(server, seal, threads_, response);
+    if (!replied) return replied;
+    synchronise_pair(server.thread, seal.caller);
+    return {};
+}
+
 os::core::Result<void> Kernel::ipc_reply_transaction(
     ThreadId server,
     IpcTransactionId transaction,
@@ -230,8 +240,27 @@ os::core::Result<void> Kernel::ipc_reply_transaction(
     return {};
 }
 
+os::core::Result<void> Kernel::ipc_reply_transaction(
+    ExecutionAuthority server,
+    IpcTransactionId transaction,
+    IpcEnvelope response) noexcept {
+    auto replied = ipc_.reply_transaction(server, transaction, threads_, response);
+    if (!replied) return replied;
+    synchronise();
+    return {};
+}
+
 os::core::Result<IpcEnvelope> Kernel::ipc_take_reply(ThreadId caller) noexcept {
     if (!tracks(caller)) {
+        return os::core::Result<IpcEnvelope>{
+            os::core::make_error(os::core::ErrorDomain::kernel,
+                                 rendezvous_errors::unknown_thread)};
+    }
+    return ipc_.take_reply(caller);
+}
+
+os::core::Result<IpcEnvelope> Kernel::ipc_take_reply(ExecutionAuthority caller) noexcept {
+    if (!tracks(caller.thread)) {
         return os::core::Result<IpcEnvelope>{
             os::core::make_error(os::core::ErrorDomain::kernel,
                                  rendezvous_errors::unknown_thread)};

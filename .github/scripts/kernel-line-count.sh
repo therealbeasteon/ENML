@@ -484,11 +484,26 @@ not_kernel=(
 # capability check happens at send/receive but nothing yet re-checks that
 # the caller collecting a reply is still the generation the transaction was
 # established under. That is M7.8.2's remaining gap, not this raise's.
-core_ceiling=3327
+# Raised a seventeenth time, by M7.8.2's second increment: core 3,327 -> 3,419,
+# total 8,371 -> 8,463. Closes the gap the sixteenth raise's own justification
+# named as remaining: IpcReplySeal, the private PendingSlot and the private
+# CompletedSlot each gain an AddressSpaceIdentity field, populated only when
+# the corresponding side used the ExecutionAuthority send/receive overload
+# (additive - a default-constructed, invalid identity means "the legacy path
+# was used here, nothing to compare" rather than "untrusted"). reply,
+# reply_transaction and take_reply gain matching ExecutionAuthority overloads
+# that check the recorded generation before delegating to the existing
+# ThreadId implementation, refusing a same-thread-different-generation caller
+# or server with the exact code a wrong thread already gets - not a
+# distinguishing one, so a stale generation cannot learn "right thread, wrong
+# incarnation" from the failure alone. Closes M7.8.2's second increment; the
+# ExecutionAuthority-bound driver-capability question M7.9's own design doc
+# left open remains separately undecided.
+core_ceiling=3419
 machine_ceiling=2821
 discovery_ceiling=1272
 entry_ceiling=951
-total_ceiling=8371
+total_ceiling=8463
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

@@ -334,7 +334,7 @@ change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 8,371 lines, a ratchet rather than the 605-line
+  ceiling is the measured 8,463 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -363,11 +363,11 @@ cannot be laundered between them:
 
 | Category | Lines |
 | --- | --- |
-| core — privileged portable runtime | 3,327 |
+| core — privileged portable runtime | 3,419 |
 | machine — the AArch64 port | 2,821 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
 | entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof | 951 |
-| **total** | **8,371** |
+| **total** | **8,463** |
 
 `core` is the figure comparable to QNX's 605, and it is 5.2× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -544,7 +544,20 @@ in the same diff: pending calls, reply seals and completed replies are still
 recorded and looked up by bare `ThreadId`, so a capability check happens at
 send/receive but nothing yet re-checks that the caller collecting a reply is
 still the generation the transaction was established under - M7.8.2's
-remaining gap, not this raise's. None of it is discretionary — see
+remaining gap, not this raise's. A seventeenth raise, by M7.8.2's second
+increment, closes it: core 3,327 → 3,419, total 8,371 → 8,463.
+`IpcReplySeal`, the private `PendingSlot` and the private `CompletedSlot`
+each gain an `AddressSpaceIdentity` field, populated only when the
+corresponding side used the `ExecutionAuthority` send/receive overload -
+additive, so a default-constructed, invalid identity means "the legacy path
+was used here, nothing to compare," not "untrusted." `reply`,
+`reply_transaction` and `take_reply` gain matching `ExecutionAuthority`
+overloads that check the recorded generation before delegating to the
+existing `ThreadId` implementation, refusing a same-thread-different-
+generation caller or server with the exact code a wrong thread already
+gets — not a distinguishing one, so a stale generation cannot learn "right
+thread, wrong incarnation" from the failure alone. None of it is
+discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 
@@ -616,7 +629,7 @@ Taken in order:
   (`fuzz-nightly.yml`), the same discipline every other target in the
   directory already gets.
 - *Reports a trusted line count under the declared ceiling* — **met**, and has
-  been since M7.10 landed. The ceiling moved sixteen times across this stack —
+  been since M7.10 landed. The ceiling moved seventeen times across this stack —
   once per milestone plus three defect fixes — each raise landing in the same diff
   as the lines it covers, with the justification recorded in
   `.github/scripts/kernel-line-count.sh` and restated in
