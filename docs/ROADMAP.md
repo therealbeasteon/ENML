@@ -423,11 +423,11 @@ cannot be laundered between them:
 
 | Category | Lines |
 | --- | --- |
-| core — privileged portable runtime | 3,491 |
+| core — privileged portable runtime | 3,504 |
 | machine — the AArch64 port, including the physical ledger's reservation table | 3,015 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
 | entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter | 1,122 |
-| **total** | **8,900** |
+| **total** | **8,913** |
 
 `core` is the figure comparable to QNX's 605 — but only measured QNX's own way, by semicolons, and only for a kernel of the same scope. Both corrections landed 2026-08-14 (`docs/REFERENCE_NOTES_2026_08_14_QNX.md`): `core` is 1,607 semicolons, **2.7×** the 605, and QNX's microkernel excludes memory management entirely — it lives in `Proc`, a user-space resource manager of 3,924 semicolons. Neither correction moved a ceiling. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off

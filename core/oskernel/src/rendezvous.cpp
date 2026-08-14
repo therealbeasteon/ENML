@@ -173,6 +173,18 @@ os::core::Result<void> Rendezvous::cancel_receive(ThreadId self) noexcept {
     return {};
 }
 
+os::core::Result<void> Rendezvous::expire_receive(ThreadId self) noexcept {
+    if (self == invalid_thread) return rendezvous_error(rendezvous_errors::invalid_thread_id);
+    Slot* receiver = find(self);
+    if (receiver == nullptr) return rendezvous_error(rendezvous_errors::unknown_thread);
+    if (receiver->state != ThreadState::receive_blocked || receiver->partner != invalid_thread) {
+        return rendezvous_error(rendezvous_errors::not_waiting_on_peer);
+    }
+    receiver->state = ThreadState::ready;
+    receiver->wake = WakeReason::deadline_expired;
+    return {};
+}
+
 os::core::Result<void> Rendezvous::send(ThreadId from, ThreadId to) noexcept {
     Slot* target = find(to);
     if (target != nullptr && target->state == ThreadState::receive_blocked &&

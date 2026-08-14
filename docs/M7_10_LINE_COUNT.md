@@ -24,11 +24,11 @@ so that lines cannot be moved between categories to get under a ceiling:
 
 | Category | Lines | Ceiling | What it is |
 | --- | --- | --- | --- |
-| core | 3,491 | 3,491 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, begin_service delivery to the woken driver, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), context-bound IPC endpoint authorization and generation-checked reply collection, deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the ABI |
+| core | 3,504 | 3,504 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, begin_service delivery to the woken driver, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), context-bound IPC endpoint authorization and generation-checked reply collection, deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the ABI |
 | machine | 3,015 | 3,015 | The AArch64 port and the `machine.hpp` contract it satisfies, including GICv3 device-PPI mask/unmask, interrupt-delivery completion on resume, synchronous-fault classification (abort class, fault status, translation level), and the physical ledger's reservation table — which ranges hold kernel state, of which kind, and who may map them |
 | discovery | 1,272 | 1,272 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, architected timer discovery (physical and virtual PPIs), boot memory planning |
 | entry | 1,122 | 1,122 | Reset vector, freestanding memory primitives, the boot routine (including the minimal pre-discovery identity map that closes "the pre-MMU window," below, and the declaration of the page-table arena, the kernel's writable image and its stack as kernel state), syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the decoded fault reporter, the M7.9 end-to-end driver proof |
-| **total** | **8,900** | **8,900** | |
+| **total** | **8,913** | **8,913** | |
 
 `core` is the number comparable to QNX's 605. The others are trusted but are not
 what that figure described.
@@ -81,8 +81,8 @@ rather than becoming something the project stopped mentioning:
 
 - `core` is **2.7x** the QNX microkernel measured the way QNX measured itself —
   **1,607 semicolons against 605**.
-- In this gate's own metric `core` is **3,491 lines**, and the whole trusted
-  image is **8,900 lines / 3,955 semicolons**.
+- In this gate's own metric `core` is **3,504 lines**, and the whole trusted
+  image is **8,913 lines / 3,960 semicolons**.
 - QNX for scale, all semicolons: microkernel **605** *(no memory management)*,
   `Proc` **3,924**, whole OS **15,930**.
 
