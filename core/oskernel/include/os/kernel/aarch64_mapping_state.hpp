@@ -36,19 +36,36 @@ struct NativePhysicalMapping final {
     bool occupied {false};
 };
 
+// How tightly a reserved range's writers are constrained. Both kinds forbid
+// the same two things - any EL0 translation at all, and any executable one -
+// and differ only in who may hold a writable kernel translation.
+enum class PhysicalReservationKind : std::uint8_t {
+    // Exactly one address space may write it. The page-table arena: the kernel
+    // edits its own tables through one translation, and a second writable one
+    // is an alias with no legitimate use.
+    kernel_object = 1U,
+    // Any bound address space may write it. Not a weaker intention, a forced
+    // one: Cookie translates through TTBR0 only, so EL1 executes under whatever
+    // process root is installed, and the kernel's own globals and stack must be
+    // writable in *every* space or the kernel cannot run once a process is
+    // scheduled. Owner-write-only becomes achievable for these ranges when M7.7
+    // splits the kernel domain into TTBR1 (see
+    // aarch64_kernel_translation_domain.hpp), and not before.
+    kernel_private = 2U,
+};
+
 // A physical range whose contents are kernel state rather than a process's
-// data - today the page-table arena, later any object derived from memory a
-// process holds authority over. Three rules follow from that and are enforced
-// wherever a mapping is created:
+// data - the page-table arena, the kernel's writable image and its stack, and
+// later any object derived from memory a process holds authority over. Three
+// rules follow from that and are enforced wherever a mapping is created:
 //
 //   * nobody may reach it from EL0, owner included. A process that can write
 //     its own translation tables has no address space, and one that can read
 //     them learns the physical layout of every other.
-//   * nobody may execute it. Kernel state is not code, and the range is chosen
-//     by boot-time discovery rather than by the linker.
-//   * only the owning address space may write it. The kernel edits its own
-//     tables through exactly one translation; a second writable one is an
-//     alias with no legitimate use.
+//   * nobody may execute it. Kernel state is not code, and these ranges are
+//     chosen by boot-time discovery or by the linker's data sections, never as
+//     something to branch to.
+//   * writable by the owner only, or by any bound space, per the kind above.
 //
 // The owner is an address space rather than a process because that is the
 // granularity the ledger already records. This is the field M7.11's design
@@ -59,6 +76,7 @@ struct NativePhysicalReservation final {
     const void* owner {nullptr};
     std::uint64_t physical_base {0ULL};
     std::uint64_t length {0ULL};
+    PhysicalReservationKind kind {PhysicalReservationKind::kernel_object};
     bool occupied {false};
 };
 
@@ -85,14 +103,15 @@ public:
         return {};
     }
 
-    // Declares a physical range to be the backing store of kernel state, owned
-    // by this address space. Intended to run before the range is mapped at all,
-    // but it does not assume so: a reservation made after the fact must not
-    // silently bless a translation it would have refused, so every live mapping
-    // of the range is re-checked against the rule about to start applying.
-    [[nodiscard]] os::core::Result<void> reserve_kernel_object(
+    // Declares a physical range to hold kernel state, owned by this address
+    // space. Intended to run before the range is mapped at all, but it does not
+    // assume so: a reservation made after the fact must not silently bless a
+    // translation it would have refused, so every live mapping of the range is
+    // re-checked against the rule about to start applying.
+    [[nodiscard]] os::core::Result<void> reserve_physical(
         std::uint64_t physical_base,
-        std::uint64_t length) noexcept {
+        std::uint64_t length,
+        PhysicalReservationKind kind) noexcept {
         if (ledger_ == nullptr || builder_ == nullptr) {
             return error(machine_errors::address_space_unbound);
         }
@@ -113,14 +132,15 @@ public:
             if (!existing.occupied || !overlap(
                     existing.physical_base, existing.length, physical_base, length)) continue;
             if (forbidden_by_reservation(
-                    this, existing.owner, existing.permissions, existing.user_accessible)) {
+                    kind, this, existing.owner,
+                    existing.permissions, existing.user_accessible)) {
                 return error(machine_errors::kernel_object_alias);
             }
         }
 
         auto* slot = free_reservation();
         if (slot == nullptr) return error(machine_errors::exhausted);
-        *slot = NativePhysicalReservation{this, physical_base, length, true};
+        *slot = NativePhysicalReservation{this, physical_base, length, kind, true};
         ++ledger_->reserved;
         return {};
     }
@@ -339,7 +359,8 @@ private:
                     reservation.physical_base, reservation.length,
                     physical_base, length)) continue;
             if (forbidden_by_reservation(
-                    reservation.owner, this, permissions, user_accessible)) {
+                    reservation.kind, reservation.owner, this,
+                    permissions, user_accessible)) {
                 return error(machine_errors::kernel_object_alias);
             }
         }
@@ -394,12 +415,14 @@ private:
     // same question: at map time the reservation exists and the mapping is
     // proposed; at reserve time the mapping exists and the reservation is.
     [[nodiscard]] static constexpr bool forbidden_by_reservation(
+        PhysicalReservationKind kind,
         const void* reservation_owner,
         const void* mapping_owner,
         MachinePermissions permissions,
         bool user_accessible) noexcept {
         return user_accessible || executable(permissions) ||
-               (writable(permissions) && mapping_owner != reservation_owner);
+               (kind == PhysicalReservationKind::kernel_object &&
+                writable(permissions) && mapping_owner != reservation_owner);
     }
     [[nodiscard]] static constexpr bool overlap(
         std::uint64_t a_base, std::uint64_t a_length,

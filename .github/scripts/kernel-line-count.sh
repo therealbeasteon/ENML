@@ -582,11 +582,27 @@ not_kernel=(
 # the page-table arena - one the kernel's, one a process's - was a
 # combination it had no reason to reject. The 6 entry lines are the boot
 # routine saying which range that is; it is the only code that knows.
+# Raised a twenty-first time, by M7.11's third increment: machine 2,997 ->
+# 3,010, entry 1,105 -> 1,122, total 8,793 -> 8,823. Reservations gain a kind,
+# and boot declares the kernel's writable image (__cookie_data_start..__bss_end)
+# and its stack alongside the page-table arena.
+#
+# 13 machine lines for a second enforcement rule is the ratio this milestone
+# needs to keep, and it is only that cheap because the increment before it put
+# the table there. The 17 entry lines are two more boot declarations and the
+# paragraph explaining why they are the weaker kind - the explanation is not
+# free and should not be, because the reason is a constraint a reader cannot
+# infer: Cookie translates through TTBR0 only, so EL1 executes under whichever
+# process root is installed, and the kernel's globals must stay writable in
+# every space or the kernel stops running the moment a process is scheduled.
+# Owner-write-only becomes available for those ranges when M7.7 splits TTBR1,
+# and the comment says so, so the day that lands nobody has to rediscover why
+# the kind was chosen.
 core_ceiling=3419
-machine_ceiling=2997
+machine_ceiling=3010
 discovery_ceiling=1272
-entry_ceiling=1105
-total_ceiling=8793
+entry_ceiling=1122
+total_ceiling=8823
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
