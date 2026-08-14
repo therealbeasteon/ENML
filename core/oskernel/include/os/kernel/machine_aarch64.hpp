@@ -65,6 +65,29 @@ struct MachineAddressSpace final {
     MachineAddressSpace& space,
     RetiringAddressSpaceEpoch retiring) noexcept;
 
+// Creates an address space after boot: binds a fresh space to a ledger and an
+// as-yet rootless builder, so pages can then be donated to it.
+//
+// Deliberately not one call that also builds the root. It cannot be, and the
+// reason is worth stating because the obvious API is the impossible one: the
+// root is a page, post-boot pages are donated, and donation reserves through a
+// space that must therefore already be bound. Boot does these three in the
+// opposite order only because its arena was filled before anything ran.
+//
+// The sequence is create -> donate at least once -> initialize root -> map ->
+// seal.
+[[nodiscard]] os::core::Result<void> aarch64_create_address_space(
+    MachineAddressSpace& space,
+    MachinePhysicalLedger& ledger,
+    aarch64::EarlyStage1Builder& builder) noexcept;
+
+// Builds the translation root from a donated page. Fails with `exhausted` when
+// nothing has been donated yet, which is a caller error the caller can fix -
+// the point of the no-kernel-heap decision is that this can never be a kernel
+// failure the caller can do nothing about.
+[[nodiscard]] os::core::Result<std::uint64_t> aarch64_initialize_translation_root(
+    MachineAddressSpace& space) noexcept;
+
 // Hands one page a process already holds authority over to `space`, for
 // translation structures.
 //

@@ -87,6 +87,31 @@ os::core::Result<void> aarch64_reserve_physical(
         kind);
 }
 
+os::core::Result<void> aarch64_create_address_space(
+    MachineAddressSpace& space,
+    MachinePhysicalLedger& ledger,
+    aarch64::EarlyStage1Builder& builder) noexcept {
+    auto bound = machine_bind_address_space(space, ledger);
+    if (!bound) return bound.error();
+    auto attached = aarch64_attach_early_stage1(space, builder);
+    if (!attached) {
+        // Leave nothing half-bound. A space holding a ledger but no builder
+        // would pass machine_bind_address_space's already-bound check forever
+        // and could never be created again.
+        space.physical_ledger = nullptr;
+        return attached.error();
+    }
+    return {};
+}
+
+os::core::Result<std::uint64_t> aarch64_initialize_translation_root(
+    MachineAddressSpace& space) noexcept {
+    if (space.early_builder == nullptr || space.physical_ledger == nullptr) {
+        return machine_error(machine_errors::address_space_unbound);
+    }
+    return space.early_builder->initialize();
+}
+
 os::core::Result<void> aarch64_donate_table_page(
     MachineAddressSpace& space,
     aarch64::EarlyPageArena& arena,
