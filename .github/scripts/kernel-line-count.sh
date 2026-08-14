@@ -388,11 +388,24 @@ not_kernel=(
 # ipc_receive already check IPC capabilities, and re-validates fresh on
 # every call rather than caching, so a capability revoked between attach
 # and complete cannot still authorize either.
+# Raised a twelfth time, by M7.9's second increment: entry 838 -> 867,
+# total 7961 -> 7990. cookie_kernel_syscall_entry now decodes and dispatches
+# interrupt_attach/interrupt_detach/interrupt_complete, closing gap 3 of the
+# four docs/M7_9_USER_SPACE_DRIVERS.md named: "interrupt_attach, interrupt_
+# detach and interrupt_complete are reserved in the ABI and unreachable from
+# EL0." The three calls route to the capability-checked Kernel:: methods the
+# first increment added, fail closed on any Result error exactly as the
+# existing send/receive/reply dispatch already does, and return
+# interrupt_complete's must-service-again answer in x0 the way a completed
+# receive already returns its byte count there. No caller exercises this path
+# yet - the driver process that will is the remaining gap, tracked separately
+# - so this diff is reviewable on its own terms: decode and dispatch, matching
+# an already-tested Kernel:: composition, nothing more.
 core_ceiling=3117
 machine_ceiling=2772
 discovery_ceiling=1234
-entry_ceiling=838
-total_ceiling=7961
+entry_ceiling=867
+total_ceiling=7990
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

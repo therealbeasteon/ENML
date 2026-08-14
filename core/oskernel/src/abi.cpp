@@ -38,7 +38,7 @@ inline constexpr std::array<CallDescriptor, 15U> call_table{
     // interrupt_complete does not block: a driver telling the kernel its device
     // is quiet must never be made to wait, or an interrupt storm becomes a
     // livelock in the driver rather than a handled condition.
-    CallDescriptor{KernelCall::interrupt_attach, CallAuthority::interrupt_control, 3U, false},
+    CallDescriptor{KernelCall::interrupt_attach, CallAuthority::interrupt_control, 1U, false},
     CallDescriptor{KernelCall::interrupt_detach, CallAuthority::interrupt_control, 1U, false},
     CallDescriptor{KernelCall::interrupt_complete, CallAuthority::interrupt_control, 1U, false},
 

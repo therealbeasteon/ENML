@@ -425,7 +425,9 @@ extern "C" void cookie_kernel_syscall_entry(
     if (frame == nullptr) halt();
     auto call = os::kernel::decode_call(static_cast<std::uint16_t>(frame->x[8]));
     const auto current = boot_preemption.running();
-    if (!call || call.value().authority != os::kernel::CallAuthority::unprivileged ||
+    if (!call ||
+        (call.value().authority != os::kernel::CallAuthority::unprivileged &&
+         call.value().authority != os::kernel::CallAuthority::interrupt_control) ||
         (current != process_a_thread && current != process_b_thread)) {
         uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
         halt();
@@ -469,6 +471,47 @@ extern "C" void cookie_kernel_syscall_entry(
             uart_write("COOKIE:PANIC:IPC_SWITCH\n");
             halt();
         }
+        return;
+    }
+
+    // Interrupt syscalls carry their one argument - the capability naming the
+    // source - in x0, matching send/receive/reply's own convention of passing
+    // a capability id in the first argument register. No caller in this boot
+    // proof issues these yet (M7.9's end-to-end proof adds one); the decode is
+    // wired ahead of that caller so the two land as independently reviewable
+    // changes, the same order M7.5g's timer delivery and M7.5i's proof of it
+    // landed in.
+    if (call.value().call == os::kernel::KernelCall::interrupt_attach ||
+        call.value().call == os::kernel::KernelCall::interrupt_detach ||
+        call.value().call == os::kernel::KernelCall::interrupt_complete) {
+        const auto source_capability =
+            static_cast<os::kernel::CapabilityId>(frame->x[0]);
+
+        if (call.value().call == os::kernel::KernelCall::interrupt_attach) {
+            if (!boot_kernel.interrupt_attach(current, source_capability)) {
+                uart_write("COOKIE:PANIC:INTERRUPT_ATTACH\n");
+                halt();
+            }
+            return;
+        }
+        if (call.value().call == os::kernel::KernelCall::interrupt_detach) {
+            if (!boot_kernel.interrupt_detach(current, source_capability)) {
+                uart_write("COOKIE:PANIC:INTERRUPT_DETACH\n");
+                halt();
+            }
+            return;
+        }
+
+        // interrupt_complete's result carries whether InterruptTable::
+        // end_service found the source still asserted and needing another
+        // service pass - real information the driver needs, so it goes back
+        // in x0 the same way a completed receive returns its byte count there.
+        auto completed = boot_kernel.interrupt_complete(current, source_capability);
+        if (!completed) {
+            uart_write("COOKIE:PANIC:INTERRUPT_COMPLETE\n");
+            halt();
+        }
+        frame->x[0] = completed.value() ? 1ULL : 0ULL;
         return;
     }
 

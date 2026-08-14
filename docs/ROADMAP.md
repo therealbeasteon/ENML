@@ -25,7 +25,7 @@ Measured on `main` at `ed26bf6`, not claimed:
 | Trusted phone shell and product security (M4) | Through M4.15 merged; **exit criteria not all verified** |
 | Verified boot evidence (M5) | Designed and tested; nothing produces the evidence |
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
-| Cookie Kernel (M7) | Through M7.8 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption**; M7.9 not started |
+| Cookie Kernel (M7) | Through M7.8 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption**; M7.9 underway — capability-gated interrupt attach/detach/complete and syscall-entry decode/dispatch landed, machine-layer device routing and the end-to-end proof remain |
 
 Roughly 49,000 lines of implementation against 29,000 lines of test, both grown
 by the backlog rather than by new work. Zero `TODO`/`FIXME`/`HACK` markers in
@@ -304,17 +304,22 @@ contributor and every future file added to that target. The first is more work
 and removes a class of fault; the second is what exists and is one careless
 `CMakeLists.txt` edit away from returning. No decision has been made.
 
-Then the parts outside the open PR stack. M7.9 is in no form at all — no source,
-no branch, no document; M7.10 is built and enforced by this change:
+Then M7.9, which the roadmap called unstarted for longer than it was true. It
+has a design document now, `docs/M7_9_USER_SPACE_DRIVERS.md`, and two of its
+four named gaps are closed; M7.10 is built and enforced by this change:
 
 - **M7.9 — user-space driver framework.** Interrupt handlers inside driver
   processes, connected to a vector by a kernel call, under M6.0 device access
   policy. This is the piece that makes "no drivers in the kernel" true rather
-  than aspirational.
+  than aspirational. Landed: capability-gated `interrupt_attach`/
+  `interrupt_detach`/`interrupt_complete` at the `Kernel` composition layer,
+  host-tested; `cookie_kernel_syscall_entry` decoding and dispatching all
+  three from EL0. Remaining: machine-layer GICv3 routing for a real device
+  source, and the end-to-end QEMU proof a real driver process gives it.
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 7,961 lines, a ratchet rather than the 605-line
+  ceiling is the measured 7,990 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -346,10 +351,10 @@ cannot be laundered between them:
 | core — privileged portable runtime | 3,117 |
 | machine — the AArch64 port | 2,772 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,234 |
-| entry — reset vector, freestanding memory | 838 |
-| **total** | **7,961** |
+| entry — reset vector, freestanding memory, interrupt syscall decode | 867 |
+| **total** | **7,990** |
 
-`core` is the figure comparable to QNX's 605, and it is 2.1× that. Boot-time
+`core` is the figure comparable to QNX's 605, and it is 5.2× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
 against a firmware-supplied blob, so a defect in it is a defect in the most
 privileged code on the machine, and excluding it would have shed 723 lines by
@@ -437,7 +442,22 @@ thread alone — so a recycled ASID with a fresh generation is a different
 holder even at the same `ThreadId`. The migration is deliberately
 fail-closed: bound capabilities are unusable through the legacy
 `ThreadId`-only IPC path rather than silently losing their generation
-binding, until M7.8.2 adds the explicit `ExecutionAuthority` IPC path. None of it is discretionary — see
+binding, until M7.8.2 adds the explicit `ExecutionAuthority` IPC path. An
+eleventh raise, by M7.9's first increment, closes a gap M6.0 and M7.1 both
+named and deferred: core 3,052 → 3,117, total 7,896 → 7,961.
+`interrupt_attach`, `interrupt_detach` and `interrupt_complete` are now
+capability-checked at the `Kernel` composition layer — `InterruptTable`
+itself is unchanged and still does not consult `CapabilityTable`; the check
+lives beside `ipc_send`/`ipc_receive`'s own, re-validated fresh on every call
+so a capability revoked between attach and complete cannot still authorize
+either. A twelfth raise, by M7.9's second increment, closes a third named
+gap: entry 838 → 867, total 7,961 → 7,990. `cookie_kernel_syscall_entry`
+decodes and dispatches all three interrupt syscalls, failing closed on any
+`Result` error exactly as the existing send/receive/reply dispatch already
+does, and returns `interrupt_complete`'s must-service-again answer in `x0`
+the way a completed receive already returns its byte count there. No caller
+exercises the path yet — the driver process that will is the remaining gap.
+None of it is discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 
@@ -470,8 +490,11 @@ Three of the five are met, one is partially met, one is not. Taken in order:
   met.** The timer half is real: GICv3 timer IRQs are delivered to EL1,
   correctly attributed, and drive the preemption above (M7.5g). The "device
   interrupts to user-space handlers" half — an arbitrary driver process owning
-  its own interrupt line — has no work item behind it yet, because that is
-  M7.9's job and M7.9 does not exist: no source, no branch, no document.
+  its own interrupt line — is landed at the capability and syscall layers
+  (`docs/M7_9_USER_SPACE_DRIVERS.md`: capability-gated attach/detach/complete,
+  and `cookie_kernel_syscall_entry` decoding all three) but not yet proven end
+  to end. Machine-layer GICv3 routing for a real device source and a QEMU
+  boot proof with a real driver process remain.
 - *Passes the full EMNL wire-format and capability fuzz corpus* — **not met,
   and not currently measurable.** `fuzz/` gained an `ipc/` target during this
   stack, but it fuzzes `os::ipc` — the service-layer RPC decoder used over the
@@ -483,8 +506,8 @@ Three of the five are met, one is partially met, one is not. Taken in order:
   small enough to review completely applies with more force, not less, to the
   part that parses untrusted syscall arguments from unprivileged EL0 code.
 - *Reports a trusted line count under the declared ceiling* — **met**, and has
-  been since M7.10 landed. The ceiling moved ten times across this stack —
-  once per milestone plus one defect fix — each raise landing in the same diff
+  been since M7.10 landed. The ceiling moved twelve times across this stack —
+  once per milestone plus two defect fixes — each raise landing in the same diff
   as the lines it covers, with the justification recorded in
   `.github/scripts/kernel-line-count.sh` and restated in
   `docs/M7_10_LINE_COUNT.md`. The gate has never gone more than one commit
@@ -638,6 +661,7 @@ The rest is unchanged and should be read more cautiously for it. Phase 1's code
 is merged and none of its exit criteria are met, which is a different kind of
 remaining work from integration — closing the Storage seam, paying or cutting
 the coercion-resistance debt, and building a network path that the admission
-policy can govern. Phase 2's remaining stack is written and awaiting
-integration; M7.9 and M7.10 are not written at all. Phase 3 onward is genuine
-new engineering.
+policy can govern. Phase 2's M7.5e–M7.8 stack is landed; M7.10 is built and
+enforced; M7.9 is underway with two of its four named gaps closed and two
+remaining — machine-layer device routing and the end-to-end proof. Phase 3
+onward is genuine new engineering.

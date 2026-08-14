@@ -27,8 +27,8 @@ so that lines cannot be moved between categories to get under a ceiling:
 | core | 3,117 | 3,117 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the ABI |
 | machine | 2,772 | 2,772 | The AArch64 port and the `machine.hpp` contract it satisfies |
 | discovery | 1,234 | 1,234 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, architected timer discovery, boot memory planning |
-| entry | 838 | 838 | Reset vector, freestanding memory primitives, the boot routine |
-| **total** | **7,961** | **7,961** | |
+| entry | 867 | 867 | Reset vector, freestanding memory primitives, the boot routine, syscall-entry decode/dispatch of the three interrupt calls |
+| **total** | **7,990** | **7,990** | |
 
 `core` is the number comparable to QNX's 605. The others are trusted but are not
 what that figure described.
@@ -79,12 +79,12 @@ to permit it are one reviewable diff instead of a drift nobody voted for.
 The script prints this on every run, pass or fail, so the distance stays visible
 rather than becoming something the project stopped mentioning:
 
-- `core` is **2.1x** the QNX microkernel. It must shed **675 lines** to reach 605.
-- The whole trusted image is **7,961 lines**, against 15,930 for the entire QNX
+- `core` is **5.2x** the QNX microkernel. It must shed **2,512 lines** to reach 605.
+- The whole trusted image is **7,990 lines**, against 15,930 for the entire QNX
   operating system including filesystem, device manager, networking and drivers.
 
 The second comparison is the uncomfortable one and it is the honest one. Cookie
-currently spends a fifth of an entire operating system's budget on a kernel that
+currently spends half of an entire operating system's budget on a kernel that
 does four things, cannot mount anything, and has no drivers. Some of that is
 real: Cookie's kernel carries capability transfer, which QNX's does not, and it
 is written in C++ with explicit bounds and typed results rather than in terse C.
