@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include <os/core/result.hpp>
+#include <os/kernel/capability.hpp>
 #include <os/kernel/rendezvous.hpp>
 
 // The Cookie Kernel's interrupt dispatch core, as a state machine.
@@ -85,6 +86,25 @@ inline constexpr std::size_t max_interrupt_sources = 64U;
 using InterruptSource = std::uint32_t;
 inline constexpr InterruptSource invalid_interrupt_source = 0U;
 
+// A capability minted with the wrong object tag must never be mistaken for
+// authority over a source, even if the numeric ordinal happens to collide -
+// the same reasoning ipc_object_tag documents for IPC endpoints.
+inline constexpr ObjectId interrupt_object_tag = 0x1EC0'0000'0000'0000ULL;
+inline constexpr ObjectId interrupt_object_tag_mask = 0xFFFF'0000'0000'0000ULL;
+
+[[nodiscard]] constexpr ObjectId interrupt_object_id(InterruptSource source) noexcept {
+    if (source == invalid_interrupt_source) return invalid_object;
+    return interrupt_object_tag | static_cast<ObjectId>(source);
+}
+
+// One right, because there is one operation a capability over a source
+// authorizes: owning it. Not modeled after ipc_right_send/ipc_right_receive's
+// two-sided split - IPC has a sender and a receiver with genuinely different
+// authority; a source has exactly one owner doing exactly one kind of thing
+// to it, and a second right would be a distinction with no operation behind
+// it.
+inline constexpr Rights interrupt_right_attach = 1U << 0U;
+
 namespace interrupt_errors {
 inline constexpr std::uint32_t invalid_source = 1U;
 inline constexpr std::uint32_t invalid_driver = 2U;
@@ -97,6 +117,16 @@ inline constexpr std::uint32_t source_limit = 6U;
 inline constexpr std::uint32_t not_pending = 7U;
 // Ending service on a source that is not being serviced.
 inline constexpr std::uint32_t not_in_service = 8U;
+// The capability-check codes below belong to the Kernel composition layer
+// (interrupt_attach/interrupt_detach/interrupt_complete), not to
+// InterruptTable itself, which never sees a capability - see the composition
+// note above. They live here rather than in a new namespace because they are
+// still about interrupt authority, the same way ipc_errors carries both
+// IPC-specific codes and the capability-check codes IpcEndpointTable's own
+// composition surface returns.
+inline constexpr std::uint32_t invalid_capability = 9U;
+inline constexpr std::uint32_t wrong_rights = 10U;
+inline constexpr std::uint32_t wrong_object = 11U;
 } // namespace interrupt_errors
 
 enum class InterruptState : std::uint8_t {

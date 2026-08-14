@@ -3,6 +3,51 @@
 #include <os/core/error.hpp>
 
 namespace os::kernel {
+namespace {
+
+[[nodiscard]] constexpr os::core::Error interrupt_error(std::uint32_t code) noexcept {
+    return os::core::make_error(os::core::ErrorDomain::kernel, code);
+}
+
+// The one check all three interrupt syscalls share: the capability is held
+// by this thread right now (fresh, not cached - a capability revoked between
+// attach and complete must not still authorize complete), names a source
+// object rather than some other kind of object, and carries the one right
+// that exists. InterruptTable never sees this - it is checked here, at the
+// same composition layer ipc_send/ipc_receive check IPC capabilities at, per
+// the separation docs/M7_1_INTERRUPT.md documents.
+[[nodiscard]] os::core::Result<InterruptSource> interrupt_source_for_capability(
+    ThreadId driver,
+    CapabilityId source_capability,
+    const CapabilityTable& capabilities) noexcept {
+    if (driver == invalid_thread || source_capability == invalid_capability) {
+        return interrupt_error(interrupt_errors::invalid_capability);
+    }
+    // The legacy ThreadId-only path. It must fail closed for an M7.8
+    // context-bound capability rather than comparing only the reusable
+    // numeric holder - the same rule endpoint_for_capability enforces for
+    // IPC, for the same reason: holds() already refuses a context-bound slot
+    // here, so a recycled ThreadId cannot inherit a bound driver's standing.
+    if (!capabilities.holds(driver, source_capability)) {
+        return interrupt_error(interrupt_errors::invalid_capability);
+    }
+    auto description = capabilities.describe(source_capability);
+    if (!description) return description.error();
+    if ((description.value().rights & interrupt_right_attach) == 0U) {
+        return interrupt_error(interrupt_errors::wrong_rights);
+    }
+    if ((description.value().object & interrupt_object_tag_mask) != interrupt_object_tag) {
+        return interrupt_error(interrupt_errors::wrong_object);
+    }
+    const auto source = static_cast<InterruptSource>(
+        description.value().object & ~interrupt_object_tag_mask);
+    if (source == invalid_interrupt_source) {
+        return interrupt_error(interrupt_errors::wrong_object);
+    }
+    return source;
+}
+
+} // namespace
 
 bool Kernel::tracks(ThreadId thread) const noexcept {
     for (std::size_t i = 0U; i < live_count_; ++i) {
@@ -238,6 +283,27 @@ os::core::Result<void> Kernel::ipc_cancel_receive_continuation(ThreadId server) 
                                     rendezvous_errors::unknown_thread);
     }
     return ipc_continuations_.cancel_receive(server);
+}
+
+os::core::Result<void> Kernel::interrupt_attach(
+    ThreadId driver, CapabilityId source_capability) noexcept {
+    auto source = interrupt_source_for_capability(driver, source_capability, capabilities_);
+    if (!source) return source.error();
+    return interrupts_.attach(driver, source.value());
+}
+
+os::core::Result<void> Kernel::interrupt_detach(
+    ThreadId driver, CapabilityId source_capability) noexcept {
+    auto source = interrupt_source_for_capability(driver, source_capability, capabilities_);
+    if (!source) return source.error();
+    return interrupts_.detach(driver, source.value());
+}
+
+os::core::Result<bool> Kernel::interrupt_complete(
+    ThreadId driver, CapabilityId source_capability) noexcept {
+    auto source = interrupt_source_for_capability(driver, source_capability, capabilities_);
+    if (!source) return source.error();
+    return interrupts_.end_service(driver, source.value());
 }
 
 os::core::Result<Dispatch> Kernel::dispatch_interrupt(InterruptSource source) noexcept {

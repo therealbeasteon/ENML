@@ -153,6 +153,80 @@ int main() {
         if (!check(masked && masked.value(), "the source was not masked on dispatch")) return 1;
     }
 
+    // M7.9: interrupt_attach/detach/complete are capability-checked at this
+    // composition layer, since InterruptTable itself never sees a capability.
+    // A driver with the right capability may attach, service and detach; the
+    // wrong object, a missing right, or a capability revoked mid-flight are
+    // each refused before InterruptTable is ever consulted.
+    {
+        os::kernel::Kernel kernel;
+        (void)kernel.create_thread(alice);
+        (void)kernel.create_thread(bob);
+
+        auto right_cap = kernel.capabilities().mint(
+            alice, os::kernel::interrupt_object_id(line),
+            os::kernel::interrupt_right_attach, false);
+        if (!check(static_cast<bool>(right_cap), "mint refused")) return 1;
+
+        // Wrong object: a capability that names some other object entirely.
+        auto wrong_object_cap = kernel.capabilities().mint(alice, object, 0xFFU, false);
+        if (!check(static_cast<bool>(wrong_object_cap), "mint refused")) return 1;
+        if (!check(!static_cast<bool>(kernel.interrupt_attach(alice, wrong_object_cap.value())),
+                   "a capability naming the wrong object attached")) return 1;
+
+        // Missing right: a capability over the right object, but no attach right.
+        auto no_rights_cap = kernel.capabilities().mint(
+            alice, os::kernel::interrupt_object_id(line), 0U, false);
+        if (!check(static_cast<bool>(no_rights_cap), "mint refused")) return 1;
+        if (!check(!static_cast<bool>(kernel.interrupt_attach(alice, no_rights_cap.value())),
+                   "a capability with no rights attached")) return 1;
+
+        // Someone else's capability: bob cannot exercise alice's.
+        if (!check(!static_cast<bool>(kernel.interrupt_attach(bob, right_cap.value())),
+                   "a non-holder attached through another thread's capability")) return 1;
+
+        // The correct capability attaches, and the source is really owned.
+        if (!check(static_cast<bool>(kernel.interrupt_attach(alice, right_cap.value())),
+                   "a correct capability was refused")) return 1;
+        auto owner = kernel.interrupts().owner_of(line);
+        if (!check(owner && owner.value() == alice, "the source has the wrong owner")) return 1;
+
+        // A second attach through the same capability is refused - the source
+        // is already attached, and InterruptTable's own state machine (not
+        // this layer) is what says so.
+        if (!check(!static_cast<bool>(kernel.interrupt_attach(alice, right_cap.value())),
+                   "a source was attached twice")) return 1;
+
+        // Complete with nothing outstanding is refused by InterruptTable, not
+        // silently accepted by the capability layer above it.
+        if (!check(!static_cast<bool>(kernel.interrupt_complete(alice, right_cap.value())),
+                   "completed a source with nothing outstanding")) return 1;
+
+        // A capability revoked mid-flight must not still authorize detach -
+        // no caching, the same rule IPC's endpoint_for_capability keeps.
+        (void)kernel.capabilities().revoke(alice, right_cap.value());
+        if (!check(!static_cast<bool>(kernel.interrupt_detach(alice, right_cap.value())),
+                   "a revoked capability still authorized detach")) return 1;
+        owner = kernel.interrupts().owner_of(line);
+        if (!check(owner && owner.value() == alice,
+                   "the source was released without a valid capability")) return 1;
+
+        // Only thread death releases it now - detach_all_owned_by, exercised
+        // through destroy_thread, is the fail-closed path for exactly this.
+        const auto teardown = kernel.destroy_thread(alice);
+        if (!check(static_cast<bool>(teardown), "destroy refused")) return 1;
+        if (!check(teardown.value().interrupt_sources_released == 1U,
+                   "the orphaned source was not released on death")) return 1;
+
+        // A fresh capability over the same source lets a new driver attach.
+        auto fresh_cap = kernel.capabilities().mint(
+            bob, os::kernel::interrupt_object_id(line),
+            os::kernel::interrupt_right_attach, false);
+        if (!check(static_cast<bool>(fresh_cap), "mint refused")) return 1;
+        if (!check(static_cast<bool>(kernel.interrupt_attach(bob, fresh_cap.value())),
+                   "a fresh capability could not attach after release")) return 1;
+    }
+
     // Yield goes through the scheduler and forfeits the remainder, and a thread
     // the kernel does not know cannot yield.
     {
