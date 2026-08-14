@@ -27,8 +27,8 @@ so that lines cannot be moved between categories to get under a ceiling:
 | core | 3,223 | 3,223 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, begin_service delivery to the woken driver, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the ABI |
 | machine | 2,821 | 2,821 | The AArch64 port and the `machine.hpp` contract it satisfies, including GICv3 device-PPI mask/unmask and interrupt-delivery completion on resume |
 | discovery | 1,272 | 1,272 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, architected timer discovery (physical and virtual PPIs), boot memory planning |
-| entry | 945 | 945 | Reset vector, freestanding memory primitives, the boot routine, syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the M7.9 end-to-end driver proof |
-| **total** | **8,261** | **8,261** | |
+| entry | 951 | 951 | Reset vector, freestanding memory primitives, the boot routine, syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the M7.9 end-to-end driver proof |
+| **total** | **8,267** | **8,267** | |
 
 `core` is the number comparable to QNX's 605. The others are trusted but are not
 what that figure described.
@@ -80,7 +80,7 @@ The script prints this on every run, pass or fail, so the distance stays visible
 rather than becoming something the project stopped mentioning:
 
 - `core` is **5.3x** the QNX microkernel. It must shed **2,618 lines** to reach 605.
-- The whole trusted image is **8,261 lines**, against 15,930 for the entire QNX
+- The whole trusted image is **8,267 lines**, against 15,930 for the entire QNX
   operating system including filesystem, device manager, networking and drivers.
 
 The second comparison is the uncomfortable one and it is the honest one. Cookie

@@ -334,7 +334,7 @@ change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 8,261 lines, a ratchet rather than the 605-line
+  ceiling is the measured 8,267 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -366,8 +366,8 @@ cannot be laundered between them:
 | core — privileged portable runtime | 3,223 |
 | machine — the AArch64 port | 2,821 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
-| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof | 945 |
-| **total** | **8,261** |
+| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof | 951 |
+| **total** | **8,267** |
 
 `core` is the figure comparable to QNX's 605, and it is 5.2× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -507,8 +507,8 @@ and a driver that also does IPC would otherwise collide with.
 `complete_after_switch` in `aarch64_boot.cpp` now calls both completions on
 every switch (entry). Found and closed before M7.9's own boot proof tried to
 use `interrupt_complete` and could not have. A fifteenth raise, by M7.9's
-fourth and last increment, closes the final named gap: entry 896 → 945, total
-8,212 → 8,261. `kernel-arm64-native` now gates on `COOKIE:M7.9:ATTACHED` →
+fourth and last increment, closes the final named gap: entry 896 → 951, total
+8,212 → 8,267. `kernel-arm64-native` now gates on `COOKIE:M7.9:ATTACHED` →
 `..:DISPATCHED` → `..:SERVICED` → `..:COMPLETED`. Process A - reused after
 its M7.6a role concludes rather than a third address space - attaches to a
 capability minted at boot, arms the reused virtual-timer PPI as the stand-in

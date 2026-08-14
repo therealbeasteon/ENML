@@ -417,6 +417,20 @@ void arm_stand_in_device_source(std::uint64_t nanoseconds) noexcept {
     asm volatile("isb" ::: "memory");
 }
 
+// Disables the comparator arm_stand_in_device_source armed. A level-triggered
+// line stays asserted for as long as its condition holds, and a comparator's
+// condition ("counter has passed the deadline") never clears itself the way a
+// real device's would once serviced - CNTV_CTL_EL0.ISTATUS stays set forever
+// after the deadline passes, so leaving ENABLE set would re-assert the line
+// the instant gic_v3_set_ppi_masked unmasks it, indefinitely. Real hardware
+// does not need this: this function exists only because a comparator is
+// standing in for one.
+void disarm_stand_in_device_source() noexcept {
+    const std::uint64_t disable = 0ULL;
+    asm volatile("msr cntv_ctl_el0, %0" :: "r"(disable) : "memory");
+    asm volatile("isb" ::: "memory");
+}
+
 [[nodiscard]] bool commit_result(
     const os::kernel::aarch64::PreemptionResult& result,
     std::uint64_t now_nanoseconds) noexcept {
@@ -758,6 +772,14 @@ extern "C" void cookie_aarch64_irq_dispatch(
         // process A's redirected resume (see interrupt_attach_entry_virtual
         // and complete_after_switch), which also arms the stand-in device
         // that raises this line - see arm_stand_in_device_source.
+        //
+        // Disarmed immediately, before dispatch: this comparator's condition
+        // never clears itself the way a real device's would once serviced -
+        // see disarm_stand_in_device_source - so without this the line would
+        // reassert the instant it is unmasked, indefinitely. A real device
+        // source needs no equivalent step here; this exists only because a
+        // comparator is standing in for one.
+        disarm_stand_in_device_source();
         auto dispatched = boot_kernel.dispatch_interrupt(boot_device_interrupt_source);
         if (!dispatched) {
             uart_write("COOKIE:PANIC:INTERRUPT_DISPATCH\n");
