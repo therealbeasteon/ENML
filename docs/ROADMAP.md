@@ -293,16 +293,76 @@ image is therefore compiled `-mstrict-align`, which
 `core/oskernel/CMakeLists.txt` documents as a requirement rather than a
 hardening preference.
 
-That leaves an open design question, and it should be decided rather than
-inherited: **shorten the window, or keep compiling for it.** Shortening means
-mapping a minimal identity region and enabling translation before the device
-tree is parsed, so that FDT reading, hardware discovery and boot memory planning
-all run on Normal memory with the alignment rules the compiler assumes. Keeping
-it means the current arrangement, where correctness in the largest and most
-data-driven part of boot rests on a compiler flag holding for every future
-contributor and every future file added to that target. The first is more work
-and removes a class of fault; the second is what exists and is one careless
-`CMakeLists.txt` edit away from returning. No decision has been made.
+That left an open design question: **shorten the window, or keep compiling for
+it.** It is decided now, closing M7.10's own line-count raise for the change:
+shortened.
+
+`cookie_aarch64_boot_main` builds and activates a second, minimal identity map
+before `FdtView::parse` runs, then activates the real, fully discovered map
+over it exactly as before — so FDT reading, hardware discovery and boot
+memory planning all run on Normal memory with the alignment rules the
+compiler assumes, and `-mstrict-align` stops being the thing correctness
+rests on for that code. What made shortening cheap rather than merely
+possible is a capability the reference implementations this hazard was
+checked against — TF-A, Linux's `head.S` — do not have at their equivalent
+point: they map a conservative fixed window, generous enough to cover a
+device tree they have not yet measured, because they have no cheaper option
+that early. Cookie already had one. `bounded_dtb`'s header read — four
+individual byte loads through `read_be32`, alignment-safe by construction
+where a struct-based parse is not — was already computing the DTB's *exact*
+physical extent before this change, to size the `ByteSpan` handed to
+`FdtView::parse`. The minimal map reuses that exact extent instead of a
+ceiling: it maps precisely the kernel's own image, by segment (so
+`.text`/`.rodata`/`.data`+`.bss` keep the same RX/R/RW split the real map
+gives them), and precisely the DTB's measured bytes. Nothing wider, because
+nothing wider was ever needed to answer this question — only unmeasured.
+
+The two identity maps' page tables come from independent arenas — the
+minimal map cannot use `plan.value().page_tables`, which is itself a product
+of the boot memory plan the map exists to run before — and each gets its own
+`MachinePhysicalLedger`. Sharing one was tried first and is wrong: the two
+maps genuinely disagree about permissions on the same physical memory, since
+each process's code page is writable in the early map (the boot routine
+installs a program into it) and read-execute in the real one (the process
+runs it). A shared ledger classifies that pair as a
+`writable_executable_alias` and refuses it — correctly, on the information a
+ledger has. The maps are sequential rather than concurrent and the early one
+is abandoned before any of that memory becomes executable, but that is a
+fact about boot order which no cross-space check can see. Separating the
+ledgers states the boundary rather than weakening the check.
+
+`activate_stage1_translation` runs twice as a result, once for each map —
+confirmed safe to call a second time before relying on it: it unconditionally
+reprograms `MAIR_EL1`/`TCR_EL1`/`TTBR0_EL1` and re-invalidates the TLB
+rather than assuming anything about prior state, and both maps identity-map
+the currently-executing kernel image identically, so nothing the CPU is
+using moves under it.
+
+**"Minimal" is also the hazard, and this is the part worth reading before
+touching this code.** From the first activation until the real map replaces
+it, the minimal map *is* the entire address space. Under the old arrangement
+translation was off, so any physical address the boot routine discovered was
+addressable the moment it was known; now it is addressable only if something
+mapped it. Every region chosen out of discovered RAM therefore has to be
+added as it becomes known — `extend_early_identity_map` does this for the
+page-table region, the four process pages, and the console. The console is
+the one that matters most: the first version of this change omitted it, and
+the resulting Data Abort vectored to a handler whose own `uart_write` took
+the same abort, so the machine looped in the vector printing nothing. A
+missing mapping here does not corrupt anything, but it can destroy the
+ability to report that it happened, which is the failure mode this whole
+section of the boot path is built to avoid.
+
+`-mstrict-align` stays, and `core/oskernel/CMakeLists.txt` keeps documenting
+it as a requirement. Shortening the window did not eliminate it: `_start`,
+`install_exception_vectors`, `bounded_dtb` and the map construction itself
+all still execute before the first activation, and that code is now the
+window rather than most of boot. The flag is what protects the remainder. It
+is a much smaller thing to depend on than it was — a fixed prologue of
+link-time-known work, not the largest and most data-driven part of boot —
+which is the actual result of this change: the dependency is bounded, not
+removed. Removing the flag would be a separate decision needing its own
+evidence, and this change does not make it.
 
 Then M7.9, which the roadmap called unstarted for longer than it was true and
 is now done. It has a design document, `docs/M7_9_USER_SPACE_DRIVERS.md`, and
