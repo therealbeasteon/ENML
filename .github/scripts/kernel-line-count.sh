@@ -771,8 +771,37 @@ not_kernel=(
 core_ceiling=3605
 machine_ceiling=3191
 discovery_ceiling=1272
-entry_ceiling=1133
-total_ceiling=9201
+#
+# Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry
+# 1,133 -> 1,148, total 9,201 -> 9,216. kernel-arm64-native failed once with
+# COOKIE:PANIC:UNIVERSE_MARKER and passed on a bare re-run, which is the worst
+# shape a gate can have here - this job is the only thing that actually boots
+# the kernel, so a failure cured by re-running teaches everyone to re-run, and
+# makes a real boot regression indistinguishable from noise.
+#
+# The race was real and in the proof, not the kernel. B is first entered by
+# frame restore from inside the timer handler, and that handler arms the next
+# deadline before returning, so the timer can assert again between the ERET
+# into B and the retirement of B's first instruction - the movz that sets its
+# universe marker. In that window B is running with x19 still holding the zero
+# from its admitted frame, and the check fails on a kernel behaving correctly.
+# Closed by establishing B's marker in the admitted frame, so it holds from
+# instruction zero.
+#
+# A deliberately keeps its old arrangement: its marker is load-bearing in two
+# syscall-path gates that exist to prove A's own movz executed and survived
+# two round trips, and seeding it would make both vacuous. A needs no seed
+# because nothing arms a deadline before its first instruction, which the EL0
+# start already asserts.
+#
+# Most of the 15 lines are the diagnostic. The first occurrence printed the
+# panic name and nothing else, so working out which of the three disjuncts
+# could even fire took a reading of the entire proof. It now reports which one
+# failed and with what values, on the same argument the M7.11 fault decoder
+# was justified on: the evidence exists at the moment of failure and costs
+# nothing to print, and reconstructing it afterwards costs hours.
+entry_ceiling=1148
+total_ceiling=9216
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

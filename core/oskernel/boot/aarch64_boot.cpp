@@ -954,7 +954,28 @@ extern "C" void cookie_aarch64_irq_dispatch(
     if ((running == process_a_thread && frame->x[19] != process_a_marker) ||
         (running == process_b_thread && frame->x[19] != process_b_marker) ||
         (running != process_a_thread && running != process_b_thread)) {
-        uart_write("COOKIE:PANIC:UNIVERSE_MARKER\n");
+        // Say which of the three ways this failed, and with what values. The
+        // first occurrence of this panic reported the name and nothing else,
+        // and identifying it as a first-instruction race in B cost a reading
+        // of the whole proof to work out which disjunct could even fire. The
+        // three are not one bug: a wrong marker means register state did not
+        // survive a switch, and an unexpected thread means the scheduler
+        // resumed something this proof never admitted.
+        uart_write("COOKIE:PANIC:UNIVERSE_MARKER");
+        if (running != process_a_thread && running != process_b_thread) {
+            uart_write(":UNEXPECTED_THREAD");
+        } else {
+            uart_write(running == process_a_thread ? ":A" : ":B");
+            uart_write(" want=");
+            uart_write_hex(running == process_a_thread ? process_a_marker : process_b_marker);
+        }
+        uart_write(" thread=");
+        uart_write_hex(static_cast<std::uint64_t>(running));
+        uart_write(" x19=");
+        uart_write_hex(frame->x[19]);
+        uart_write(" elr=");
+        uart_write_hex(frame->elr_el1);
+        uart_write("\n");
         halt();
     }
 
@@ -1457,6 +1478,35 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     initial_a.sp_el0 = user_stack_virtual + page_size;
     initial_a.spsr_el1 = 0x340ULL;
     os::kernel::aarch64::ExceptionFrame initial_b = initial_a;
+
+    // B's universe marker is established here, before B has run an
+    // instruction, rather than only by the movz at word 0 of its program.
+    //
+    // This closes a real race that made kernel-arm64-native fail
+    // intermittently with COOKIE:PANIC:UNIVERSE_MARKER and pass on a bare
+    // re-run. B is first entered by frame restore from inside the timer
+    // handler, and that same handler arms the next deadline before it
+    // returns - so the timer can assert again between the ERET into B and
+    // the retirement of B's first instruction. In that window B is the
+    // running thread with x19 still holding the zero its admitted frame
+    // carried, and the marker check below fails on a kernel that is working
+    // exactly as intended.
+    //
+    // A deliberately does not get the same treatment. Its marker is
+    // load-bearing twice in the syscall path above - the yield-3 gate and
+    // the contention gate both require frame->x[19] to equal it - and those
+    // checks exist to prove A's own movz executed and survived two syscall
+    // round trips. Seeding A here would make both vacuous. A needs no seed
+    // anyway: nothing arms a deadline before its first instruction, which is
+    // asserted at the EL0 start below (start.value().deadline.active must be
+    // false), so A's pre-marker window is unreachable by a timer.
+    //
+    // B's own movz stays. It is now a re-assertion rather than the first
+    // write, and nothing gates on B having executed it - the isolation this
+    // proves is that a switch keeps the two threads' x19 distinct, which is
+    // a property of the saved frames and is tested exactly as before.
+    initial_b.x[19] = process_b_marker;
+
     if (!boot_preemption.admit_frame(process_a_thread, initial_a) ||
         !boot_preemption.admit_frame(process_b_thread, initial_b)) fail("ADMIT_FRAME");
 
