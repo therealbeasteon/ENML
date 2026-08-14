@@ -69,12 +69,23 @@ it back. There is no free. Its header says the rest plainly - intermediate
 table pages "are not reclaimed until the general physical allocator owns
 page-table lifetime." That allocator is this milestone.
 
-**There is no address-space destruction.** `machine_release_address_space`
-returns `machine_errors::unsupported`, with a comment recording why: "Bulk
-release waits until the scheduler/process lifetime layer can prove no CPU is
-executing in this space." That layer now exists - `PreemptionCoordinator` knows
-what is running and the epoch authority can retire a generation. The blocker
-named in that comment has been removed and the function has not been revisited.
+**Address-space destruction: half done.** `aarch64_release_address_space` now
+unmaps every mapping through the ordinary `machine_unmap` path, drops the
+space's reservations, retires the ASID and unbinds - leaving the
+`MachineAddressSpace` rebindable, which is what makes reuse possible at all.
+
+`machine_release_address_space` deliberately still returns
+`machine_errors::unsupported`, and the reason changed from "not written" to a
+statement about the contract: bulk release is safe only once no CPU can be
+executing in the space, and that signature takes the space and nothing else, so
+it cannot carry the proof. The typed entry point takes a
+`RetiringAddressSpaceEpoch` - `begin_retire()` has already invalidated the
+software epoch, so no thread can be scheduled into the space. Cookie is
+single-CPU today and this is the interface shape that stays correct when it is
+not, because the caller establishes the property rather than the machine layer
+guessing it locally.
+
+**Creation after boot is still missing**, and it is the remaining half.
 
 **There is no fault path.** `cookie_aarch64_unhandled_exception` prints
 `COOKIE:PANIC:EXCEPTION` and halts. It does not read `ESR_EL1` or `FAR_EL1`. A

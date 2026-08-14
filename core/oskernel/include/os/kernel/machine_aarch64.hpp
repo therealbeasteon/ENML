@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include <os/kernel/aarch64_mapping_state.hpp>
+#include <os/kernel/address_space_epoch.hpp>
 #include <os/kernel/machine.hpp>
 
 namespace os::kernel {
@@ -43,6 +44,26 @@ struct MachineAddressSpace final {
     std::uintptr_t physical_base,
     std::size_t length,
     aarch64::PhysicalReservationKind kind) noexcept;
+
+// Bulk teardown of a space whose epoch has already begun retiring.
+//
+// The retiring token is the evidence, and taking it is the whole reason this
+// exists beside machine_release_address_space rather than inside it.
+// begin_retire() has already invalidated the software epoch, so
+// ProcessTranslationTable::resolve can no longer produce a binding and no
+// thread can be scheduled into this space. The portable signature in
+// machine.hpp takes only the space, and therefore cannot express that
+// precondition at all - it asks the machine layer to prove a property from an
+// argument that does not carry it.
+//
+// Unmaps every mapping through the ordinary TLBI-backed path, drops the
+// space's reservations, retires the ASID, and unbinds. Cookie is single-CPU
+// today; the token is what makes this interface still correct when it is not,
+// because "no CPU is executing here" becomes a fact the caller establishes
+// rather than one this function could ever check locally.
+[[nodiscard]] os::core::Result<void> aarch64_release_address_space(
+    MachineAddressSpace& space,
+    RetiringAddressSpaceEpoch retiring) noexcept;
 
 [[nodiscard]] os::core::Result<void> aarch64_map_user(
     MachineAddressSpace& space,

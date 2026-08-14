@@ -280,6 +280,69 @@ public:
         return {};
     }
 
+    // Teardown, in the three steps the hardware forces rather than one call.
+    //
+    // A space is released by repeatedly asking for a mapping, removing it
+    // through the ordinary machine_unmap path - descriptor clear, TLBI, ledger
+    // retirement - and asking again. That is deliberately slower than walking
+    // the table directly and it is the point: bulk teardown that reimplements
+    // unmapping is a second place for the break-before-make ordering to be got
+    // wrong, and the M7.5e justification for that ordering says a stale TLB
+    // entry after an unmap is a use-after-free with hardware caching it.
+    [[nodiscard]] os::core::Result<NativeMapping> any_mapping() const noexcept {
+        if (ledger_ == nullptr || builder_ == nullptr) {
+            return error(machine_errors::address_space_unbound);
+        }
+        for (const auto& mapping : mappings_) {
+            if (mapping.occupied) return mapping;
+        }
+        return error(machine_errors::not_mapped);
+    }
+
+    // Drops the reservations this space owns. Separate from unbind() because a
+    // reservation outlives the mappings of the range it covers: the page-table
+    // arena is reserved before anything maps it and must stay reserved until
+    // the last translation of it is gone, or a teardown in progress would open
+    // a window where the range is briefly mappable from EL0.
+    [[nodiscard]] os::core::Result<void> release_reservations() noexcept {
+        if (ledger_ == nullptr) return error(machine_errors::address_space_unbound);
+        for (auto& entry : ledger_->reservations) {
+            if (!entry.occupied || entry.owner != this) continue;
+            entry = NativePhysicalReservation{};
+            --ledger_->reserved;
+        }
+        return {};
+    }
+
+    // Final step. Refuses while anything this space owns is still recorded,
+    // because an unbound space cannot be asked about later: the ledger entries
+    // would keep an owner pointer to a state object nobody consults again, and
+    // a future map of that physical range would find a W^X peer that no longer
+    // exists. Fail closed instead of leaking authority.
+    [[nodiscard]] os::core::Result<void> unbind() noexcept {
+        if (ledger_ == nullptr || builder_ == nullptr) {
+            return error(machine_errors::address_space_unbound);
+        }
+        if (occupied_ != 0U) return error(machine_errors::mapping_ledger_inconsistent);
+        for (const auto& entry : ledger_->mappings) {
+            if (entry.occupied && entry.owner == this) {
+                return error(machine_errors::mapping_ledger_inconsistent);
+            }
+        }
+        for (const auto& entry : ledger_->reservations) {
+            if (entry.occupied && entry.owner == this) {
+                return error(machine_errors::mapping_ledger_inconsistent);
+            }
+        }
+        ledger_ = nullptr;
+        builder_ = nullptr;
+        return {};
+    }
+
+    [[nodiscard]] bool bound() const noexcept {
+        return ledger_ != nullptr && builder_ != nullptr;
+    }
+
     [[nodiscard]] std::size_t mapping_count() const noexcept { return occupied_; }
 
 private:
