@@ -25,10 +25,10 @@ so that lines cannot be moved between categories to get under a ceiling:
 | Category | Lines | Ceiling | What it is |
 | --- | --- | --- | --- |
 | core | 3,419 | 3,419 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, begin_service delivery to the woken driver, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), context-bound IPC endpoint authorization and generation-checked reply collection, deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the ABI |
-| machine | 2,821 | 2,821 | The AArch64 port and the `machine.hpp` contract it satisfies, including GICv3 device-PPI mask/unmask and interrupt-delivery completion on resume |
+| machine | 2,920 | 2,920 | The AArch64 port and the `machine.hpp` contract it satisfies, including GICv3 device-PPI mask/unmask, interrupt-delivery completion on resume, and synchronous-fault classification (abort class, fault status, translation level) |
 | discovery | 1,272 | 1,272 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, architected timer discovery (physical and virtual PPIs), boot memory planning |
-| entry | 1,044 | 1,044 | Reset vector, freestanding memory primitives, the boot routine (including the minimal pre-discovery identity map that closes "the pre-MMU window," below), syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the M7.9 end-to-end driver proof |
-| **total** | **8,556** | **8,556** | |
+| entry | 1,099 | 1,099 | Reset vector, freestanding memory primitives, the boot routine (including the minimal pre-discovery identity map that closes "the pre-MMU window," below), syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the decoded fault reporter, the M7.9 end-to-end driver proof |
+| **total** | **8,710** | **8,710** | |
 
 `core` is the number comparable to QNX's 605. The others are trusted but are not
 what that figure described.
@@ -80,7 +80,7 @@ The script prints this on every run, pass or fail, so the distance stays visible
 rather than becoming something the project stopped mentioning:
 
 - `core` is **5.7x** the QNX microkernel. It must shed **2,814 lines** to reach 605.
-- The whole trusted image is **8,556 lines**, against 15,930 for the entire QNX
+- The whole trusted image is **8,710 lines**, against 15,930 for the entire QNX
   operating system including filesystem, device manager, networking and drivers.
 
 The second comparison is the uncomfortable one and it is the honest one. Cookie

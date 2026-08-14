@@ -188,6 +188,16 @@ void uart_write(std::string_view text) noexcept {
     for (char c : text) uart_write_char(c);
 }
 
+// Fixed 16 digits, no "0x" and no leading-zero suppression. A fault report is
+// read by grep and by eye under time pressure, and a fixed width means two
+// addresses can be compared by looking at them.
+void uart_write_hex(std::uint64_t value) noexcept {
+    for (int shift = 60; shift >= 0; shift -= 4) {
+        const auto digit = static_cast<unsigned>((value >> shift) & 0xFULL);
+        uart_write_char(static_cast<char>(digit < 10U ? '0' + digit : 'a' + (digit - 10U)));
+    }
+}
+
 // Early boot has roughly forty ways to stop and, until this existed, one
 // observable outcome for all of them: a silent WFE loop that CI could only
 // report as a timeout. The stage name costs a string literal and turns "the
@@ -618,6 +628,62 @@ void disarm_stand_in_device_source() noexcept {
 
 extern "C" [[noreturn]] void cookie_aarch64_unhandled_exception() noexcept {
     uart_write("COOKIE:PANIC:EXCEPTION\n");
+    halt();
+}
+
+extern "C" [[noreturn]] void cookie_aarch64_unhandled_fault(
+    const os::kernel::aarch64::ExceptionFrame* frame) noexcept {
+    if (frame == nullptr) cookie_aarch64_unhandled_exception();
+    using os::kernel::aarch64::AbortCause;
+    using os::kernel::aarch64::FaultKind;
+    const auto fault = os::kernel::aarch64::describe_fault(frame->esr_el1);
+
+    uart_write("COOKIE:PANIC:FAULT:");
+    switch (fault.kind) {
+    case FaultKind::data_abort: uart_write("DATA_ABORT"); break;
+    case FaultKind::instruction_abort: uart_write("INSN_ABORT"); break;
+    case FaultKind::pc_alignment: uart_write("PC_ALIGN"); break;
+    case FaultKind::sp_alignment: uart_write("SP_ALIGN"); break;
+    case FaultKind::illegal_state: uart_write("ILLEGAL_STATE"); break;
+    case FaultKind::simd_trap: uart_write("SIMD_TRAP"); break;
+    case FaultKind::serror: uart_write("SERROR"); break;
+    case FaultKind::unknown: uart_write("UNKNOWN"); break;
+    }
+
+    if (fault.kind == FaultKind::data_abort || fault.kind == FaultKind::instruction_abort) {
+        uart_write(":");
+        switch (fault.cause) {
+        case AbortCause::address_size: uart_write("ADDR_SIZE"); break;
+        case AbortCause::translation: uart_write("TRANSLATION"); break;
+        case AbortCause::access_flag: uart_write("ACCESS_FLAG"); break;
+        case AbortCause::permission: uart_write("PERMISSION"); break;
+        case AbortCause::external: uart_write("EXTERNAL"); break;
+        case AbortCause::alignment: uart_write("ALIGNMENT"); break;
+        case AbortCause::tlb_conflict: uart_write("TLB_CONFLICT"); break;
+        case AbortCause::unknown: uart_write("UNKNOWN"); break;
+        }
+        if (fault.level_meaningful()) {
+            uart_write(":L");
+            uart_write_char(static_cast<char>('0' + fault.level));
+        }
+        if (fault.kind == FaultKind::data_abort) {
+            uart_write(fault.write ? ":WRITE" : ":READ");
+        }
+    }
+    uart_write(fault.from_lower_el ? ":EL0" : ":EL1");
+
+    // FAR only when the syndrome says it holds the faulting address. Printing
+    // it unconditionally would put a stale register value next to a fault that
+    // did not set it, which is worse than printing nothing.
+    if (fault.far_valid) {
+        uart_write(" far=");
+        uart_write_hex(frame->far_el1);
+    }
+    uart_write(" elr=");
+    uart_write_hex(frame->elr_el1);
+    uart_write(" esr=");
+    uart_write_hex(frame->esr_el1);
+    uart_write("\n");
     halt();
 }
 

@@ -539,11 +539,28 @@ not_kernel=(
 # process pages and the console. The console omission is why this was caught:
 # the Data Abort vectored to a handler whose own uart_write took the same
 # abort, and the machine looped in the vector reporting nothing at all.
+# Raised a nineteenth time, by M7.11's first increment: machine 2,821 ->
+# 2,920, entry 1,044 -> 1,099, total 8,556 -> 8,710. The kernel had one word
+# for every synchronous exception that was not a system call - "EXCEPTION" -
+# despite ExceptionFrame having carried esr_el1 and far_el1 since M7.5b and
+# nothing ever reading them. describe_fault (machine) classifies the abort
+# classes, the fault-status encodings and their translation-table level, and
+# cookie_aarch64_unhandled_fault (entry) reports kind, cause, level,
+# read/write, originating EL, and FAR/ELR/ESR. The decoder is pure and
+# host-tested against hand-built syndromes, which matters more here than
+# elsewhere: it is the code least exercised by a working system and most
+# expensive to have wrong, since it only runs once something else already
+# failed. Justified by its own cost during the pre-MMU window work in the
+# same week - a level-3 translation fault on a write to an unmapped console
+# presented as "COOKIE:PANIC:EXCEPTION", and recovering the address it had
+# been holding all along took a QEMU instruction trace and several hours.
+# M7.11 replaces the halt with delivery to a userland pager; this
+# classification is what it will deliver, so the lines are not spent twice.
 core_ceiling=3419
-machine_ceiling=2821
+machine_ceiling=2920
 discovery_ceiling=1272
-entry_ceiling=1044
-total_ceiling=8556
+entry_ceiling=1099
+total_ceiling=8710
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
