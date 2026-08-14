@@ -32,7 +32,7 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     const auto x2 = read_u64(data, size, 16U);
 
     (void)os::kernel::decode_ipc_send_syscall(x0, x1, x2);
-    (void)os::kernel::decode_ipc_receive_syscall(x0, x1);
+    (void)os::kernel::decode_ipc_receive_syscall(x0, x1, x2);
     (void)os::kernel::decode_ipc_reply_syscall(x0, x1, x2);
     return 0;
 }

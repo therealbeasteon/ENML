@@ -612,11 +612,23 @@ not_kernel=(
 # Owner-write-only becomes available for those ranges when M7.7 splits TTBR1,
 # and the comment says so, so the day that lands nobody has to rediscover why
 # the kind was chosen.
-core_ceiling=3419
-machine_ceiling=3010
+# Raised a twenty-second time, by the bounded-receive ABI: core 3,419 ->
+# 3,427, machine 3,010 -> 3,015, total 8,823 -> 8,836. KernelCall::receive
+# gains a relative nanosecond deadline in x2, and the AArch64 path refuses a
+# non-zero one until the timer wiring exists.
+#
+# The 5 machine lines are that refusal, and they are the point of the change
+# rather than an incidental cost. docs/M7_2_SERVER_LOOP.md establishes that no
+# Cookie service main loop can be written on an unbounded-only receive, so the
+# register contract had to be fixed early - a register contract is the
+# expensive thing to change once callers exist. Accepting a deadline and
+# ignoring it would have been free and much worse: a caller that asked for a
+# bound and silently did not get one waits forever believing it will not.
+core_ceiling=3427
+machine_ceiling=3015
 discovery_ceiling=1272
 entry_ceiling=1122
-total_ceiling=8823
+total_ceiling=8836
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

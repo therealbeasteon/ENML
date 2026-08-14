@@ -110,16 +110,39 @@ blocking.
 a message, but not past this deadline", so a service cannot bound its own wait
 and a non-blocking check cannot be written at all.
 
-This is the next increment, and it is small: the scheduler already has deadline
-authority from M7.5h (`scheduler_deadline.hpp`, `machine_set_timer`), so the
-mechanism exists and needs an ABI surface rather than an implementation. Two
-constraints on its design, recorded before it is written:
+The scheduler already has deadline authority from M7.5h
+(`scheduler_deadline.hpp`, `machine_set_timer`), so the mechanism exists and
+needs an ABI surface rather than an implementation. Two constraints on its
+design, recorded before it was written:
 
 - **A deadline is not a timer object.** It is an argument to receive, not a
   kernel object a caller creates — same reason there is no wait set.
-- **Expiry must be indistinguishable from an empty queue.** A caller learns its
-  deadline passed. It must not learn anything about who *else* was queued or
-  nearly ready in the meantime.
+- **Expiry must reveal only that the deadline passed** — never anything about
+  who else was queued, how many senders were waiting, or how nearly a message
+  arrived. *(Corrected: this constraint was first written as "expiry must be
+  indistinguishable from an empty queue", which is not achievable and not the
+  point. A caller that gets control back after asking for a bound necessarily
+  learns the bound expired. What must not leak is the state of other senders.)*
+
+### Landed: the register contract
+
+`KernelCall::receive` now takes a **relative nanosecond deadline in x2**, zero
+meaning no deadline. Relative rather than absolute so the caller needs no clock —
+no time syscall to add and no shared time page to trust. Zero means unbounded
+because that is what every existing caller already passes, so the boot proof and
+the existing EL0 program are unaffected by the ABI change.
+
+There is deliberately **no zero-wait encoding**. A cheap "check without
+blocking" primitive exists to drive busy-poll loops, and in the one-endpoint
+model above a server has no reason to need one.
+
+**The AArch64 path refuses a non-zero deadline** with
+`ipc_syscall_errors::deadline_unsupported` until the timer wiring lands.
+Accepting a deadline and ignoring it would have cost nothing and been far worse:
+a caller that asked for a bound and silently did not get one blocks forever
+believing it will not. The register contract is fixed now because that is the
+expensive part to change once callers exist; honouring it is the next
+increment.
 
 ## Order after this
 

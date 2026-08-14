@@ -103,12 +103,28 @@ int main() {
                        7U, 0x1000U, os::kernel::max_ipc_inline_bytes + 1U),
                    "oversized IPC send accepted")) return 1;
 
-        auto receive = os::kernel::decode_ipc_receive_syscall(9U, 0x2000U);
+        auto receive = os::kernel::decode_ipc_receive_syscall(9U, 0x2000U, 0U);
         if (!check(static_cast<bool>(receive), "valid IPC receive registers rejected")) return 1;
-        if (!check(!os::kernel::decode_ipc_receive_syscall(0U, 0x2000U),
+        if (!check(!receive.value().bounded(),
+                   "zero deadline treated as bounded")) return 1;
+        if (!check(!os::kernel::decode_ipc_receive_syscall(0U, 0x2000U, 0U),
                    "zero IPC receive capability accepted")) return 1;
-        if (!check(!os::kernel::decode_ipc_receive_syscall(9U, 0U),
+        if (!check(!os::kernel::decode_ipc_receive_syscall(9U, 0U, 0U),
                    "null IPC receive frame accepted")) return 1;
+
+        // Every non-zero register value is a legal relative deadline. There is
+        // no negative timeout and no absolute value already in the past, so the
+        // decoder has nothing to reject - including the extremes, which a
+        // hostile caller will try first.
+        auto bounded = os::kernel::decode_ipc_receive_syscall(9U, 0x2000U, 1U);
+        if (!check(static_cast<bool>(bounded), "1ns deadline rejected")) return 1;
+        if (!check(bounded.value().bounded(), "1ns deadline not bounded")) return 1;
+        if (!check(bounded.value().deadline_nanoseconds == 1U,
+                   "deadline not carried through decode")) return 1;
+        auto huge = os::kernel::decode_ipc_receive_syscall(
+            9U, 0x2000U, UINT64_MAX);
+        if (!check(static_cast<bool>(huge), "maximal deadline rejected")) return 1;
+        if (!check(huge.value().bounded(), "maximal deadline not bounded")) return 1;
 
         auto reply = os::kernel::decode_ipc_reply_syscall(11U, 0x3000U, 64U);
         if (!check(static_cast<bool>(reply), "valid IPC reply registers rejected")) return 1;
