@@ -74,6 +74,16 @@ os::core::Result<void> aarch64_attach_early_stage1(
     return {};
 }
 
+os::core::Result<void> aarch64_reserve_kernel_object(
+    MachineAddressSpace& space,
+    std::uintptr_t physical_base,
+    std::size_t length) noexcept {
+    if (space.early_builder == nullptr) return machine_error(machine_errors::address_space_unbound);
+    return space.mappings.reserve_kernel_object(
+        static_cast<std::uint64_t>(physical_base),
+        static_cast<std::uint64_t>(length));
+}
+
 os::core::Result<void> aarch64_map_user(
     MachineAddressSpace& space,
     std::uintptr_t virtual_base,

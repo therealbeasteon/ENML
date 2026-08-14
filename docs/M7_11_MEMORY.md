@@ -1,10 +1,21 @@
 # M7.11 - Memory as a first-class object
 
-**Status: design.** No code yet. `docs/ROADMAP.md` added this milestone
-(Phase 2b) after a gap review found virtual memory absent from the phase list
-rather than deferred within it. This document makes the decisions that have to
-be made before any of it is written, because the central one - whether the
-kernel allocates - cannot be revisited once subsystems depend on the answer.
+**Status: in progress.** `docs/ROADMAP.md` added this milestone (Phase 2b)
+after a gap review found virtual memory absent from the phase list rather than
+deferred within it. This document makes the decisions that have to be made
+before any of it is written, because the central one - whether the kernel
+allocates - cannot be revisited once subsystems depend on the answer.
+
+Landed so far, each in its own reviewable diff:
+
+1. **The fault is described rather than announced.** `describe_fault` decodes
+   `ESR_EL1`/`FAR_EL1` into abort class, fault status, translation-table level
+   and read-vs-write; `cookie_aarch64_unhandled_fault` reports it. The
+   classification is what the fault path below delivers to a pager - only the
+   destination changes.
+2. **The ledger knows which physical ranges hold kernel state.** Piece 1 below,
+   partially: reservations, their three rules, and boot declaring the
+   page-table arena. Grant, split and reclaim are not written yet.
 
 Cookie's kernel today can create address spaces exactly once, at boot, from a
 plan computed before any process exists. Everything M7 built on top of that -
@@ -143,6 +154,40 @@ discovery code already enumerates usable RAM and already excludes the protected
 ranges. The first process to hold authority over all unreserved memory is
 whatever Phase 3's init becomes; until then the boot routine holds it.
 
+**Landed:** the reservation half. `NativePhysicalReservation` records a physical
+range that holds kernel state and the address space that owns it, and every
+`map_impl` consults it: no EL0 translation of the range at all, no executable
+one, and no writable one from a space that does not own it. Boot declares the
+page-table arena through `aarch64_reserve_kernel_object` after the builders
+attach and before the first mapping is drawn from it.
+
+Two things about the shape are worth recording, because both were decisions
+rather than defaults.
+
+*The rule is stated once.* `forbidden_by_reservation` is shared by the map-time
+check and the reserve-time re-check, which ask the same question from opposite
+ends: at map time the reservation exists and the mapping is proposed, at reserve
+time the mapping exists and the reservation is. Two copies of that predicate
+would be two chances to disagree about what a reservation forbids.
+
+*Declaring is not retroactive blessing.* `reserve_kernel_object` re-checks every
+live mapping of the range and refuses if any of them is one it would have
+rejected. Boot declares before it maps and so never exercises this, which is
+exactly why it is written down: a reservation that silently accepted an existing
+EL0 mapping would report protection it does not have.
+
+**Not landed:** grant, split and reclaim, and the owner being a process rather
+than an address space. The reservation table is a fixed 16 entries, which is
+enough for boot and is not a structure a running system creates spaces in - the
+same open question the flat 256-entry mapping array already has, and it should
+be answered for both at once rather than twice.
+
+The invariant this closes was already named in the threat model below and was
+genuinely absent from the code: the pre-existing cross-space check answers only
+whether two mappings disagree about W^X, so *two writable* translations of the
+page-table arena - one the kernel's, one a process's - was a combination it had
+no reason to reject.
+
 ### 2. Address-space lifecycle
 
 Create, map, unmap, destroy, as capability-gated calls rather than boot-routine
@@ -191,8 +236,11 @@ ends the line-count claim.
   the fact is a rewrite.
 - **Page-table memory must never be writable by the process whose translation
   it controls.** A process that can write its own page tables has no address
-  space. The ledger's existing cross-space check does not currently express
-  this, and must.
+  space. ~~The ledger's existing cross-space check does not currently express
+  this, and must.~~ **Closed** by the reservation table in piece 1, which goes
+  further than the wording here asked for: no EL0 translation of a reserved
+  range at all, writable or not, because one that can *read* the page tables
+  learns the physical layout of every other process.
 - **A fault handler is an attack surface reached without a syscall.** Same
   category as M7.9's interrupt delivery, and it inherits the same rule: the
   capability check happens before any user code is made runnable.
@@ -223,6 +271,18 @@ most likely to break it. Two responses are possible and the choice is not made:
 accept the raise and record the new distance honestly, or treat the ceiling as
 binding and spend the milestone finding what to remove. **This should be
 decided before the code is written, not after the gate goes red.**
+
+Still open, but no longer without evidence. Two increments have landed and
+`core` has not moved at all: the fault decoder went to `machine` and `entry`,
+and physical memory authority went to `machine` as a field and two loops on a
+structure the kernel already walks. Total is 8,793, up 1.0% across both. That
+is a real data point and it is not proof - the two pieces that will actually
+press on `core` are address-space lifecycle and delivering faults to a userland
+pager, and neither is written. What it does suggest is which answer is
+available: if each piece can land as an extension of an existing enforcement
+point rather than as a new object graph beside it, the ceiling may be closer to
+binding-without-pain than the paragraph above assumed. That is a reason to keep
+choosing that shape deliberately, not a reason to consider the question settled.
 
 **Whether page-table pages need reference counts.** Intermediate tables are
 shared by construction. Refcounting them is the obvious answer and it is also

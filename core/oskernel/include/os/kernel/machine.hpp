@@ -24,6 +24,11 @@ inline constexpr std::uint32_t not_a_kernel_stack = 9U;
 inline constexpr std::uint32_t address_space_unbound = 10U;
 inline constexpr std::uint32_t address_space_already_bound = 11U;
 inline constexpr std::uint32_t mapping_ledger_inconsistent = 12U;
+// A translation of physical memory that holds kernel state. Distinct from
+// writable_executable_alias because the question is different: that one asks
+// whether two mappings disagree about W^X, this one asks whether the range is
+// the kernel's to begin with.
+inline constexpr std::uint32_t kernel_object_alias = 13U;
 } // namespace machine_errors
 
 enum class MachinePermissions : std::uint8_t {
