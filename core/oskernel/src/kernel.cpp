@@ -191,6 +191,25 @@ os::core::Result<IpcReceived> Kernel::ipc_receive(
     return received;
 }
 
+os::core::Result<void> Kernel::ipc_send(
+    ExecutionAuthority caller,
+    CapabilityId endpoint_capability,
+    IpcEnvelope request) noexcept {
+    auto sent = ipc_.send(caller, endpoint_capability, capabilities_, threads_, request);
+    if (!sent) return sent;
+    synchronise();
+    return {};
+}
+
+os::core::Result<IpcReceived> Kernel::ipc_receive(
+    ExecutionAuthority server,
+    CapabilityId endpoint_capability) noexcept {
+    auto received = ipc_.receive(server, endpoint_capability, capabilities_, threads_);
+    if (!received) return received;
+    synchronise_pair(server.thread, received.value().caller);
+    return received;
+}
+
 os::core::Result<void> Kernel::ipc_reply(
     ThreadId server,
     const IpcReplySeal& seal,

@@ -7,6 +7,7 @@
 
 #include <os/core/result.hpp>
 #include <os/kernel/capability.hpp>
+#include <os/kernel/execution_authority.hpp>
 #include <os/kernel/rendezvous.hpp>
 
 namespace os::kernel {
@@ -129,6 +130,32 @@ public:
         const CapabilityTable& capabilities,
         Rendezvous& rendezvous) noexcept;
 
+    // M7.8.2, first increment: context-bound endpoint authorization. A
+    // capability minted via CapabilityTable::mint(ExecutionAuthority, ...)
+    // was previously unusable for IPC at all - the legacy overloads above
+    // fail closed for it by design, on purpose, rather than silently
+    // checking only the reusable ThreadId. These are its usable path.
+    //
+    // What this does not yet do: pending calls, reply seals and completed
+    // replies below are still recorded and looked up by bare ThreadId, not
+    // by ExecutionAuthority. A capability check happens here, at send/
+    // receive; nothing yet re-checks that the caller collecting a reply, or
+    // the server completing one, is still the same address-space generation
+    // that the transaction was established under. That is M7.8.2's
+    // remaining gap, not this one - see docs/ROADMAP.md.
+    [[nodiscard]] os::core::Result<void> send(
+        ExecutionAuthority caller,
+        CapabilityId endpoint_capability,
+        const CapabilityTable& capabilities,
+        Rendezvous& rendezvous,
+        IpcEnvelope request = {}) noexcept;
+
+    [[nodiscard]] os::core::Result<IpcReceived> receive(
+        ExecutionAuthority server,
+        CapabilityId endpoint_capability,
+        const CapabilityTable& capabilities,
+        Rendezvous& rendezvous) noexcept;
+
     [[nodiscard]] os::core::Result<void> reply(
         ThreadId server,
         const IpcReplySeal& seal,
@@ -179,6 +206,25 @@ private:
         CapabilityId capability,
         Rights required,
         const CapabilityTable& capabilities) const noexcept;
+    [[nodiscard]] os::core::Result<IpcEndpoint> endpoint_for_capability(
+        ExecutionAuthority holder,
+        CapabilityId capability,
+        Rights required,
+        const CapabilityTable& capabilities) const noexcept;
+    // The mechanics past capability authorization, shared by both the
+    // ThreadId and ExecutionAuthority public overloads so the rendezvous/
+    // pending-slot/reply-seal logic exists exactly once. Takes an endpoint
+    // already resolved by whichever endpoint_for_capability overload the
+    // caller used.
+    [[nodiscard]] os::core::Result<void> send_to_endpoint(
+        ThreadId caller,
+        IpcEndpoint endpoint,
+        Rendezvous& rendezvous,
+        IpcEnvelope request) noexcept;
+    [[nodiscard]] os::core::Result<IpcReceived> receive_from_endpoint(
+        ThreadId server,
+        IpcEndpoint endpoint,
+        Rendezvous& rendezvous) noexcept;
     [[nodiscard]] EndpointSlot* slot_for(IpcEndpoint endpoint) noexcept;
     [[nodiscard]] const EndpointSlot* slot_for(IpcEndpoint endpoint) const noexcept;
     [[nodiscard]] ReplySlot* reply_slot(const IpcReplySeal& seal) noexcept;

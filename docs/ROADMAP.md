@@ -334,7 +334,7 @@ change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 8,267 lines, a ratchet rather than the 605-line
+  ceiling is the measured 8,371 lines, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -363,11 +363,11 @@ cannot be laundered between them:
 
 | Category | Lines |
 | --- | --- |
-| core — privileged portable runtime | 3,223 |
+| core — privileged portable runtime | 3,327 |
 | machine — the AArch64 port | 2,821 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
 | entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof | 951 |
-| **total** | **8,267** |
+| **total** | **8,371** |
 
 `core` is the figure comparable to QNX's 605, and it is 5.2× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -528,7 +528,23 @@ rather than a polling loop the driver's own program would have to run. None
 of the new entry points needed anything baked into their own bytes beyond a
 bare `svc` - the same shape word 8's send redirect already proved - so
 nothing in this increment required an instruction pattern this tree had not
-already run under CI. None of it is discretionary — see
+already run under CI. A sixteenth raise, by M7.8.2's first increment, closes
+part of a gap `ipc_endpoint.hpp`'s own comment already named: core
+3,223 → 3,327, total 8,267 → 8,371. A capability minted via
+`CapabilityTable::mint(ExecutionAuthority, ...)` could be described and
+revoked but never actually used to send or receive - the ThreadId-only IPC
+path fails closed for it by design, and nothing existed on the other side of
+that failure. `IpcEndpointTable::send`/`receive` gain `ExecutionAuthority`
+overloads, sharing the rendezvous/pending-slot/reply-seal mechanics with the
+existing `ThreadId` overloads through two new private helpers rather than
+duplicating them, and `Kernel::ipc_send`/`ipc_receive` gain matching
+overloads so the new path is reachable from the same composition layer
+M7.9's `interrupt_attach` already lives at. Partial, and documented as such
+in the same diff: pending calls, reply seals and completed replies are still
+recorded and looked up by bare `ThreadId`, so a capability check happens at
+send/receive but nothing yet re-checks that the caller collecting a reply is
+still the generation the transaction was established under - M7.8.2's
+remaining gap, not this raise's. None of it is discretionary — see
 `.github/scripts/kernel-line-count.sh` for the full justification recorded
 beside each raise.
 
@@ -600,7 +616,7 @@ Taken in order:
   (`fuzz-nightly.yml`), the same discipline every other target in the
   directory already gets.
 - *Reports a trusted line count under the declared ceiling* — **met**, and has
-  been since M7.10 landed. The ceiling moved fifteen times across this stack —
+  been since M7.10 landed. The ceiling moved sixteen times across this stack —
   once per milestone plus three defect fixes — each raise landing in the same diff
   as the lines it covers, with the justification recorded in
   `.github/scripts/kernel-line-count.sh` and restated in

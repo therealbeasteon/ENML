@@ -466,11 +466,29 @@ not_kernel=(
 # that budget in a loop, not the single clean cycle the proof claims. Found by
 # reading the actual CI log rather than trusting the green check - it repeated
 # DISPATCHED/SERVICED/COMPLETED many times instead of once. Closes M7.9.
-core_ceiling=3223
+# Raised a sixteenth time, by M7.8.2's first increment: core 3,223 -> 3,327,
+# total 8,267 -> 8,371. ipc_endpoint.hpp's own comment already named the gap:
+# "the ThreadId-only path must fail closed for an M7.8 context-bound
+# capability... Context-bound IPC gets its own ExecutionAuthority path in
+# M7.8.2; until then a bound capability is intentionally unusable here." A
+# capability minted via CapabilityTable::mint(ExecutionAuthority, ...) could
+# be described and revoked but never actually used to send or receive -
+# IpcEndpointTable::send/receive gain ExecutionAuthority overloads, sharing
+# the rendezvous/pending-slot/reply-seal mechanics with the existing
+# ThreadId overloads through two new private helpers (send_to_endpoint/
+# receive_from_endpoint) rather than duplicating them, and Kernel::ipc_send/
+# ipc_receive gain matching overloads so the new path is reachable from the
+# same composition layer M7.9's interrupt_attach already lives at. Partial,
+# and documented as such in the same diff: pending calls, reply seals and
+# completed replies are still recorded and looked up by bare ThreadId, so a
+# capability check happens at send/receive but nothing yet re-checks that
+# the caller collecting a reply is still the generation the transaction was
+# established under. That is M7.8.2's remaining gap, not this raise's.
+core_ceiling=3327
 machine_ceiling=2821
 discovery_ceiling=1272
 entry_ceiling=951
-total_ceiling=8267
+total_ceiling=8371
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
