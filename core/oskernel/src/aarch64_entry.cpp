@@ -25,8 +25,15 @@ bool install_exception_vectors() noexcept {
 
 extern "C" void cookie_aarch64_current_sync_exception_dispatch(
     os::kernel::aarch64::ExceptionFrame* frame) noexcept {
-    if (frame == nullptr || !os::kernel::aarch64::recover_user_copy_fault(*frame)) {
+    if (frame == nullptr) {
         cookie_aarch64_unhandled_exception();
+    }
+    if (!os::kernel::aarch64::recover_user_copy_fault(*frame)) {
+        // A kernel-mode fault that no armed guard claimed. Reported with its
+        // syndrome rather than as a bare halt: this is the case where the
+        // faulting address is the entire diagnosis, and it is also the case
+        // with no user process to blame.
+        cookie_aarch64_unhandled_fault(frame);
     }
 }
 
@@ -37,7 +44,7 @@ extern "C" void cookie_aarch64_sync_exception_dispatch(
     }
     const auto syndrome = os::kernel::aarch64::decode_exception_syndrome(frame->esr_el1);
     if (!os::kernel::aarch64::valid_cookie_svc(syndrome)) {
-        cookie_aarch64_unhandled_exception();
+        cookie_aarch64_unhandled_fault(frame);
     }
     cookie_kernel_syscall_entry(frame);
 }
