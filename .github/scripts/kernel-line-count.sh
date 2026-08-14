@@ -445,11 +445,32 @@ not_kernel=(
 # otherwise collide with (machine). complete_after_switch in aarch64_boot.cpp
 # now calls both completions on every switch (entry). Found and closed before
 # M7.9's own boot proof tried to use interrupt_complete and could not have.
+# Raised a fifteenth time, by M7.9's fourth increment: entry 896 -> 951,
+# total 8,212 -> 8,267. The last of the four gaps docs/M7_9_USER_SPACE_DRIVERS.md
+# named: kernel-arm64-native now gates on COOKIE:M7.9:ATTACHED, ..:DISPATCHED,
+# ..:SERVICED and ..:COMPLETED, in that order, proving the whole chain under
+# QEMU the way M7.5i proved two-process preemption. Process A - reused after
+# its M7.6a role concludes, not a third address space - attaches to a real
+# capability minted at boot, arms the reused virtual-timer PPI as the stand-in
+# device it just attached to, and is redirected by complete_after_switch into
+# calling interrupt_complete the instant a delivery arrives, the same
+# elr_el1-rewrite technique the send/receive redirects already use rather
+# than a polling loop, so no code new to this proof needed anything beyond the
+# instruction patterns M7.5f-M7.6a already proved under CI. Includes
+# disarm_stand_in_device_source (+6 over the first version of this raise): a
+# software comparator's condition does not self-clear the way a real device's
+# would once serviced, so the first version of this proof left the reused PPI
+# armed and it kept reasserting the instant interrupt_complete unmasked it -
+# not a CI failure (the four markers still appeared, in order, before the
+# 12-second QEMU budget ran out) but an interrupt storm burning the rest of
+# that budget in a loop, not the single clean cycle the proof claims. Found by
+# reading the actual CI log rather than trusting the green check - it repeated
+# DISPATCHED/SERVICED/COMPLETED many times instead of once. Closes M7.9.
 core_ceiling=3223
 machine_ceiling=2821
 discovery_ceiling=1272
-entry_ceiling=896
-total_ceiling=8212
+entry_ceiling=951
+total_ceiling=8267
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
