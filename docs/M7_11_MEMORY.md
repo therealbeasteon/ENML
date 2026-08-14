@@ -247,6 +247,20 @@ to a userland pager over the IPC machinery M7.6a/M7.8 already built - the same
 capability-checked, generation-bound path a driver's interrupt delivery takes.
 The kernel decides *what happened*; it does not decide what to do about it.
 
+**Amended: the pager is never told the faulting address.** Taken literally, the
+paragraph above builds a controlled-channel attack into the design - a userland
+pager that sees faulting addresses and can revoke access to be told again
+recovers a process's secret-dependent control flow, which is the published
+result against SGX enclaves at exactly this granularity. Cookie's pager is a
+userland service and therefore untrusted by construction, so this is not a
+hypothetical mis-trust; it is the default arrangement.
+
+`docs/M7_11_FAULT_PRIVACY.md` is the decision and `FaultRegionTable` is the
+mechanism: a pager learns *which declared region* needs backing, once per
+lifecycle transition, and holds no unmap authority with which to ask again.
+Regions declared `sealed` are never reported at all. What the kernel decides is
+unchanged; what it is willing to *say* is now a separate, deliberate question.
+
 An unresolvable fault - no pager, or a pager that refuses - kills the faulting
 thread, using `destroy_thread`'s existing teardown. It does not halt the
 machine. The current behaviour, halting, is correct only while there is nothing
@@ -282,6 +296,10 @@ ends the line-count claim.
 - **A fault handler is an attack surface reached without a syscall.** Same
   category as M7.9's interrupt delivery, and it inherits the same rule: the
   capability check happens before any user code is made runnable.
+- **A fault report is itself a disclosure.** The pager is untrusted, so what the
+  kernel tells it about a fault is a channel and must be budgeted like one. See
+  `docs/M7_11_FAULT_PRIVACY.md`; the rule it adds is that a secret must never
+  influence which page faults.
 
 ## Exit criteria
 
