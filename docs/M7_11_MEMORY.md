@@ -20,13 +20,31 @@ Landed so far, each in its own reviewable diff:
    `__cookie_data_start..__bss_end` and the kernel stack - under a second
    reservation kind that constrains writers less because TTBR0-only translation
    forces it to. See "Two kinds, and why" under piece 1.
+4. **An address space can be released.** `aarch64_release_address_space` unmaps
+   every mapping through the ordinary `machine_unmap` path, drops the space's
+   reservations, retires the ASID and unbinds, leaving the `MachineAddressSpace`
+   rebindable. The untyped `machine_release_address_space` still refuses, and
+   the reason is now a statement about its contract rather than about missing
+   work - see "Address-space destruction" below.
+5. **Page-table pages can be donated**, which is where post-boot pages come from
+   at all. `aarch64_donate_table_page` reserves the page as `kernel_object`
+   before donating it, so the reservation rules refuse a donor that has not
+   unmapped its own page first.
+6. **An address space can be created after boot**, in the order the circular
+   dependency permits rather than the one the design implied: create, donate,
+   initialize root, map, seal. See "Creation works" below.
+7. **A capability can name one lifetime of a space.** `address_space_object_id`
+   folds the generation into the object id, so a reference held across a
+   destroy-and-recreate stops resolving on its own, with the ordinary
+   not-found error rather than a distinguishing one. Decoders for calls 7 and 8
+   exist; nothing dispatches them yet.
 
-Cookie's kernel today can create address spaces exactly once, at boot, from a
-plan computed before any process exists. Everything M7 built on top of that -
-epochs, capabilities, IPC, interrupts, preemption - is real and tested. The
-memory underneath it is not: it is a boot artifact that no running code can
-change. This milestone is where that stops being true, and it is the largest
-single addition the kernel will take.
+Cookie's kernel could, until item 6, create address spaces exactly once, at
+boot, from a plan computed before any process existed. Everything M7 built on
+top of that - epochs, capabilities, IPC, interrupts, preemption - is real and
+tested. The memory underneath it was not: it was a boot artifact that no
+running code could change. This milestone is where that stops being true, and
+it is the largest single addition the kernel will take.
 
 ## What already exists
 
@@ -126,11 +144,16 @@ primitives, not yet a capability-checked syscall, and nothing mints an
 `AddressSpaceEpoch` for a space created this way. Both are needed before a
 process rather than the boot routine can create one.
 
-**There is no fault path.** `cookie_aarch64_unhandled_exception` prints
-`COOKIE:PANIC:EXCEPTION` and halts. It does not read `ESR_EL1` or `FAR_EL1`. A
-translation fault is not a question the kernel can answer; it is the end of the
-machine. Demand paging, stack growth, copy-on-write and guard-page reporting
-all require that to change, and so does any useful diagnosis of a driver bug.
+**The fault is described but not yet answerable.** This entry used to read
+"there is no fault path," and half of it is now false: `describe_fault` decodes
+`ESR_EL1`/`FAR_EL1` into abort class, fault status, translation level and
+read-vs-write, and `cookie_aarch64_unhandled_fault` reports all of it. What is
+still true is the part that matters most - the kernel can say precisely what
+happened and can still do nothing about it, because a fault is reported and
+then halts. Demand paging, stack growth, copy-on-write and guard-page recovery
+need the description delivered to a userland pager over the IPC path, and need
+an unresolvable fault to kill the faulting thread rather than the machine.
+Neither exists.
 
 **Address-space state is fixed-size and small.** `max_native_mappings` is 64
 per space and `max_native_physical_mappings` is 256 globally, as
