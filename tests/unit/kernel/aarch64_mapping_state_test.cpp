@@ -137,7 +137,8 @@ int main() {
     // Physical memory authority: a range that holds kernel state.
     // ---------------------------------------------------------------------
     constexpr std::uint64_t tables_pa = 0x0000'0000'8300'0000ULL;
-    require(static_cast<bool>(space_a.reserve_kernel_object(tables_pa, 2ULL * 4096ULL)));
+    require(static_cast<bool>(space_a.reserve_physical(
+        tables_pa, 2ULL * 4096ULL, PhysicalReservationKind::kernel_object)));
     require(ledger.reserved == 1U);
 
     // The owner writes it - this is the kernel editing its own tables, and the
@@ -187,7 +188,8 @@ int main() {
 
     // Overlapping reservations are a disagreement about who owns a range, so
     // the second one loses rather than silently narrowing the first.
-    auto overlapping = space_b.reserve_kernel_object(tables_pa + 4096ULL, 4096ULL);
+    auto overlapping = space_b.reserve_physical(
+        tables_pa + 4096ULL, 4096ULL, PhysicalReservationKind::kernel_object);
     require(!overlapping);
     require(overlapping.error().code == machine_errors::already_mapped);
     require(ledger.reserved == 1U);
@@ -199,7 +201,8 @@ int main() {
     require(static_cast<bool>(space_a.map_user(
         0x0000'0000'1200'0000ULL, late_pa, 4096ULL,
         MachinePermissions::read)));
-    auto late_reserve = space_a.reserve_kernel_object(late_pa, 4096ULL);
+    auto late_reserve = space_a.reserve_physical(
+        late_pa, 4096ULL, PhysicalReservationKind::kernel_object);
     require(!late_reserve);
     require(late_reserve.error().code == machine_errors::kernel_object_alias);
     require(ledger.reserved == 1U);
@@ -207,8 +210,47 @@ int main() {
     // The same range, once no EL0 translation of it survives, is reservable.
     require(static_cast<bool>(builder_a.unmap_page(0x0000'0000'1200'0000ULL)));
     require(static_cast<bool>(space_a.retire_unmapped(0x0000'0000'1200'0000ULL, 4096ULL)));
-    require(static_cast<bool>(space_a.reserve_kernel_object(late_pa, 4096ULL)));
+    require(static_cast<bool>(space_a.reserve_physical(
+        late_pa, 4096ULL, PhysicalReservationKind::kernel_object)));
     require(ledger.reserved == 2U);
+
+    // ---------------------------------------------------------------------
+    // kernel_private: the kernel's own writable state, which every space has
+    // to be able to write while TTBR0 is the only translation regime.
+    // ---------------------------------------------------------------------
+    constexpr std::uint64_t private_pa = 0x0000'0000'8500'0000ULL;
+    require(static_cast<bool>(space_a.reserve_physical(
+        private_pa, 4096ULL, PhysicalReservationKind::kernel_private)));
+    require(ledger.reserved == 3U);
+
+    // Both the owner and a second space write it. This is the whole difference
+    // from kernel_object, and it is not a relaxation for convenience: EL1 runs
+    // under whichever process root is installed, so the kernel's globals and
+    // stack are unreachable from a scheduled process's space unless every space
+    // maps them.
+    require(static_cast<bool>(space_a.map(
+        0x0000'0000'6400'0000ULL, private_pa, 4096ULL,
+        MachinePermissions::read_write, MachineMemoryKind::normal)));
+    require(static_cast<bool>(space_b.map(
+        0x0000'0000'6400'0000ULL, private_pa, 4096ULL,
+        MachinePermissions::read_write, MachineMemoryKind::normal)));
+
+    // The two rules both kinds share still hold. Without these the kind would
+    // be indistinguishable from no reservation at all.
+    auto private_user = space_a.map_user(
+        0x0000'0000'1300'0000ULL, private_pa, 4096ULL,
+        MachinePermissions::read);
+    require(!private_user);
+    require(private_user.error().code == machine_errors::kernel_object_alias);
+
+    constexpr std::uint64_t private_exec_pa = 0x0000'0000'8600'0000ULL;
+    require(static_cast<bool>(space_a.reserve_physical(
+        private_exec_pa, 4096ULL, PhysicalReservationKind::kernel_private)));
+    auto private_execute = space_a.map(
+        0x0000'0000'6500'0000ULL, private_exec_pa, 4096ULL,
+        MachinePermissions::read_execute, MachineMemoryKind::normal);
+    require(!private_execute);
+    require(private_execute.error().code == machine_errors::kernel_object_alias);
 
     return 0;
 }

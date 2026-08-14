@@ -424,10 +424,10 @@ cannot be laundered between them:
 | Category | Lines |
 | --- | --- |
 | core — privileged portable runtime | 3,419 |
-| machine — the AArch64 port, including the physical ledger's reservation table | 2,997 |
+| machine — the AArch64 port, including the physical ledger's reservation table | 3,010 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
-| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter | 1,105 |
-| **total** | **8,793** |
+| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter | 1,122 |
+| **total** | **8,823** |
 
 `core` is the figure comparable to QNX's 605, and it is 5.7× that. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off

@@ -35,13 +35,14 @@ struct MachineAddressSpace final {
     MachineAddressSpace& space,
     aarch64::EarlyStage1Builder& builder) noexcept;
 
-// Declares a physical range to be kernel state owned by `space`. See
-// NativePhysicalReservation for what that forbids and why the owner is an
-// address space.
-[[nodiscard]] os::core::Result<void> aarch64_reserve_kernel_object(
+// Declares a physical range to hold kernel state, owned by `space`. See
+// NativePhysicalReservation for what that forbids, PhysicalReservationKind for
+// what the two kinds differ on, and why the owner is an address space.
+[[nodiscard]] os::core::Result<void> aarch64_reserve_physical(
     MachineAddressSpace& space,
     std::uintptr_t physical_base,
-    std::size_t length) noexcept;
+    std::size_t length,
+    aarch64::PhysicalReservationKind kind) noexcept;
 
 [[nodiscard]] os::core::Result<void> aarch64_map_user(
     MachineAddressSpace& space,

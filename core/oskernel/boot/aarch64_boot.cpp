@@ -1266,17 +1266,49 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         fail("ATTACH_STAGE1");
     }
 
+    // Everything below runs before the manifest replays and before anything is
+    // mapped, so these are properties the ledger enforces on every later map
+    // rather than properties of the order this routine happens to do things in.
+    //
     // The arena the three builders draw from is where every translation table on
-    // this machine lives, including the two processes' own. Declaring it kernel
-    // state here - before the manifest replays, before anything is mapped from
-    // it - makes "a process cannot write its own page tables" a property the
-    // ledger enforces on every later map, rather than a property of the order
-    // this routine happens to do things in.
-    if (!os::kernel::aarch64_reserve_kernel_object(
+    // this machine lives, including the two processes' own, and exactly one
+    // space edits it.
+    if (!os::kernel::aarch64_reserve_physical(
             boot_kernel_space,
             static_cast<std::uintptr_t>(plan.value().page_tables.base),
-            static_cast<std::size_t>(plan.value().page_tables.size))) {
+            static_cast<std::size_t>(plan.value().page_tables.size),
+            os::kernel::aarch64::PhysicalReservationKind::kernel_object)) {
         fail("RESERVE_TABLES");
+    }
+
+    // The kernel's writable image and its stack. This is where boot_kernel's
+    // capability table, boot_physical_ledger, boot_epochs, boot_translations and
+    // every saved exception frame actually live, so an EL0 translation of these
+    // ranges reads other processes' register state at best and rewrites the
+    // authority tables at worst - and nothing refused one: the pre-existing W^X
+    // check sees two writable mappings and no executable one, which is not a
+    // violation it knows about.
+    //
+    // kernel_private rather than kernel_object because these must stay writable
+    // in all three spaces. Cookie translates through TTBR0 only, so EL1 executes
+    // under whichever process root is installed; owner-write-only here would
+    // stop the kernel running the moment a process was scheduled. M7.7's TTBR1
+    // split is what makes the stronger kind available for them.
+    if (!os::kernel::aarch64_reserve_physical(
+            boot_kernel_space,
+            reinterpret_cast<std::uintptr_t>(__cookie_data_start),
+            static_cast<std::size_t>(
+                reinterpret_cast<std::uintptr_t>(__bss_end) -
+                reinterpret_cast<std::uintptr_t>(__cookie_data_start)),
+            os::kernel::aarch64::PhysicalReservationKind::kernel_private)) {
+        fail("RESERVE_KERNEL_DATA");
+    }
+    if (!os::kernel::aarch64_reserve_physical(
+            boot_kernel_space,
+            static_cast<std::uintptr_t>(plan.value().kernel_stack.base),
+            static_cast<std::size_t>(plan.value().kernel_stack.size),
+            os::kernel::aarch64::PhysicalReservationKind::kernel_private)) {
+        fail("RESERVE_KERNEL_STACK");
     }
 
     os::kernel::aarch64::KernelMappingManifest kernel_manifest{};

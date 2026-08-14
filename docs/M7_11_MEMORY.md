@@ -16,6 +16,10 @@ Landed so far, each in its own reviewable diff:
 2. **The ledger knows which physical ranges hold kernel state.** Piece 1 below,
    partially: reservations, their three rules, and boot declaring the
    page-table arena. Grant, split and reclaim are not written yet.
+3. **The kernel's own writable state is declared too**, in the same table -
+   `__cookie_data_start..__bss_end` and the kernel stack - under a second
+   reservation kind that constrains writers less because TTBR0-only translation
+   forces it to. See "Two kinds, and why" under piece 1.
 
 Cookie's kernel today can create address spaces exactly once, at boot, from a
 plan computed before any process exists. Everything M7 built on top of that -
@@ -176,6 +180,40 @@ rejected. Boot declares before it maps and so never exercises this, which is
 exactly why it is written down: a reservation that silently accepted an existing
 EL0 mapping would report protection it does not have.
 
+**Two kinds, and why.** A reservation is `kernel_object` or `kernel_private`.
+Both forbid the same two things - any EL0 translation at all, and any executable
+one - and differ only in who may hold a writable kernel translation:
+`kernel_object` allows exactly the owning space, `kernel_private` allows any
+bound space. The page-table arena is the first; the kernel's writable image and
+its stack are the second.
+
+That second kind is a constraint, not a preference, and it is worth stating
+because a reader will otherwise read it as the rule being quietly relaxed.
+**Cookie translates through TTBR0 only.** EL1 executes under whichever process
+root is installed, so `boot_kernel`'s capability table, `boot_physical_ledger`,
+the epoch authority and every saved exception frame have to be writable in
+*every* address space or the kernel stops running the moment a process is
+scheduled. Owner-write-only is unachievable for them until M7.7 splits the
+kernel domain into TTBR1 - which is exactly what
+`aarch64_kernel_translation_domain.hpp` is a reviewed contract for, and which
+this makes a concrete reason to want rather than a tidiness argument.
+
+What the weaker kind still buys is the part that was actually missing: **no EL0
+translation of the kernel's own state, and nothing refused one before.** The
+pre-existing cross-space check sees a writable kernel mapping and a proposed
+writable user mapping of the same range, finds no executable one among them, and
+has no violation to report. A process holding that mapping reads other
+processes' saved register state at best and rewrites the authority tables at
+worst.
+
+**Deliberately not covered:** `.text` and `.rodata`. Text cannot take either
+kind, because both forbid executable mappings and text is executable by
+definition; an EL0 alias of it is a gadget-discovery convenience rather than a
+memory-safety hole, and pretending the reservation table addresses it would be
+worse than saying it does not. `.rodata` could take `kernel_private` and was
+left out to keep this increment to the ranges whose exposure is a compromise
+rather than a disclosure.
+
 **Not landed:** grant, split and reclaim, and the owner being a process rather
 than an address space. The reservation table is a fixed 16 entries, which is
 enough for boot and is not a structure a running system creates spaces in - the
@@ -272,10 +310,12 @@ accept the raise and record the new distance honestly, or treat the ceiling as
 binding and spend the milestone finding what to remove. **This should be
 decided before the code is written, not after the gate goes red.**
 
-Still open, but no longer without evidence. Two increments have landed and
+Still open, but no longer without evidence. Three increments have landed and
 `core` has not moved at all: the fault decoder went to `machine` and `entry`,
 and physical memory authority went to `machine` as a field and two loops on a
-structure the kernel already walks. Total is 8,793, up 1.0% across both. That
+structure the kernel already walks. Total is 8,823, up 1.3% across all three -
+and the third cost 13 machine lines only because the second had already put the
+table there, which is the compounding this shape is supposed to produce. That
 is a real data point and it is not proof - the two pieces that will actually
 press on `core` are address-space lifecycle and delivering faults to a userland
 pager, and neither is written. What it does suggest is which answer is
