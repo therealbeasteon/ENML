@@ -62,6 +62,14 @@ target_compile_options(kernel_address_space_lifecycle_test PRIVATE
 add_test(NAME kernel_address_space_lifecycle_test COMMAND kernel_address_space_lifecycle_test)
 set_tests_properties(kernel_address_space_lifecycle_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_fault_delivery_test fault_delivery_test.cpp)
+target_link_libraries(kernel_fault_delivery_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_fault_delivery_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_fault_delivery_test COMMAND kernel_fault_delivery_test)
+set_tests_properties(kernel_fault_delivery_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_memory_grant_test memory_grant_test.cpp)
 target_link_libraries(kernel_memory_grant_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_memory_grant_test PRIVATE
