@@ -958,8 +958,25 @@ discovery_ceiling=1272
 # donation reserves kernel_private - three kernel-side writers of a page about
 # to become a translation table is what kernel_object forbids and what
 # TTBR0-only translation forces.
-entry_ceiling=1399
-total_ceiling=9845
+#
+# Raised again, proving donation is a loan: entry 1,399 -> 1,414, total 9,845 ->
+# 9,860. core is untouched.
+#
+# The EL0 proof now creates a space, destroys it, and creates a second one with
+# the *same* memory capability, gated on COOKIE:M7.11:EL0_GRANT_REUSED. That
+# second create already worked before this change, and that was the problem: it
+# worked because the reservation had been dropped and the grant was never
+# invalidated, which is an accident rather than a decision.
+#
+# The decision, recorded here because the code alone cannot show a road not
+# taken: donating a page does NOT consume the grant. The alternative - revoke
+# on donate, re-issue on destroy - would make the kernel an origin of grants,
+# and boot being the only origin is what stops the grant table becoming a pool
+# the kernel dispenses from. Under the loan reading the holder's authority
+# never left, so there is nothing to hand back; what ends at destroy is the
+# space's use of the page, not the holder's claim on it.
+entry_ceiling=1414
+total_ceiling=9860
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

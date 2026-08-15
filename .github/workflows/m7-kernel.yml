@@ -249,3 +249,4 @@ jobs:
           grep -F 'COOKIE:M7.11:STALE_REFUSED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:EL0_CREATED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:EL0_DESTROYED' cookie-qemu.log
+          grep -F 'COOKIE:M7.11:EL0_GRANT_REUSED' cookie-qemu.log
