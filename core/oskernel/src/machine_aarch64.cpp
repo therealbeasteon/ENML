@@ -124,10 +124,28 @@ os::core::Result<void> aarch64_donate_table_page(
     // and refuses if any is user-accessible, so a donor that still has the page
     // mapped is rejected before the page can become a translation table it
     // could keep writing.
+    //
+    // kernel_private rather than kernel_object, and the reason is the same
+    // forced one that kind already exists for. Cookie translates through TTBR0
+    // only, so EL1 executes under whichever process root is installed - and the
+    // kernel edits a created space's tables from inside a syscall made by some
+    // *other* process, which means those pages must be writable under that
+    // caller's root too. kernel_object permits exactly one writing space and
+    // would refuse it, so a space could be created and then never mapped into
+    // from EL0. Same compromise, same cause, and the same fix: owner-write-only
+    // becomes achievable here when M7.7 splits the kernel domain into TTBR1
+    // (aarch64_kernel_translation_domain.hpp), and this should tighten to
+    // kernel_object the moment it does.
+    //
+    // What is *not* given up is the property that matters. Both kinds refuse a
+    // user-accessible translation of the range outright, and both refuse an
+    // executable one, so no process can read or write its own page tables
+    // either way. The relaxation is between kernel-side writers, which are all
+    // the kernel, and buys back nothing a process can reach.
     auto reserved = space.mappings.reserve_physical(
         static_cast<std::uint64_t>(physical),
         aarch64::architectural_page_size,
-        aarch64::PhysicalReservationKind::kernel_object);
+        aarch64::PhysicalReservationKind::kernel_private);
     if (!reserved) return reserved.error();
 
     // If the arena refuses the page the reservation stands, and that is the
