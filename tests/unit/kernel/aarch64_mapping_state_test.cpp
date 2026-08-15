@@ -388,5 +388,146 @@ int main() {
         require(!created.bound());
     }
 
+    // ---------------------------------------------------------------------
+    // The two-owner rule, which until now nothing exercised.
+    //
+    // forbidden_by_reservation refuses a kernel_object reservation when
+    // another space holds a writable mapping of the same physical range. Its
+    // first two disjuncts (user-accessible, executable) had coverage; this
+    // third one did not, from either direction. M7.11's boot proof does not
+    // reach it either - the pages it donates are mapped writable in
+    // early_identity_space, which is bound to a different ledger, so the
+    // check never fires there. A rule asserted by no test and reached by no
+    // path is a rule that has already stopped being enforced; these pin it.
+    // ---------------------------------------------------------------------
+    {
+        alignas(4096) std::array<std::byte, 4U * 4096U> tables_x{};
+        alignas(4096) std::array<std::byte, 4U * 4096U> tables_y{};
+        alignas(4096) std::array<std::byte, 4096U> contested{};
+        const auto x_begin = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(tables_x.data()));
+        const auto y_begin = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(tables_y.data()));
+        const auto contested_base = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(contested.data()));
+
+        // One ledger, two spaces. Sharing the ledger is the whole point: the
+        // rule is scoped to a ledger, and the separate-ledger case below is
+        // what makes that scoping explicit rather than accidental.
+        NativePhysicalLedger shared{};
+        EarlyPageArena arena_x{x_begin, x_begin + tables_x.size()};
+        EarlyPageArena arena_y{y_begin, y_begin + tables_y.size()};
+        EarlyStage1Builder builder_x{arena_x};
+        EarlyStage1Builder builder_y{arena_y};
+        require(builder_x.initialize());
+        require(builder_y.initialize());
+        NativeAddressSpaceState space_x{};
+        NativeAddressSpaceState space_y{};
+        require(space_x.bind(shared, builder_x));
+        require(space_y.bind(shared, builder_y));
+
+        // X maps the page writable, kernel-only and non-executable, so
+        // neither of the other two disjuncts can be what refuses Y below.
+        require(space_x.map(
+            0x0000'0000'5000'0000ULL, contested_base, 4096ULL,
+            MachinePermissions::read_write, MachineMemoryKind::normal));
+
+        // Y cannot now claim it as a kernel object it alone may write.
+        auto refused_reservation = space_y.reserve_physical(
+            contested_base, 4096ULL, PhysicalReservationKind::kernel_object);
+        require(!refused_reservation);
+        require(refused_reservation.error().code == machine_errors::kernel_object_alias);
+
+        // kernel_private is the weaker kind and must still be allowed here -
+        // it exists precisely because the kernel's globals have to stay
+        // writable in every space, so a foreign writable mapping is expected.
+        require(space_y.reserve_physical(
+            contested_base, 4096ULL, PhysicalReservationKind::kernel_private));
+    }
+
+    // The same conflict in the other order: reserve first, then attempt the
+    // foreign writable mapping. map_impl checks it from its side, and a rule
+    // enforced in only one direction is one an unlucky ordering walks past.
+    {
+        alignas(4096) std::array<std::byte, 4U * 4096U> tables_x{};
+        alignas(4096) std::array<std::byte, 4U * 4096U> tables_y{};
+        alignas(4096) std::array<std::byte, 4096U> contested{};
+        const auto x_begin = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(tables_x.data()));
+        const auto y_begin = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(tables_y.data()));
+        const auto contested_base = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(contested.data()));
+
+        NativePhysicalLedger shared{};
+        EarlyPageArena arena_x{x_begin, x_begin + tables_x.size()};
+        EarlyPageArena arena_y{y_begin, y_begin + tables_y.size()};
+        EarlyStage1Builder builder_x{arena_x};
+        EarlyStage1Builder builder_y{arena_y};
+        require(builder_x.initialize());
+        require(builder_y.initialize());
+        NativeAddressSpaceState space_x{};
+        NativeAddressSpaceState space_y{};
+        require(space_x.bind(shared, builder_x));
+        require(space_y.bind(shared, builder_y));
+
+        require(space_x.reserve_physical(
+            contested_base, 4096ULL, PhysicalReservationKind::kernel_object));
+
+        auto refused_map = space_y.map(
+            0x0000'0000'5000'0000ULL, contested_base, 4096ULL,
+            MachinePermissions::read_write, MachineMemoryKind::normal);
+        require(!refused_map);
+        require(refused_map.error().code == machine_errors::kernel_object_alias);
+
+        // The owner may still map what it reserved - the rule is about
+        // foreign writers, not about freezing the range.
+        require(space_x.map(
+            0x0000'0000'5000'0000ULL, contested_base, 4096ULL,
+            MachinePermissions::read_write, MachineMemoryKind::normal));
+
+        // A read-only foreign mapping is permitted: the reservation is about
+        // who may *write* a kernel object, and a reader cannot corrupt one.
+        require(space_y.map(
+            0x0000'0000'6000'0000ULL, contested_base, 4096ULL,
+            MachinePermissions::read, MachineMemoryKind::normal));
+    }
+
+    // The boundary itself. The same pair on two ledgers must succeed - this
+    // is what Cookie's boot relies on, with early_identity_space holding a
+    // writable mapping while the real map reserves the same page. Asserted
+    // here so that "fixing" the scope by merging the ledgers fails loudly
+    // rather than silently breaking boot.
+    {
+        alignas(4096) std::array<std::byte, 4U * 4096U> tables_x{};
+        alignas(4096) std::array<std::byte, 4U * 4096U> tables_y{};
+        alignas(4096) std::array<std::byte, 4096U> shared_page{};
+        const auto x_begin = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(tables_x.data()));
+        const auto y_begin = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(tables_y.data()));
+        const auto page_base = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(shared_page.data()));
+
+        NativePhysicalLedger ledger_x{};
+        NativePhysicalLedger ledger_y{};
+        EarlyPageArena arena_x{x_begin, x_begin + tables_x.size()};
+        EarlyPageArena arena_y{y_begin, y_begin + tables_y.size()};
+        EarlyStage1Builder builder_x{arena_x};
+        EarlyStage1Builder builder_y{arena_y};
+        require(builder_x.initialize());
+        require(builder_y.initialize());
+        NativeAddressSpaceState space_x{};
+        NativeAddressSpaceState space_y{};
+        require(space_x.bind(ledger_x, builder_x));
+        require(space_y.bind(ledger_y, builder_y));
+
+        require(space_x.map(
+            0x0000'0000'5000'0000ULL, page_base, 4096ULL,
+            MachinePermissions::read_write, MachineMemoryKind::normal));
+        require(space_y.reserve_physical(
+            page_base, 4096ULL, PhysicalReservationKind::kernel_object));
+    }
+
     return 0;
 }
