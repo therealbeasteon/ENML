@@ -44,6 +44,10 @@ inline constexpr std::array<CallDescriptor, 15U> call_table{
 
     CallDescriptor{KernelCall::capability_grant, CallAuthority::capability_control, 4U, false},
     CallDescriptor{KernelCall::capability_revoke, CallAuthority::capability_control, 2U, false},
+    // memory_control rather than a class of its own: supplying backing for a
+    // fault is establishing a mapping on someone else's behalf, which is the
+    // authority that class already describes.
+    CallDescriptor{KernelCall::fault_supply, CallAuthority::memory_control, 1U, false},
 };
 
 static_assert(

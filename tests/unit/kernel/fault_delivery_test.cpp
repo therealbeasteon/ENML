@@ -146,5 +146,24 @@ int main() {
     if (!check(deliveries.armed(pager),
                "collecting one pager's question disturbed another's")) return 1;
 
+    // The answer half of the handshake. One argument, and it names backing
+    // rather than a region - a pager that could name a region could answer one
+    // it was never asked, which is the probe the fault path withholds.
+    {
+        auto decoded = decode_fault_supply_syscall(42ULL);
+        if (!check(static_cast<bool>(decoded), "a valid supply was refused")) return 1;
+        if (!check(decoded.value().backing == 42ULL,
+                   "supply lost the backing capability")) return 1;
+    }
+    if (!check(refused(decode_fault_supply_syscall(0ULL),
+                       fault_delivery_errors::invalid_capability),
+               "supply accepted a null capability")) return 1;
+
+    // The decoder must not invent rules that belong elsewhere: whether the
+    // capability names memory, whether this pager holds it, and whether it
+    // covers the region are all checked where they are enforced.
+    if (!check(static_cast<bool>(decode_fault_supply_syscall(0xFFFF'FFFF'FFFF'FFFFULL)),
+               "the decoder grew a rule that belongs to the capability table")) return 1;
+
     return 0;
 }
