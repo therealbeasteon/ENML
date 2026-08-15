@@ -118,6 +118,14 @@ os::kernel::CapabilityId boot_server_ipc_cap = os::kernel::invalid_capability;
 os::kernel::CapabilityId boot_device_interrupt_cap = os::kernel::invalid_capability;
 os::kernel::aarch64::GicV3PrimaryCpu boot_gic{};
 
+// The space M7.11's boot proof creates and destroys after boot. Static because
+// the kernel has no allocator to hold it in - which is the same reason the
+// proof exists: an address space created after boot is the first thing in
+// Cookie that is not a boot artifact.
+os::kernel::aarch64::EarlyPageArena dynamic_arena{};
+os::kernel::aarch64::EarlyStage1Builder dynamic_builder{dynamic_arena};
+os::kernel::MachineAddressSpace dynamic_space{};
+
 os::kernel::MachinePhysicalLedger boot_physical_ledger{};
 os::kernel::MachineAddressSpace boot_kernel_space{};
 os::kernel::MachineAddressSpace process_space_a{};
@@ -1509,6 +1517,69 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
 
     if (!boot_preemption.admit_frame(process_a_thread, initial_a) ||
         !boot_preemption.admit_frame(process_b_thread, initial_b)) fail("ADMIT_FRAME");
+
+    // M7.11: an address space created, authorized, destroyed, and its
+    // capability refused afterwards - on the machine rather than on the host.
+    //
+    // Everything M7.11 has landed so far is host-tested, and this milestone's
+    // exit criteria are written in terms of a running system. This proves the
+    // part that can be proved today: the kernel's decision about who may create
+    // and destroy a space, and the two-phase retirement, running under real
+    // translation with a real ledger.
+    //
+    // It deliberately does not donate a page or map anything, so it does not
+    // prove the whole of "creation after boot". That is not an oversight and
+    // the reason is worth recording where the next person will look. A donated
+    // table page must be reserved as kernel_object owned by the new space,
+    // while EarlyStage1Builder writes tables through their raw physical
+    // address - which under live translation needs that page mapped writable in
+    // the *active* space, which is not the new one. forbidden_by_reservation
+    // refuses exactly that combination, and it is right to: the rule is what
+    // stops a donor keeping write access to what has become a translation
+    // table. Making the proof pass by relaxing it would be weakening a
+    // security rule to fit a demo. The ordering that satisfies both is a design
+    // decision this proof does not need and should not pre-empt.
+    auto address_space_authority = boot_kernel.capabilities().mint(
+        process_a_thread,
+        os::kernel::address_space_authority_object,
+        os::kernel::address_space_right_create,
+        false);
+    if (!address_space_authority) fail("M7_11_AUTHORITY");
+
+    if (!os::kernel::aarch64_create_address_space(
+            dynamic_space, boot_physical_ledger, dynamic_builder)) fail("M7_11_CREATE");
+    auto dynamic_created = boot_kernel.address_space_create(
+        process_a_thread, address_space_authority.value(), boot_epochs);
+    if (!dynamic_created || !dynamic_created.value().valid()) fail("M7_11_AUTHORIZE");
+    if (!boot_epochs.active(dynamic_created.value().epoch)) fail("M7_11_NOT_ACTIVE");
+    uart_write("COOKIE:M7.11:SPACE_CREATED\n");
+
+    const auto dynamic_identity = dynamic_created.value().epoch.identity();
+    auto dynamic_retiring = boot_kernel.address_space_begin_destroy(
+        process_a_thread, dynamic_created.value().capability, boot_epochs);
+    if (!dynamic_retiring) fail("M7_11_BEGIN_DESTROY");
+    if (!os::kernel::aarch64_release_address_space(
+            dynamic_space, dynamic_retiring.value())) fail("M7_11_RELEASE");
+    if (!boot_kernel.address_space_complete_destroy(
+            process_a_thread, dynamic_created.value().capability,
+            dynamic_retiring.value(), boot_epochs)) fail("M7_11_COMPLETE_DESTROY");
+    uart_write("COOKIE:M7.11:SPACE_DESTROYED\n");
+
+    // The exit criterion, on hardware. complete_destroy revoked the original
+    // capability, so this mints a fresh one over the identity that space used
+    // to have - which is what a holder who kept a reference across the destroy
+    // effectively has. It must not name anything.
+    auto stale_capability = boot_kernel.capabilities().mint(
+        process_a_thread,
+        os::kernel::address_space_object_id(dynamic_identity),
+        os::kernel::address_space_right_destroy,
+        false);
+    if (!stale_capability) fail("M7_11_STALE_MINT");
+    if (boot_kernel.address_space_begin_destroy(
+            process_a_thread, stale_capability.value(), boot_epochs)) {
+        fail("M7_11_STALE_ACCEPTED");
+    }
+    uart_write("COOKIE:M7.11:STALE_REFUSED\n");
 
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
