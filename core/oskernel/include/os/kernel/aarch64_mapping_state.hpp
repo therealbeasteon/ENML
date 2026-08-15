@@ -309,6 +309,37 @@ public:
         return error(machine_errors::not_mapped);
     }
 
+    // One reservation this space owns, for a caller tearing them down. Mirrors
+    // any_mapping() and exists for the same reason: the caller has work to do
+    // per range - zeroing it - that this header must not do itself, because
+    // writing memory is a machine operation and everything here is bookkeeping.
+    [[nodiscard]] os::core::Result<NativePhysicalReservation> any_reservation() const noexcept {
+        if (ledger_ == nullptr) return error(machine_errors::address_space_unbound);
+        for (const auto& entry : ledger_->reservations) {
+            if (entry.occupied && entry.owner == this) return entry;
+        }
+        return error(machine_errors::not_mapped);
+    }
+
+    // Drops exactly one, so a caller can pair each drop with the zeroing of
+    // that range and stop on the first failure with the rest still reserved.
+    // release_reservations() below drops them all at once, which cannot be
+    // paired with anything and would leave unzeroed ranges unreserved if the
+    // caller failed part-way.
+    [[nodiscard]] os::core::Result<void> release_one_reservation(
+        std::uint64_t physical_base,
+        std::uint64_t length) noexcept {
+        if (ledger_ == nullptr) return error(machine_errors::address_space_unbound);
+        for (auto& entry : ledger_->reservations) {
+            if (!entry.occupied || entry.owner != this) continue;
+            if (entry.physical_base != physical_base || entry.length != length) continue;
+            entry = NativePhysicalReservation{};
+            --ledger_->reserved;
+            return {};
+        }
+        return error(machine_errors::not_mapped);
+    }
+
     // Drops the reservations this space owns. Separate from unbind() because a
     // reservation outlives the mappings of the range it covers: the page-table
     // arena is reserved before anything maps it and must stay reserved until
