@@ -1008,12 +1008,30 @@ extern "C" void cookie_aarch64_el0_fault(
     auto next = boot_preemption.reschedule(
         boot_kernel.runqueue(), boot_translations, boot_epochs, now, *frame,
         boot_kernel.ipc_earliest_receive_deadline());
-    if (!next || !commit_result(next.value(), now) ||
+    // Split rather than chained, and say which step and which thread. The
+    // first version reported all three as one nothing, and "nothing runnable"
+    // turned out to be the wrong name for it - the scheduler had a thread and
+    // a later step refused.
+    if (!next) {
+        uart_write("COOKIE:PANIC:FAULT_RESCHEDULE live=");
+        uart_write_hex(static_cast<std::uint64_t>(boot_kernel.live_thread_count()));
+        uart_write("
+");
+        halt();
+    }
+    uart_write("COOKIE:M7.11:FAULT_NEXT next=");
+    uart_write_hex(static_cast<std::uint64_t>(next.value().next));
+    uart_write(next.value().switched ? " switched=1" : " switched=0");
+    uart_write(" live=");
+    uart_write_hex(static_cast<std::uint64_t>(boot_kernel.live_thread_count()));
+    uart_write("
+");
+    if (!commit_result(next.value(), now) ||
         !complete_after_switch(next.value().next, *frame)) {
         // Nothing runnable is a real possibility rather than an invariant
         // violation - it is what happens when the last thread faults - so it
         // halts with a name instead of trapping.
-        uart_write("COOKIE:PANIC:FAULT_NOTHING_RUNNABLE\n");
+        uart_write("COOKIE:PANIC:FAULT_COMMIT\n");
         halt();
     }
     uart_write("COOKIE:M7.11:SURVIVED_FAULT\n");
