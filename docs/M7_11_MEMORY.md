@@ -15,7 +15,8 @@ Landed so far, each in its own reviewable diff:
    destination changes.
 2. **The ledger knows which physical ranges hold kernel state.** Piece 1 below,
    partially: reservations, their three rules, and boot declaring the
-   page-table arena. Grant, split and reclaim are not written yet.
+   page-table arena. Grant and reclaim landed later, as items 10 and 11;
+   split is still unwritten.
 3. **The kernel's own writable state is declared too**, in the same table -
    `__cookie_data_start..__bss_end` and the kernel stack - under a second
    reservation kind that constrains writers less because TTBR0-only translation
@@ -51,6 +52,10 @@ Landed so far, each in its own reviewable diff:
 10. **A destroyed space's pages are erased.** Every range it owned is zeroed
     before its reservation is dropped, proven by a paired non-zero-then-zero
     check rather than a one-sided one.
+11. **Creating a space requires authority over the page it is built from.**
+    `MemoryGrantAuthority` plus a capability encoding that names a grant, and
+    `address_space_create` taking that capability instead of a physical
+    address.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -261,11 +266,30 @@ anyway. The proof therefore asserts the pages are *non-zero before* the destroy
 as well as zero after - without that half it would pass on a range that was
 always zero and keep passing if reclamation were deleted.
 
-**Still missing: returning the pages.** They are erased and unreserved, but
-nothing hands them back to a donor to be donated again, so a caller that
-creates and destroys repeatedly runs out. Grant and split over the reservation
-table are what close that, and they are the last unbuilt piece of the
-physical-authority design.
+**Authority over physical memory now has a referent.**
+`MemoryGrantAuthority` records which ranges were handed to whom, and
+`address_space_create` takes a capability over memory rather than a page
+number - so the caller's claim is checked with `memory_right_donate` before
+anything is built from the page it names. Before this a process could name any
+unclaimed page; the reservation rules refused pages already reserved or
+user-mapped, but nothing said the caller had a claim on what it named.
+
+Taking a capability rather than an address also closed a disclosure that had no
+purpose: a syscall accepting a physical address teaches every caller where in
+RAM its page tables live.
+
+It is deliberately not an allocator. There is no free list and no operation
+answering "give me a page" - the table records what someone was handed and
+refuses to confirm authority nobody holds. Boot is the origin of every grant,
+because boot is the only thing that has seen the memory map, and a process
+cannot grant itself memory.
+
+**Still missing: returning the pages, and subdividing them.** A destroyed
+space's pages are erased and unreserved, but the grant that covered them is not
+handed back or re-offered, so a caller that creates and destroys repeatedly
+still runs out. Split is absent for the same reason it was not built
+speculatively: nothing subdivides authority yet. Those two are the last
+unbuilt pieces of the physical-authority design.
 
 **Also still missing: what creation should really be authorized by.** The
 creation authority is a distinguished object, and it is a placeholder. In the
