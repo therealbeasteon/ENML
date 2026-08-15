@@ -87,18 +87,6 @@ label="${1:-kernel-line-count}"
 #                   the whole reason it is listed here by name rather than left
 #                   to be noticed later.
 #
-#   memory_grant.*  Authority over physical memory - who was handed which range,
-#                   and the capability encoding that names it. The referent the
-#                   no-allocator decision was missing. Built into emnl::oskernel
-#                   and unit-tested, but nothing in cookie_kernel_aarch64_boot
-#                   includes it yet, so it is not in the shipped image and
-#                   counting it would overstate what is trusted today. It moves
-#                   into `core` in the increment that makes
-#                   address_space_create check the caller's authority over the
-#                   page it names - which is the whole reason it exists, and the
-#                   reason it is listed here by name rather than left to be
-#                   noticed later.
-#
 #   CMakeLists.txt, *.ld.in  Build description. Not code that runs.
 #
 # Any file under core/oskernel that appears in neither a category nor the
@@ -166,6 +154,7 @@ core_files=(
     "core/oskernel/include/os/kernel/ipc_endpoint.hpp"
     "core/oskernel/include/os/kernel/ipc_syscall.hpp"
     "core/oskernel/include/os/kernel/address_space_syscall.hpp"
+    "core/oskernel/include/os/kernel/memory_grant.hpp"
     "core/oskernel/include/os/kernel/kernel.hpp"
     "core/oskernel/include/os/kernel/process_translation.hpp"
     "core/oskernel/include/os/kernel/rendezvous.hpp"
@@ -182,6 +171,7 @@ core_files=(
     "core/oskernel/src/ipc_endpoint.cpp"
     "core/oskernel/src/ipc_syscall.cpp"
     "core/oskernel/src/address_space_syscall.cpp"
+    "core/oskernel/src/memory_grant.cpp"
     "core/oskernel/src/kernel.cpp"
     "core/oskernel/src/process_translation.cpp"
     "core/oskernel/src/rendezvous.cpp"
@@ -258,8 +248,6 @@ not_kernel=(
     "core/oskernel/include/os/kernel/aarch64_kernel_translation_domain.hpp"
     "core/oskernel/include/os/kernel/fault_region.hpp"
     "core/oskernel/src/fault_region.cpp"
-    "core/oskernel/include/os/kernel/memory_grant.hpp"
-    "core/oskernel/src/memory_grant.cpp"
     "core/oskernel/include/os/kernel/machine_host.hpp"
     "core/oskernel/src/machine_host.cpp"
 )
@@ -816,7 +804,33 @@ not_kernel=(
 # nothing, because the ASID was never independent information - acquire()
 # derives it from the slot and active() already re-derives it to validate what
 # it is handed.
-core_ceiling=3759
+#
+# Raised again, wiring memory authority into address-space creation: core
+# 3,759 -> 3,945, entry 1,380 -> 1,399, total 9,640 -> 9,845. This is the
+# largest core raise of the milestone and it needs saying plainly: core is now
+# 3,945, and docs/M7_11_MEMORY.md's own open question was whether a VM
+# subsystem would push it past 4,000 - "the M7.0 claim the project rests on...
+# this is the milestone most likely to break it." It has not, but it is 55
+# lines away, and the next core increment should be treated as the one that
+# decides that question rather than as another raise.
+#
+# What the lines buy is the referent the no-allocator decision was missing.
+# address_space_create took a page number from a register and donated whatever
+# it named; the reservation rules refused pages already reserved or user-mapped,
+# but a process naming an arbitrary unclaimed page was appropriating memory
+# nobody gave it. MemoryGrantAuthority records who holds which range, and the
+# create syscall now takes a capability over memory instead of an address, so
+# the claim is checked before anything is built from it.
+#
+# Taking a capability rather than an address also closes a disclosure: a
+# syscall that accepts a physical address teaches every caller where in RAM its
+# page tables live, and a process has no business knowing that.
+#
+# memory_grant.* moves out of the exclusion list in this change, which is the
+# transition that list exists to make visible - it was excluded while nothing
+# in the image included it, and counting it then would have overstated the TCB.
+# It is in the image now, so it counts now.
+core_ceiling=3945
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -944,8 +958,8 @@ discovery_ceiling=1272
 # donation reserves kernel_private - three kernel-side writers of a page about
 # to become a translation table is what kernel_object forbids and what
 # TTBR0-only translation forces.
-entry_ceiling=1380
-total_ceiling=9640
+entry_ceiling=1399
+total_ceiling=9845
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

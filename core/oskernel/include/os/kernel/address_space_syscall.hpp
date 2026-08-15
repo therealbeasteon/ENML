@@ -62,20 +62,29 @@ inline constexpr ObjectId address_space_authority_object = address_space_object_
 
 namespace address_space_syscall_errors {
 inline constexpr std::uint32_t invalid_capability = 260U;
-inline constexpr std::uint32_t invalid_page = 261U;
+// Both arguments are capabilities now, so there is one way to be malformed.
+// The previous `invalid_page` was removed rather than left unused: an error
+// code nothing returns is a code a reader has to look up to discover means
+// nothing.
 } // namespace address_space_syscall_errors
 
 // KernelCall::address_space_create, two arguments per abi.cpp's descriptor.
 //
-// The root page is an argument because creating a space needs one and the
-// kernel has no pool to take it from - the caller supplies it, as
-// docs/M7_11_MEMORY.md's no-allocator decision requires. It is the same page
-// the caller must already have donated; passing it here is what ties the
-// created space to a specific page rather than to whatever happens to be at the
-// head of an arena.
+// The second argument is a capability over memory, not a physical address.
+// Creating a space needs a page and the kernel has no pool to take one from, so
+// the caller supplies it - docs/M7_11_MEMORY.md's no-allocator decision - but
+// what the caller names is its *authority* over a range rather than the range
+// itself.
+//
+// That is a deliberate change from the first version, which took a page number.
+// Two things were wrong with it. A process naming an arbitrary unclaimed page
+// was appropriating memory nobody had given it, and nothing in the path said
+// otherwise; and a syscall that takes a physical address teaches every caller
+// the machine's physical layout, which is a disclosure with no purpose - a
+// process has no business knowing where in RAM its page tables live.
 struct AddressSpaceCreateSyscall final {
     CapabilityId authority {invalid_capability};
-    std::uint64_t root_page {0ULL};
+    CapabilityId root_grant {invalid_capability};
 };
 
 // KernelCall::address_space_destroy, one argument. The capability names the
@@ -88,7 +97,7 @@ struct AddressSpaceDestroySyscall final {
 [[nodiscard]] os::core::Result<AddressSpaceCreateSyscall>
 decode_address_space_create_syscall(
     std::uint64_t x0_authority,
-    std::uint64_t x1_root_page) noexcept;
+    std::uint64_t x1_root_grant) noexcept;
 
 [[nodiscard]] os::core::Result<AddressSpaceDestroySyscall>
 decode_address_space_destroy_syscall(std::uint64_t x0_space) noexcept;

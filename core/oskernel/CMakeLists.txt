@@ -93,6 +93,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/ipc_endpoint.cpp
             src/ipc_syscall.cpp
             src/address_space_syscall.cpp
+            src/memory_grant.cpp
             src/ipc_continuation.cpp
             src/interrupt.cpp
             src/interrupt_delivery.cpp

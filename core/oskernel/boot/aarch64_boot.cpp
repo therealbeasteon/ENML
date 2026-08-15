@@ -172,7 +172,10 @@ El0AddressSpaceSlot el0_address_spaces[max_el0_address_spaces]{};
 // hands it over in x1, because a process cannot yet name memory it owns -
 // memory capabilities are what will eventually authorize this, and the
 // creation-authority object is standing in for them meanwhile.
-std::uint64_t el0_space_root_page = 0ULL;
+os::kernel::MemoryGrantAuthority boot_grants{};
+// The capability A presents as its claim on the page its space is built from.
+// Not the page number: a process names authority, never a physical address.
+os::kernel::CapabilityId el0_space_root_grant = os::kernel::invalid_capability;
 os::kernel::CapabilityId el0_space_authority = os::kernel::invalid_capability;
 os::kernel::CapabilityId el0_space_capability = os::kernel::invalid_capability;
 // 0 nothing yet, 1 created, 2 destroyed. Drives the redirect chain the same
@@ -685,7 +688,7 @@ void disarm_stand_in_device_source() noexcept {
         el0_space_stage = 1U;
         frame.elr_el1 = address_space_create_entry_virtual;
         frame.x[0] = el0_space_authority;
-        frame.x[1] = el0_space_root_page;
+        frame.x[1] = el0_space_root_grant;
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_create);
     } else if (next == process_a_thread && el0_space_stage == 1U &&
                el0_space_capability != os::kernel::invalid_capability) {
@@ -822,7 +825,24 @@ namespace {
     El0AddressSpaceSlot& slot,
     os::kernel::ThreadId creator,
     os::kernel::CapabilityId authority,
-    std::uint64_t root_page) noexcept {
+    os::kernel::CapabilityId root_grant) noexcept {
+    // The caller's claim on the memory, checked before anything is built from
+    // it. This is what stops a process naming a page nobody gave it: the
+    // capability must be held, carry memory_right_donate, name a memory grant,
+    // and that grant must still be live.
+    auto granted = boot_kernel.memory_for_capability(
+        creator, root_grant, os::kernel::memory_right_donate, boot_grants);
+    if (!granted) return granted.error();
+    // A grant may be larger than one page; the root takes the first. Refusing a
+    // grant too small to hold one is the caller's error to see, not a donation
+    // that half-works.
+    if (!granted.value().contains(granted.value().physical_base, page_size)) {
+        return os::core::make_error(
+            os::core::ErrorDomain::kernel,
+            os::kernel::memory_grant_errors::invalid_range);
+    }
+    const auto root_page = granted.value().physical_base;
+
     slot.arena = os::kernel::aarch64::EarlyPageArena{};
     // Constructed with the arena rather than attach_arena'd to it, and the
     // difference is not style. attach_arena validates the arena, and an arena
@@ -928,7 +948,7 @@ extern "C" void cookie_kernel_syscall_entry(
             return;
         }
         auto created = create_el0_address_space(
-            *slot, current, decoded.value().authority, decoded.value().root_page);
+            *slot, current, decoded.value().authority, decoded.value().root_grant);
         if (!created) {
             frame->x[0] = 0ULL;
             // With the code, because "refused" alone cost a CI round trip to
@@ -1857,8 +1877,23 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     el0_space_authority = address_space_authority.value();
     // The last of the pages selected for this proof, kept back from the
     // donations above so EL0 has one to name as its own space's root.
-    el0_space_root_page =
-        dynamic_pages.value().base + (dynamic_proof_pages - 1U) * page_size;
+    // The page A is given authority over, and the capability naming that
+    // authority. Boot is the origin of every grant because boot is the only
+    // thing that has seen the memory map - a process cannot grant itself
+    // memory, which is the property the whole scheme rests on.
+    auto root_granted = boot_grants.create(
+        dynamic_pages.value().base + (dynamic_proof_pages - 1U) * page_size,
+        page_size);
+    if (!root_granted) fail("M7_11_GRANT");
+    // memory_right_donate, not memory_right_map: A is being given a page to
+    // spend on a kernel object, and it never maps this one itself.
+    auto root_grant_capability = boot_kernel.capabilities().mint(
+        process_a_thread,
+        os::kernel::memory_grant_object_id(root_granted.value().identity),
+        os::kernel::memory_right_donate,
+        false);
+    if (!root_grant_capability) fail("M7_11_GRANT_CAP");
+    el0_space_root_grant = root_grant_capability.value();
 
     if (!os::kernel::aarch64_create_address_space(
             dynamic_space, boot_physical_ledger, dynamic_builder)) fail("M7_11_CREATE");

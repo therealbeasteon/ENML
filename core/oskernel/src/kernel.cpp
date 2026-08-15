@@ -463,6 +463,39 @@ os::core::Result<bool> Kernel::interrupt_complete(
     return interrupts_.end_service(driver, source.value());
 }
 
+os::core::Result<MemoryGrant> Kernel::memory_for_capability(
+    ThreadId holder,
+    CapabilityId capability,
+    Rights required,
+    const MemoryGrantAuthority& grants) const noexcept {
+    if (holder == invalid_thread || capability == invalid_capability) {
+        return os::core::Result<MemoryGrant>{
+            address_space_error(address_space_syscall_errors::invalid_capability)};
+    }
+    if (!capabilities_.holds(holder, capability)) {
+        return os::core::Result<MemoryGrant>{
+            address_space_error(address_space_syscall_errors::invalid_capability)};
+    }
+    auto description = capabilities_.describe(capability);
+    if (!description) return description.error();
+    if ((description.value().rights & required) == 0U ||
+        (description.value().object & memory_grant_object_tag_mask) !=
+            memory_grant_object_tag) {
+        return os::core::Result<MemoryGrant>{
+            address_space_error(address_space_syscall_errors::invalid_capability)};
+    }
+
+    const MemoryGrantIdentity identity{
+        static_cast<MemoryGrantSlot>(description.value().object & 0xFFFFULL),
+        static_cast<MemoryGrantGeneration>(
+            (description.value().object >> 16U) & 0xFFFF'FFFFULL),
+    };
+    // resolve() is what refuses a capability over a grant that has been
+    // revoked. It cannot be skipped by holding an old capability, because the
+    // generation is part of what was resolved.
+    return grants.resolve(identity);
+}
+
 os::core::Result<AddressSpaceCreation> Kernel::address_space_create(
     ThreadId creator,
     CapabilityId authority,

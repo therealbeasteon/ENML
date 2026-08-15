@@ -12,6 +12,7 @@
 #include <os/kernel/interrupt_delivery.hpp>
 #include <os/kernel/ipc_continuation.hpp>
 #include <os/kernel/ipc_endpoint.hpp>
+#include <os/kernel/memory_grant.hpp>
 #include <os/kernel/rendezvous.hpp>
 #include <os/kernel/scheduler.hpp>
 
@@ -155,6 +156,24 @@ public:
     // it does not change what the driver needs to know.
     [[nodiscard]] os::core::Result<bool> interrupt_complete(
         ThreadId driver, CapabilityId source_capability) noexcept;
+
+    // Resolves a capability over memory to the range it names.
+    //
+    // Capability-checked here for the same reason every other object's check
+    // is: MemoryGrantAuthority does not consult CapabilityTable and must not
+    // learn to. It answers what was granted; this answers whether this holder
+    // may spend it.
+    //
+    // The `memory_right_donate` requirement is the point. Mapping memory you
+    // were given and turning it into a translation table are different
+    // authorities - the second permanently changes what the range is and takes
+    // it out of the holder's reach - so a process can hold memory it may use
+    // without holding memory it may spend on kernel objects.
+    [[nodiscard]] os::core::Result<MemoryGrant> memory_for_capability(
+        ThreadId holder,
+        CapabilityId capability,
+        Rights required,
+        const MemoryGrantAuthority& grants) const noexcept;
 
     // Address-space lifecycle, capability-checked at this layer for the same
     // reason interrupt_attach is: AddressSpaceEpochAuthority does not consult
