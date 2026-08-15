@@ -27,19 +27,18 @@ Landed so far, each in its own reviewable diff:
    the reason is now a statement about its contract rather than about missing
    work - see "Address-space destruction" below.
 5. **Page-table pages can be donated**, which is where post-boot pages come from
-   at all. `aarch64_donate_table_page` reserves the page as `kernel_object`
-   before donating it, so the reservation rules refuse a donor that has not
-   unmapped its own page first.
+   at all. `aarch64_donate_table_page` reserves the page before donating it, so
+   the reservation rules refuse a donor that has not unmapped its own page
+   first. The kind is `kernel_private`, not `kernel_object` - see the EL0 entry
+   below for why TTBR0-only translation forces that, and what it does not give
+   up.
 6. **An address space can be created after boot**, in the order the circular
    dependency permits rather than the one the design implied: create, donate,
    initialize root, map, seal. See "Creation works" below.
 7. **A capability can name one lifetime of a space.** `address_space_object_id`
    folds the generation into the object id, so a reference held across a
    destroy-and-recreate stops resolving on its own, with the ordinary
-   not-found error rather than a distinguishing one. Decoders for calls 7 and 8
-   exist; nothing dispatches them yet.
-9. **A process can create and destroy one.** Calls 7 and 8 dispatched at the
-   AArch64 syscall entry, proven from EL0 under `kernel-arm64-native`.
+   not-found error rather than a distinguishing one.
 8. **The kernel decides who may create and destroy one.**
    `Kernel::address_space_create` and the two-phase
    `address_space_begin_destroy`/`address_space_complete_destroy`, plus
@@ -47,6 +46,8 @@ Landed so far, each in its own reviewable diff:
    a capability carries. The exit criterion about stale references is tested
    directly: a capability minted over a destroyed space does not reach the
    space that later occupies its slot.
+9. **A process can create and destroy one.** Calls 7 and 8 dispatched at the
+   AArch64 syscall entry, proven from EL0 under `kernel-arm64-native`.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -117,8 +118,8 @@ donated pages as well as a bump range, and works with no bump range at all -
 which is the post-boot shape, because nothing was planned for a space created
 after any process existed. `aarch64_donate_table_page` is the enforcement point,
 and the enforcement is a composition rather than a new rule: it reserves the
-page as `kernel_object` before donating it, and `reserve_physical` already
-refuses a range some process can still reach. A donor that has not unmapped its
+page before donating it, and `reserve_physical` already refuses a range some
+process can still reach. A donor that has not unmapped its
 own page is rejected before that page becomes a translation table it could keep
 writing.
 
