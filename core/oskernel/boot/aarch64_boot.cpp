@@ -441,6 +441,25 @@ find_pl011(const os::kernel::HardwareInventory& inventory) noexcept {
     return true;
 }
 
+// True when any word across `pages` pages from `base` is non-zero.
+//
+// Reads through volatile for the same reason the zeroing writes through it:
+// this is called twice over the same range with a destroy in between, and
+// nothing the compiler can see writes to that range in this translation unit -
+// the writes happen inside aarch64_release_address_space. Ordinary loads would
+// let it fold the second call into the first and answer from a cached value,
+// which would make the proof pass whether reclamation ran or not.
+[[nodiscard]] bool any_nonzero_page(std::uint64_t base, std::size_t pages) noexcept {
+    const auto* words = reinterpret_cast<const volatile std::uint64_t*>(
+        static_cast<std::uintptr_t>(base));
+    const std::size_t count =
+        pages * static_cast<std::size_t>(page_size) / sizeof(std::uint64_t);
+    for (std::size_t index = 0U; index < count; ++index) {
+        if (words[index] != 0ULL) return true;
+    }
+    return false;
+}
+
 void zero_page(std::uint64_t physical_page) noexcept {
     auto* words = reinterpret_cast<volatile std::uint64_t*>(
         static_cast<std::uintptr_t>(physical_page));
@@ -1879,6 +1898,20 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             MachinePermissions::read_write)) fail("M7_11_MAP");
     uart_write("COOKIE:M7.11:SPACE_MAPPED\n");
 
+    // Establish what reclamation has to erase, before it runs. Checked rather
+    // than assumed: if these pages were already zero the check after the
+    // destroy would pass without reclamation doing anything, and would keep
+    // passing if reclamation were removed. A proof that cannot fail proves
+    // nothing.
+    //
+    // They are not zero because they are translation tables with live
+    // descriptors in them - the root points at a level-2 table, which points
+    // at a level-3 table, which points at the page mapped above. That is
+    // exactly the content worth erasing: it is the destroyed space's layout.
+    if (!any_nonzero_page(dynamic_pages.value().base, dynamic_donated_pages)) {
+        fail("M7_11_TABLES_ALREADY_ZERO");
+    }
+
     const auto dynamic_identity = dynamic_created.value().epoch.identity();
     auto dynamic_retiring = boot_kernel.address_space_begin_destroy(
         process_a_thread, dynamic_created.value().capability, boot_epochs);
@@ -1889,6 +1922,14 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             process_a_thread, dynamic_created.value().capability,
             dynamic_retiring.value(), boot_epochs)) fail("M7_11_COMPLETE_DESTROY");
     uart_write("COOKIE:M7.11:SPACE_DESTROYED\n");
+
+    // The other half of the pair. Every page that held the destroyed space's
+    // translation tables is now zero, so nothing it knew about its own layout
+    // survives into whoever donates or receives these pages next.
+    if (any_nonzero_page(dynamic_pages.value().base, dynamic_donated_pages)) {
+        fail("M7_11_TABLES_NOT_ZEROED");
+    }
+    uart_write("COOKIE:M7.11:PAGES_ZEROED\n");
 
     // The exit criterion, on hardware. complete_destroy revoked the original
     // capability, so this mints a fresh one over the identity that space used

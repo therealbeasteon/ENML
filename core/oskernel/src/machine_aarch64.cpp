@@ -17,6 +17,21 @@
 namespace os::kernel {
 namespace {
 
+// Overwrites a range that is about to stop being reserved.
+//
+// Through a volatile pointer deliberately. This writes memory that nothing is
+// going to read again through any path the compiler can see, which is the
+// textbook shape of a dead store - and a compiler that removes it would delete
+// the security property silently and leave a test that still passes because
+// the range happened to be zero already. volatile is what makes the store an
+// observable side effect it is not allowed to drop.
+void zero_reclaimed_range(std::uint64_t physical_base, std::uint64_t length) noexcept {
+    auto* words = reinterpret_cast<volatile std::uint64_t*>(
+        static_cast<std::uintptr_t>(physical_base));
+    const auto count = length / sizeof(std::uint64_t);
+    for (std::uint64_t index = 0ULL; index < count; ++index) words[index] = 0ULL;
+}
+
 [[nodiscard]] constexpr os::core::Error machine_error(std::uint32_t code) noexcept {
     return os::core::make_error(os::core::ErrorDomain::kernel, code);
 }
@@ -150,9 +165,13 @@ os::core::Result<void> aarch64_donate_table_page(
 
     // If the arena refuses the page the reservation stands, and that is the
     // safe direction: a reserved page nobody uses is wasted, an unreserved page
-    // in use as a table is a hole. Releasing it here would also be wrong, since
-    // release_reservations drops every reservation this space owns and cannot
-    // undo just this one.
+    // in use as a table is a hole.
+    //
+    // release_one_reservation could undo just this one now, and it still should
+    // not. The page was reserved because it is about to hold kernel state, and
+    // whether the arena accepted it does not change what a caller might already
+    // have done with it. Reclamation at destroy zeroes and releases it either
+    // way, so the wasted page is recovered rather than lost.
     return arena.donate(static_cast<std::uint64_t>(physical));
 }
 
@@ -241,8 +260,39 @@ os::core::Result<void> aarch64_release_address_space(
         if (!unmapped) return unmapped.error();
     }
 
-    auto released = space.mappings.release_reservations();
-    if (!released) return released.error();
+    // Reclamation. Each range this space owned is zeroed before it stops being
+    // reserved, one at a time so a failure part-way leaves the rest reserved
+    // rather than unreserved and still carrying their contents.
+    //
+    // This is what makes docs/M7_11_MEMORY.md's threat model true rather than
+    // intended: "a freed page must not carry data to its next holder...  a page
+    // whose contents the recipient must be trusted to ignore is not reclaimed,
+    // it is leaked." These ranges are translation tables, so what they carry is
+    // the destroyed space's entire layout - which pages it had and where.
+    //
+    // Zeroing before dropping, not after, and the order is the whole safety
+    // argument: a range that is unreserved is mappable, so a range zeroed after
+    // release could be claimed and read in between. There is no such window
+    // this way round.
+    //
+    // The kernel can still write these because a page donated to a space stays
+    // kernel-writable for the space's whole life - it has to, or the kernel
+    // could not have built the tables in it. Reclamation needs no mapping that
+    // construction did not already require.
+    for (;;) {
+        auto reservation = space.mappings.any_reservation();
+        if (!reservation) {
+            const auto error = reservation.error();
+            if (error.domain == os::core::ErrorDomain::kernel &&
+                error.code == machine_errors::not_mapped) break;
+            return error;
+        }
+        zero_reclaimed_range(
+            reservation.value().physical_base, reservation.value().length);
+        auto dropped = space.mappings.release_one_reservation(
+            reservation.value().physical_base, reservation.value().length);
+        if (!dropped) return dropped.error();
+    }
 
     // The ASID's own invalidation, which the epoch authority requires before it
     // will complete retirement. Ordered after the per-mapping TLBIs rather than

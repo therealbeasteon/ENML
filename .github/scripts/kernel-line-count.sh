@@ -803,7 +803,34 @@ not_kernel=(
 # derives it from the slot and active() already re-derives it to validate what
 # it is handed.
 core_ceiling=3759
-machine_ceiling=3191
+#
+# Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
+# 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
+# rather than intended - "a freed page must not carry data to its next holder...
+# a page whose contents the recipient must be trusted to ignore is not
+# reclaimed, it is leaked."
+#
+# aarch64_release_address_space now zeroes every range a destroyed space owned
+# before dropping its reservation, one range at a time. Two orderings in it are
+# the safety argument rather than style. Zero before dropping, because an
+# unreserved range is mappable and one zeroed after release could be claimed
+# and read in between. And one at a time, because a failure part-way then
+# leaves the rest reserved rather than unreserved and still carrying contents.
+#
+# The zeroing writes through a volatile pointer. This is memory nothing reads
+# again through any path a compiler can see - the textbook shape of a dead
+# store - and a compiler that removed it would delete the security property
+# silently while leaving any test that checks for zeroes still passing,
+# because the range would often be zero anyway.
+#
+# The entry lines are the proof, and it is deliberately a pair: the boot proof
+# asserts the table pages are NON-zero before the destroy and zero after. The
+# first half is what stops the second from being vacuous - without it the check
+# would pass on a range that was always zero, and keep passing if reclamation
+# were deleted. It reads through volatile too, since the writes it is looking
+# for happen in another translation unit and the two reads would otherwise fold
+# into one.
+machine_ceiling=3229
 discovery_ceiling=1272
 #
 # Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry
@@ -903,8 +930,8 @@ discovery_ceiling=1272
 # donation reserves kernel_private - three kernel-side writers of a page about
 # to become a translation table is what kernel_object forbids and what
 # TTBR0-only translation forces.
-entry_ceiling=1363
-total_ceiling=9585
+entry_ceiling=1380
+total_ceiling=9640
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

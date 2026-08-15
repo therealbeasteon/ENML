@@ -245,6 +245,7 @@ jobs:
           grep -F 'COOKIE:M7.11:SPACE_CREATED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:SPACE_MAPPED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:SPACE_DESTROYED' cookie-qemu.log
+          grep -F 'COOKIE:M7.11:PAGES_ZEROED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:STALE_REFUSED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:EL0_CREATED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:EL0_DESTROYED' cookie-qemu.log
