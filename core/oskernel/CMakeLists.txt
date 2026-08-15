@@ -5,6 +5,7 @@ add_library(oskernel STATIC
     src/ipc_endpoint.cpp
     src/ipc_syscall.cpp
     src/address_space_syscall.cpp
+    src/memory_grant.cpp
     src/ipc_continuation.cpp
     src/interrupt.cpp
     src/interrupt_delivery.cpp
