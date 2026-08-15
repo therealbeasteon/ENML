@@ -76,6 +76,15 @@ label="${1:-kernel-line-count}"
 #                   includes it, which is the whole point of listing it here
 #                   by name rather than letting it slip in unclassified.
 #
+#   fault_delivery.*  The question a fault asks, held between the kernel asking
+#                   it and the pager answering. Built into emnl::oskernel and
+#                   unit-tested, but nothing in cookie_kernel_aarch64_boot
+#                   includes it yet - there is no pager - so it is not in the
+#                   shipped image and counting it would overstate what is
+#                   trusted today. It moves into `core` in the increment that
+#                   makes the EL0 fault path arm a pager instead of terminating
+#                   the faulting thread, which is the whole reason it exists.
+#
 #   CMakeLists.txt, *.ld.in  Build description. Not code that runs.
 #
 # Any file under core/oskernel that appears in neither a category nor the
@@ -237,6 +246,8 @@ not_kernel=(
     "core/oskernel/CMakeLists.txt"
     "core/oskernel/boot/aarch64_qemu.ld.in"
     "core/oskernel/include/os/kernel/aarch64_kernel_translation_domain.hpp"
+    "core/oskernel/include/os/kernel/fault_delivery.hpp"
+    "core/oskernel/src/fault_delivery.cpp"
     "core/oskernel/include/os/kernel/machine_host.hpp"
     "core/oskernel/src/machine_host.cpp"
 )
