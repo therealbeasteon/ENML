@@ -876,8 +876,35 @@ discovery_ceiling=1272
 # ever exists. The mapped page is deliberately not one of the donated ones,
 # because a user-accessible translation of a live translation table is exactly
 # what the kernel_object reservation is there to refuse.
-entry_ceiling=1214
-total_ceiling=9436
+#
+# Raised again, by M7.11's EL0 dispatch: entry 1,214 -> 1,363, total 9,436 ->
+# 9,585. The largest entry raise of this milestone, and it buys the thing the
+# milestone existed for: a *process* can create an address space and destroy
+# it. kernel-arm64-native gates on COOKIE:M7.11:EL0_CREATED and
+# ..:EL0_DESTROYED, after the M7.9 device proof concludes.
+#
+# Most of the lines are the pool and the two halves of create. The pool is two
+# slots, not one, so it is a bound with a real exhaustion answer rather than a
+# single slot pretending to be a pool - and exhaustion returns to the caller
+# instead of halting, which is the no-allocator decision showing up exactly
+# where it should: running out is something a caller is told and can act on.
+#
+# Two things here are load-bearing and easy to undo by accident. The syscall
+# entry now admits CallAuthority::process_control, and immediately refuses
+# every process_control call other than the two implemented - widening an
+# authority check is not the same as implementing what it lets in, and the
+# other calls carrying it would otherwise fall through to the yield tail and
+# get a wrong answer rather than a refusal.
+#
+# And the root page EL0 names is in the kernel manifest, so it is mapped in
+# all three spaces. That is not tidiness: the kernel builds the created space's
+# tables from inside A's syscall, and Cookie translates through TTBR0 only, so
+# EL1 is running under A's root at that moment. It is also the concrete reason
+# donation reserves kernel_private - three kernel-side writers of a page about
+# to become a translation table is what kernel_object forbids and what
+# TTBR0-only translation forces.
+entry_ceiling=1363
+total_ceiling=9585
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

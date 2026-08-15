@@ -63,7 +63,12 @@ constexpr std::size_t runtime_stack_pages = 8U;
 // Four table pages plus one page for the created space to map. See the
 // selection site for why they are selected rather than carved from the boot
 // plan's arena.
-constexpr std::size_t dynamic_proof_pages = 5U;
+constexpr std::size_t dynamic_proof_pages = 6U;
+// Of those, the ones the boot proof donates as translation tables. The next
+// page is what it maps, and the last is kept back for the EL0 proof to name as
+// its own space's root - separate pages throughout, so neither proof can pass
+// because of state the other left behind.
+constexpr std::size_t dynamic_donated_pages = 4U;
 constexpr std::uint64_t dynamic_proof_virtual = 0x0000'0000'2000'0000ULL;
 constexpr std::uint64_t runtime_stack_virtual = 0x0000'007F'FEF0'0000ULL;
 constexpr std::uint64_t user_code_virtual = 0x0000'0000'1000'0000ULL;
@@ -105,6 +110,25 @@ constexpr std::uint64_t interrupt_attach_entry_virtual =
 constexpr std::uint64_t interrupt_complete_entry_virtual =
     user_code_virtual + 14U * sizeof(std::uint32_t);
 
+// M7.11's EL0 proof reuses the same redirect technique for the two
+// address-space calls: a bare svc and a branch-to-self, with x0/x1/x8 placed
+// by complete_after_switch. A never learns it is being redirected.
+constexpr std::uint64_t address_space_create_entry_virtual =
+    user_code_virtual + 16U * sizeof(std::uint32_t);
+constexpr std::uint64_t address_space_destroy_entry_virtual =
+    user_code_virtual + 18U * sizeof(std::uint32_t);
+
+// How many address spaces this image can hold at once for spaces created from
+// EL0. Two rather than one so the structure is a pool with a real bound and a
+// real exhaustion answer rather than a single slot pretending to be one; two
+// rather than many because nothing here needs more and every slot is a
+// MachineAddressSpace plus a builder sitting in .bss whether used or not.
+//
+// Exhaustion returns an error to the caller. That is the no-allocator decision
+// showing up where it is supposed to: running out of slots is a condition the
+// caller is told about and can act on, never a kernel failure it cannot.
+constexpr std::size_t max_el0_address_spaces = 2U;
+
 // How long after a successful attach the stand-in device source is armed to
 // assert. Short on purpose: nothing about this proof depends on real elapsed
 // time the way M7.5i's contention test does (see its own comment), so there
@@ -130,6 +154,31 @@ os::kernel::aarch64::GicV3PrimaryCpu boot_gic{};
 os::kernel::aarch64::EarlyPageArena dynamic_arena{};
 os::kernel::aarch64::EarlyStage1Builder dynamic_builder{dynamic_arena};
 os::kernel::MachineAddressSpace dynamic_space{};
+
+// The pool spaces created from EL0 live in. A real system needs this in the
+// machine layer with the rest of address-space lifetime; it is here because
+// this image is the only caller and putting it in `machine` before a second
+// caller exists would be designing a general mechanism from one example.
+struct El0AddressSpaceSlot final {
+    os::kernel::aarch64::EarlyPageArena arena{};
+    os::kernel::aarch64::EarlyStage1Builder builder{};
+    os::kernel::MachineAddressSpace space{};
+    os::kernel::AddressSpaceIdentity identity{};
+    bool occupied{false};
+};
+El0AddressSpaceSlot el0_address_spaces[max_el0_address_spaces]{};
+
+// The page A names as the root of the space it creates. Boot selects it and
+// hands it over in x1, because a process cannot yet name memory it owns -
+// memory capabilities are what will eventually authorize this, and the
+// creation-authority object is standing in for them meanwhile.
+std::uint64_t el0_space_root_page = 0ULL;
+os::kernel::CapabilityId el0_space_authority = os::kernel::invalid_capability;
+os::kernel::CapabilityId el0_space_capability = os::kernel::invalid_capability;
+// 0 nothing yet, 1 created, 2 destroyed. Drives the redirect chain the same
+// way el0_yield_count drives the M7.5f/M7.6a one.
+std::uint32_t el0_space_stage = 0U;
+bool device_proof_complete = false;
 
 os::kernel::MachinePhysicalLedger boot_physical_ledger{};
 os::kernel::MachineAddressSpace boot_kernel_space{};
@@ -447,6 +496,16 @@ void install_process_a_program(std::uint64_t physical_page) noexcept {
     // complete_after_switch.
     words[14] = svc_zero;
     words[15] = branch_self;
+
+    // M7.11 redirects A here once the device proof concludes, to create an
+    // address space and then to destroy the one it created - see
+    // address_space_create_entry_virtual. Same bare svc and branch-to-self as
+    // every redirect above: A never needs the capability's value, the call
+    // number, or to know it is being redirected.
+    words[16] = svc_zero;
+    words[17] = branch_self;
+    words[18] = svc_zero;
+    words[19] = branch_self;
 }
 
 void install_process_b_program(std::uint64_t physical_page) noexcept {
@@ -600,6 +659,25 @@ void disarm_stand_in_device_source() noexcept {
         frame.elr_el1 = interrupt_attach_entry_virtual;
         frame.x[0] = boot_device_interrupt_cap;
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::interrupt_attach);
+    } else if (next == process_a_thread && device_proof_complete && el0_space_stage == 0U) {
+        // The device proof concluded. Send A to create an address space -
+        // the first time in Cookie that a *process* rather than the boot
+        // routine asks for one.
+        el0_space_stage = 1U;
+        frame.elr_el1 = address_space_create_entry_virtual;
+        frame.x[0] = el0_space_authority;
+        frame.x[1] = el0_space_root_page;
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_create);
+    } else if (next == process_a_thread && el0_space_stage == 1U &&
+               el0_space_capability != os::kernel::invalid_capability) {
+        // A's create returned, and x0 carried the capability back to it. The
+        // destroy redirect uses the kernel's own record of that capability
+        // rather than reading it out of A's registers: what A holds is what
+        // this proof is testing, not what it is driven by.
+        el0_space_stage = 2U;
+        frame.elr_el1 = address_space_destroy_entry_virtual;
+        frame.x[0] = el0_space_capability;
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_destroy);
     }
     return true;
 }
@@ -700,6 +778,85 @@ extern "C" [[noreturn]] void cookie_aarch64_unhandled_fault(
     halt();
 }
 
+namespace {
+
+[[nodiscard]] El0AddressSpaceSlot* free_el0_address_space() noexcept {
+    for (auto& slot : el0_address_spaces) if (!slot.occupied) return &slot;
+    return nullptr;
+}
+
+[[nodiscard]] El0AddressSpaceSlot* el0_address_space_for(
+    os::kernel::AddressSpaceIdentity identity) noexcept {
+    if (!identity.valid()) return nullptr;
+    for (auto& slot : el0_address_spaces) {
+        if (slot.occupied && slot.identity == identity) return &slot;
+    }
+    return nullptr;
+}
+
+// The machine half and the kernel half of creating a space, in the order the
+// circular dependency permits: bind a rootless builder, take the caller's page,
+// build the root from it, and only then ask the kernel to authorize and name
+// the result. Authorizing first would mint a capability for a space that might
+// still fail to get a root, and the capability would then name nothing.
+[[nodiscard]] os::core::Result<os::kernel::CapabilityId> create_el0_address_space(
+    El0AddressSpaceSlot& slot,
+    os::kernel::ThreadId creator,
+    os::kernel::CapabilityId authority,
+    std::uint64_t root_page) noexcept {
+    slot.arena = os::kernel::aarch64::EarlyPageArena{};
+    slot.builder = os::kernel::aarch64::EarlyStage1Builder{};
+    auto attached = slot.builder.attach_arena(slot.arena);
+    if (!attached) return attached.error();
+
+    auto bound = os::kernel::aarch64_create_address_space(
+        slot.space, boot_physical_ledger, slot.builder);
+    if (!bound) return bound.error();
+
+    auto donated = os::kernel::aarch64_donate_table_page(
+        slot.space, slot.arena, static_cast<std::uintptr_t>(root_page));
+    if (!donated) return donated.error();
+
+    auto root = os::kernel::aarch64_initialize_translation_root(slot.space);
+    if (!root) return root.error();
+
+    auto created = boot_kernel.address_space_create(creator, authority, boot_epochs);
+    if (!created) return created.error();
+
+    slot.identity = created.value().epoch.identity();
+    slot.occupied = true;
+    return created.value().capability;
+}
+
+// Destroy in the order the ASID lifecycle requires: invalidate the software
+// epoch, then let the machine layer tear down translations and invalidate
+// TLBs, then release the ASID. The slot is only freed once all three have
+// happened, so a failure part-way leaves it occupied rather than handing a
+// half-retired space to the next caller.
+[[nodiscard]] bool destroy_el0_address_space(
+    os::kernel::ThreadId owner,
+    os::kernel::CapabilityId capability) noexcept {
+    auto retiring = boot_kernel.address_space_begin_destroy(
+        owner, capability, boot_epochs);
+    if (!retiring) return false;
+
+    auto* slot = el0_address_space_for(retiring.value().epoch.identity());
+    if (slot == nullptr) return false;
+
+    if (!os::kernel::aarch64_release_address_space(slot->space, retiring.value())) {
+        return false;
+    }
+    if (!boot_kernel.address_space_complete_destroy(
+            owner, capability, retiring.value(), boot_epochs)) {
+        return false;
+    }
+    slot->identity = os::kernel::AddressSpaceIdentity{};
+    slot->occupied = false;
+    return true;
+}
+
+} // namespace
+
 extern "C" void cookie_kernel_syscall_entry(
     os::kernel::aarch64::ExceptionFrame* frame) noexcept {
     if (frame == nullptr) halt();
@@ -707,10 +864,72 @@ extern "C" void cookie_kernel_syscall_entry(
     const auto current = boot_preemption.running();
     if (!call ||
         (call.value().authority != os::kernel::CallAuthority::unprivileged &&
-         call.value().authority != os::kernel::CallAuthority::interrupt_control) ||
+         call.value().authority != os::kernel::CallAuthority::interrupt_control &&
+         call.value().authority != os::kernel::CallAuthority::process_control) ||
         (current != process_a_thread && current != process_b_thread)) {
         uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
         halt();
+    }
+
+    // process_control is admitted above for the two address-space calls, and
+    // for nothing else yet. The other calls carrying that authority
+    // (create_thread, destroy_thread, and the rest) have no dispatch here, so
+    // an EL0 caller naming one would fall through every branch below and reach
+    // the yield tail, which is a wrong answer rather than a refusal. Refused
+    // explicitly instead: widening the authority check is not the same as
+    // implementing what it lets in.
+    if (call.value().authority == os::kernel::CallAuthority::process_control &&
+        call.value().call != os::kernel::KernelCall::address_space_create &&
+        call.value().call != os::kernel::KernelCall::address_space_destroy) {
+        uart_write("COOKIE:PANIC:EL0_PROCESS_CONTROL\n");
+        halt();
+    }
+
+    if (call.value().call == os::kernel::KernelCall::address_space_create) {
+        auto decoded = os::kernel::decode_address_space_create_syscall(
+            frame->x[0], frame->x[1]);
+        if (!decoded) {
+            uart_write("COOKIE:PANIC:EL0_AS_DECODE\n");
+            halt();
+        }
+        // Every failure below returns to A rather than halting, because each
+        // one is a condition a caller could legitimately provoke - no free
+        // slot, a page it does not own, an epoch table that is full. The
+        // no-allocator decision is only worth anything if running out is an
+        // answer the caller gets rather than a machine that stops.
+        auto* slot = free_el0_address_space();
+        if (slot == nullptr) {
+            frame->x[0] = 0ULL;
+            uart_write("COOKIE:M7.11:EL0_POOL_FULL\n");
+            return;
+        }
+        auto created = create_el0_address_space(
+            *slot, current, decoded.value().authority, decoded.value().root_page);
+        if (!created) {
+            frame->x[0] = 0ULL;
+            uart_write("COOKIE:M7.11:EL0_CREATE_REFUSED\n");
+            return;
+        }
+        el0_space_capability = created.value();
+        frame->x[0] = created.value();
+        uart_write("COOKIE:M7.11:EL0_CREATED\n");
+        return;
+    }
+
+    if (call.value().call == os::kernel::KernelCall::address_space_destroy) {
+        auto decoded = os::kernel::decode_address_space_destroy_syscall(frame->x[0]);
+        if (!decoded) {
+            uart_write("COOKIE:PANIC:EL0_AS_DECODE\n");
+            halt();
+        }
+        if (!destroy_el0_address_space(current, decoded.value().space)) {
+            frame->x[0] = 0ULL;
+            uart_write("COOKIE:M7.11:EL0_DESTROY_REFUSED\n");
+            return;
+        }
+        frame->x[0] = 1ULL;
+        uart_write("COOKIE:M7.11:EL0_DESTROYED\n");
+        return;
     }
 
     if (call.value().call == os::kernel::KernelCall::send ||
@@ -837,6 +1056,10 @@ extern "C" void cookie_kernel_syscall_entry(
         }
         frame->x[0] = completed.value() ? 1ULL : 0ULL;
         uart_write("COOKIE:M7.9:COMPLETED\n");
+        // Releases M7.11's redirect chain. It waits for this rather than
+        // running alongside, so a failure in either proof cannot be mistaken
+        // for a failure in the other.
+        device_proof_complete = true;
         return;
     }
 
@@ -1417,6 +1640,24 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             MachinePermissions::read_write,
             MachineMemoryKind::normal,
             os::kernel::aarch64::KernelMappingRole::guarded_stack) ||
+        // The page EL0 will name as its created space's root. It has to be in
+        // the manifest, which means mapped in all three spaces, because the
+        // kernel builds that space's tables from inside A's syscall - and
+        // Cookie translates through TTBR0 only, so EL1 is running under A's
+        // root at that moment. A mapping in boot_kernel_space alone would not
+        // be there when it is needed.
+        //
+        // Kernel-only and writable. It is also why donation reserves
+        // kernel_private: three kernel-side writers of a page that is about to
+        // become a translation table is exactly what kernel_object forbids and
+        // what TTBR0-only translation forces.
+        !add_manifest_range(
+            kernel_manifest,
+            dynamic_pages.value().base + (dynamic_proof_pages - 1U) * page_size,
+            dynamic_pages.value().base + (dynamic_proof_pages - 1U) * page_size,
+            page_size,
+            MachinePermissions::read_write,
+            MachineMemoryKind::normal) ||
         !add_device_manifest(kernel_manifest, gic_topology.value().distributor) ||
         !add_device_manifest(kernel_manifest, uart->registers)) fail("MANIFEST");
 
@@ -1581,6 +1822,13 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         os::kernel::address_space_right_create,
         false);
     if (!address_space_authority) fail("M7_11_AUTHORITY");
+    // Held for the EL0 proof further down, which needs the same authority from
+    // inside a syscall rather than from here.
+    el0_space_authority = address_space_authority.value();
+    // The last of the pages selected for this proof, kept back from the
+    // donations above so EL0 has one to name as its own space's root.
+    el0_space_root_page =
+        dynamic_pages.value().base + (dynamic_proof_pages - 1U) * page_size;
 
     if (!os::kernel::aarch64_create_address_space(
             dynamic_space, boot_physical_ledger, dynamic_builder)) fail("M7_11_CREATE");
@@ -1594,7 +1842,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // the no-allocator decision made concrete: the kernel cannot answer "give
     // me a page" and never has to, because the only way to get one is for
     // whoever already holds it to hand it over.
-    for (std::size_t page = 0U; page + 1U < dynamic_proof_pages; ++page) {
+    for (std::size_t page = 0U; page < dynamic_donated_pages; ++page) {
         if (!os::kernel::aarch64_donate_table_page(
                 dynamic_space, dynamic_arena,
                 static_cast<std::uintptr_t>(
@@ -1615,7 +1863,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             dynamic_space,
             static_cast<std::uintptr_t>(dynamic_proof_virtual),
             static_cast<std::uintptr_t>(
-                dynamic_pages.value().base + (dynamic_proof_pages - 1U) * page_size),
+                dynamic_pages.value().base + dynamic_donated_pages * page_size),
             static_cast<std::size_t>(page_size),
             MachinePermissions::read_write)) fail("M7_11_MAP");
     uart_write("COOKIE:M7.11:SPACE_MAPPED\n");
