@@ -181,6 +181,10 @@ os::kernel::CapabilityId el0_space_capability = os::kernel::invalid_capability;
 // 0 nothing yet, 1 created, 2 destroyed. Drives the redirect chain the same
 // way el0_yield_count drives the M7.5f/M7.6a one.
 std::uint32_t el0_space_stage = 0U;
+// How many times A has successfully created a space. The second one is the
+// interesting one: it proves the memory capability survived the first space's
+// destruction, which is the loan reading of donation.
+std::uint32_t el0_space_creates = 0U;
 bool device_proof_complete = false;
 
 os::kernel::MachinePhysicalLedger boot_physical_ledger{};
@@ -700,6 +704,34 @@ void disarm_stand_in_device_source() noexcept {
         frame.elr_el1 = address_space_destroy_entry_virtual;
         frame.x[0] = el0_space_capability;
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_destroy);
+    } else if (next == process_a_thread && el0_space_stage == 2U) {
+        // Create again, with the *same* memory capability A used the first
+        // time. This is what turns donation-as-a-loan from something the code
+        // happens to do into something it is gated on.
+        //
+        // Donating a page does not consume the grant. The alternative -
+        // revoking it on donate and re-issuing one on destroy - was rejected
+        // because it would make the kernel an origin of grants, and boot being
+        // the only origin is what stops the grant table becoming a pool the
+        // kernel dispenses from. Under the loan reading the holder's authority
+        // never left, so there is nothing to hand back: what ends at destroy is
+        // the space's use of the page, not A's claim on it.
+        //
+        // If that reading is wrong the second create fails, rather than the
+        // proof passing because nothing ever tried.
+        el0_space_stage = 3U;
+        frame.elr_el1 = address_space_create_entry_virtual;
+        frame.x[0] = el0_space_authority;
+        frame.x[1] = el0_space_root_grant;
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_create);
+    } else if (next == process_a_thread && el0_space_stage == 3U &&
+               el0_space_capability != os::kernel::invalid_capability) {
+        // And tear the second one down too, so the proof ends with nothing
+        // live rather than a space left over that nobody destroyed.
+        el0_space_stage = 4U;
+        frame.elr_el1 = address_space_destroy_entry_virtual;
+        frame.x[0] = el0_space_capability;
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_destroy);
     }
     return true;
 }
@@ -962,7 +994,13 @@ extern "C" void cookie_kernel_syscall_entry(
         }
         el0_space_capability = created.value();
         frame->x[0] = created.value();
+        ++el0_space_creates;
         uart_write("COOKIE:M7.11:EL0_CREATED\n");
+        // Announced separately because it is a different claim. The first
+        // create proves a process can make an address space; this one proves
+        // the page it was built from came back when that space was destroyed,
+        // and came back to the same holder rather than to a pool.
+        if (el0_space_creates == 2U) uart_write("COOKIE:M7.11:EL0_GRANT_REUSED\n");
         return;
     }
 
