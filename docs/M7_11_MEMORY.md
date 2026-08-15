@@ -27,17 +27,18 @@ Landed so far, each in its own reviewable diff:
    the reason is now a statement about its contract rather than about missing
    work - see "Address-space destruction" below.
 5. **Page-table pages can be donated**, which is where post-boot pages come from
-   at all. `aarch64_donate_table_page` reserves the page as `kernel_object`
-   before donating it, so the reservation rules refuse a donor that has not
-   unmapped its own page first.
+   at all. `aarch64_donate_table_page` reserves the page before donating it, so
+   the reservation rules refuse a donor that has not unmapped its own page
+   first. The kind is `kernel_private`, not `kernel_object` - see the EL0 entry
+   below for why TTBR0-only translation forces that, and what it does not give
+   up.
 6. **An address space can be created after boot**, in the order the circular
    dependency permits rather than the one the design implied: create, donate,
    initialize root, map, seal. See "Creation works" below.
 7. **A capability can name one lifetime of a space.** `address_space_object_id`
    folds the generation into the object id, so a reference held across a
    destroy-and-recreate stops resolving on its own, with the ordinary
-   not-found error rather than a distinguishing one. Decoders for calls 7 and 8
-   exist; nothing dispatches them yet.
+   not-found error rather than a distinguishing one.
 8. **The kernel decides who may create and destroy one.**
    `Kernel::address_space_create` and the two-phase
    `address_space_begin_destroy`/`address_space_complete_destroy`, plus
@@ -45,6 +46,8 @@ Landed so far, each in its own reviewable diff:
    a capability carries. The exit criterion about stale references is tested
    directly: a capability minted over a destroyed space does not reach the
    space that later occupies its slot.
+9. **A process can create and destroy one.** Calls 7 and 8 dispatched at the
+   AArch64 syscall entry, proven from EL0 under `kernel-arm64-native`.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -115,8 +118,8 @@ donated pages as well as a bump range, and works with no bump range at all -
 which is the post-boot shape, because nothing was planned for a space created
 after any process existed. `aarch64_donate_table_page` is the enforcement point,
 and the enforcement is a composition rather than a new rule: it reserves the
-page as `kernel_object` before donating it, and `reserve_physical` already
-refuses a range some process can still reach. A donor that has not unmapped its
+page before donating it, and `reserve_physical` already refuses a range some
+process can still reach. A donor that has not unmapped its
 own page is rejected before that page becomes a translation table it could keep
 writing.
 
@@ -205,9 +208,42 @@ and a foreign writable mapping cannot coexist *on one ledger* is therefore
 asserted by no test. It should get one, precisely because the boundary above
 means the boot path does not exercise it.
 
-**Still missing: the syscall dispatch.** Nothing decodes calls 7 and 8 at the
-AArch64 syscall entry, so the composition is reachable from the boot routine
-and from host tests but not yet from EL0.
+**A process can now create an address space and destroy it.** Calls 7 and 8
+are decoded at the AArch64 syscall entry, and `kernel-arm64-native` gates on
+`COOKIE:M7.11:EL0_CREATED` and `..:EL0_DESTROYED` after the M7.9 device proof
+concludes. Two decisions in it are worth knowing before changing anything near
+them.
+
+The entry admits `CallAuthority::process_control` and then refuses every
+`process_control` call other than these two. Widening an authority check is
+not the same as implementing what it lets in: the others carrying that
+authority have no dispatch, so without the explicit refusal a caller naming
+one would fall through to the yield tail and get a wrong answer rather than a
+refusal.
+
+The root page the caller names is in the kernel manifest, and therefore mapped
+in all three spaces. That is not tidiness. The kernel builds the created
+space's tables from inside the caller's syscall, and Cookie translates through
+TTBR0 only, so EL1 is executing under the caller's root at that moment - a
+mapping in `boot_kernel_space` alone would not be there when it is needed. It
+is also why donation reserves `kernel_private` rather than `kernel_object`:
+three kernel-side writers of a page about to become a translation table is
+exactly what the stronger kind forbids and what TTBR0-only translation forces.
+Both tighten when M7.7's TTBR1 split lands, and the code says so where it
+would need changing.
+
+Spaces created this way live in a fixed two-slot pool. Exhaustion returns an
+error to the caller rather than halting, which is the no-allocator decision
+showing up where it should: running out is a condition a caller is told about
+and can act on, never a kernel failure it cannot.
+
+**Still missing: everything reclamation.** A destroyed space's pages are
+unmapped and its reservations dropped, but nothing zeroes them and nothing
+hands them back to a caller to donate again - the pool slot is reusable, the
+memory is not. The threat-model entry above ("a freed page must not carry data
+to its next holder") is therefore still a statement of intent. Grant, split
+and reclaim over the reservation table are what close it, and they are the
+last unbuilt piece of the physical-authority design.
 
 **Also still missing: what creation should really be authorized by.** The
 creation authority is a distinguished object, and it is a placeholder. In the
