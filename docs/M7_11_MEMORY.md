@@ -64,6 +64,9 @@ Landed so far, each in its own reviewable diff:
 14. **An EL0 fault kills the thread and the machine keeps running.** Proven by
     the same deliberate fault: the scheduler switches to the surviving thread
     and boot continues past it.
+15. **A fault question can be held until it is answered.**
+    `FaultDeliveryTable`, with the two states the faulting thread's suspension
+    requires. Not yet armed by anything.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -335,12 +338,33 @@ fault forever. Telling the runqueue first is the smallest true statement, and
 it is what lets the scheduler answer honestly; the thread is destroyed only
 once something else is running.
 
-**Still missing: a pager to deliver to, and subdividing authority.** There is
-nowhere to send the question, so the region is reported and the thread dies
-rather than being resumed on backing that arrived. What is settled is what the
-kernel is willing to say, which is the half that cannot be retrofitted once a
-pager is listening. And `split` stays unbuilt for want of a caller that would
-define its shape.
+**The question a fault asks now has somewhere to wait.**
+`FaultDeliveryTable` holds it between the kernel asking and a pager answering,
+modelled on `InterruptDeliveryTable` because it is the same shape - except that
+an interrupt delivery is finished when the driver reads it, while a fault
+delivery is a *question*, so something must remember who is blocked on the
+answer. That is why it has two states rather than one: a one-state table would
+lose the faulting thread the instant the pager was told, and backing would
+arrive with nobody to give it to.
+
+Three of its refusals carry the disclosure decision down into this layer rather
+than trusting the caller: `arm` takes a `FaultReport` rather than its parts, so
+a question can only be built from something `resolve` produced; a `terminate`
+disposition is refused, because that is what `sealed` and undeclared memory
+produce and arming one would route around the decision; and a pager cannot be
+asked about its own fault, which would block it from answering.
+
+A pager that never answers leaves the slot occupied, and that is correct rather
+than a leak: the region's one announcement is already spent, so nothing can ask
+about that transition again. `release` hands the waiting thread back so a dying
+pager's debt can be collected instead of leaving a thread blocked forever.
+
+**Still missing: the pager itself, and subdividing authority.** Nothing arms
+the table yet - the EL0 fault path still terminates rather than asks - and
+nothing answers. That increment is what turns "the kernel can hold a question"
+into this milestone's last exit criterion, *it runs, takes a translation fault,
+has the fault resolved by a userland pager, and continues*. And `split` stays
+unbuilt for want of a caller that would define its shape.
 
 **Also still missing: what creation should really be authorized by.** The
 creation authority is a distinguished object, and it is a placeholder. In the
