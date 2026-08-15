@@ -250,3 +250,12 @@ jobs:
           grep -F 'COOKIE:M7.11:EL0_CREATED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:EL0_DESTROYED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:EL0_GRANT_REUSED' cookie-qemu.log
+          grep -F 'COOKIE:M7.11:FAULT_REGION' cookie-qemu.log
+          # The disclosure property itself, checked as an absence: the fault
+          # report must name a region and must not name the faulting address.
+          # A regression that started printing FAR would still emit the marker
+          # above, so the marker alone proves nothing.
+          if grep -F 'COOKIE:M7.11:FAULT_REGION' cookie-qemu.log | grep -q 'far='; then
+            echo 'fault report disclosed the faulting address' >&2
+            exit 1
+          fi

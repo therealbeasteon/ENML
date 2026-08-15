@@ -21,6 +21,7 @@
 #include <os/kernel/arch_timer_discovery.hpp>
 #include <os/kernel/boot_memory.hpp>
 #include <os/kernel/boot_memory_plan.hpp>
+#include <os/kernel/fault_region.hpp>
 #include <os/kernel/fdt.hpp>
 #include <os/kernel/gic_v3_discovery.hpp>
 #include <os/kernel/hardware_inventory.hpp>
@@ -117,6 +118,13 @@ constexpr std::uint64_t address_space_create_entry_virtual =
     user_code_virtual + 16U * sizeof(std::uint32_t);
 constexpr std::uint64_t address_space_destroy_entry_virtual =
     user_code_virtual + 18U * sizeof(std::uint32_t);
+constexpr std::uint64_t fault_probe_entry_virtual =
+    user_code_virtual + 20U * sizeof(std::uint32_t);
+
+// The address A is sent to touch, and the region declared over it. Inside A's
+// address space and deliberately never mapped, so the load faults; inside a
+// declared region, so the kernel has a defined answer rather than a panic.
+constexpr std::uint64_t fault_probe_virtual = 0x0000'0000'3000'0000ULL;
 
 // How many address spaces this image can hold at once for spaces created from
 // EL0. Two rather than one so the structure is a pool with a real bound and a
@@ -185,6 +193,10 @@ std::uint32_t el0_space_stage = 0U;
 // interesting one: it proves the memory capability survived the first space's
 // destruction, which is the loan reading of donation.
 std::uint32_t el0_space_creates = 0U;
+// Per-address-space by design (see fault_region.hpp); this harness runs one,
+// for process A.
+os::kernel::FaultRegionTable boot_fault_regions{};
+bool fault_probe_armed = false;
 bool device_proof_complete = false;
 
 os::kernel::MachinePhysicalLedger boot_physical_ledger{};
@@ -532,6 +544,15 @@ void install_process_a_program(std::uint64_t physical_page) noexcept {
     words[17] = branch_self;
     words[18] = svc_zero;
     words[19] = branch_self;
+
+    // M7.11's fault-disclosure proof. `ldr x0, [x1]` against an address the
+    // redirect places in x1 - a page inside a declared region that has no
+    // backing - so the load takes a translation fault the kernel has a defined
+    // answer for. A load rather than a store because a read is the weaker case:
+    // if the kernel discloses on a read it discloses on a write too.
+    constexpr std::uint32_t ldr_x0_x1 = 0xF9400020U;
+    words[20] = ldr_x0_x1;
+    words[21] = branch_self;
 }
 
 void install_process_b_program(std::uint64_t physical_page) noexcept {
@@ -732,6 +753,14 @@ void disarm_stand_in_device_source() noexcept {
         frame.elr_el1 = address_space_destroy_entry_virtual;
         frame.x[0] = el0_space_capability;
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_destroy);
+    } else if (next == process_a_thread && el0_space_stage == 4U && !fault_probe_armed) {
+        // Last, because it ends the run: send A to touch an address inside a
+        // declared region that has no backing. Everything above has already
+        // reported by now, so a fault here cannot be mistaken for one of them
+        // failing.
+        fault_probe_armed = true;
+        frame.elr_el1 = fault_probe_entry_virtual;
+        frame.x[1] = fault_probe_virtual;
     }
     return true;
 }
@@ -782,6 +811,35 @@ extern "C" [[noreturn]] void cookie_aarch64_unhandled_fault(
     using os::kernel::aarch64::AbortCause;
     using os::kernel::aarch64::FaultKind;
     const auto fault = os::kernel::aarch64::describe_fault(frame->esr_el1);
+
+    // A fault inside a declared region is an answerable question, not a panic,
+    // and what the kernel says about it is deliberately not what it knows.
+    //
+    // resolve() reports the *region* the faulting address falls in - never the
+    // address - because the address at 4 KiB resolution is the controlled-
+    // channel primitive docs/M7_11_FAULT_PRIVACY.md exists to withhold. The
+    // region's extent was chosen by the process when it declared it, so the
+    // resolution of anything observable here is the process's own decision
+    // rather than the hardware's page size.
+    //
+    // Deliberately consulted before the panic reporter below, and the ordering
+    // is the property: if the region path ran second, every fault would have
+    // already printed FAR on its way here.
+    if ((fault.kind == FaultKind::data_abort ||
+         fault.kind == FaultKind::instruction_abort) &&
+        fault.far_valid && fault.from_lower_el) {
+        const auto report = boot_fault_regions.resolve(frame->far_el1, fault.write);
+        if (report.deliverable()) {
+            uart_write("COOKIE:M7.11:FAULT_REGION region=");
+            uart_write_hex(static_cast<std::uint64_t>(report.region));
+            uart_write(fault.write ? " write=1" : " write=0");
+            // No pager exists yet, so the question has nowhere to go. What is
+            // proven here is what the kernel is willing to say, which is the
+            // half that cannot be retrofitted once a pager is listening.
+            uart_write(" (no pager: halting)\n");
+            halt();
+        }
+    }
 
     uart_write("COOKIE:PANIC:FAULT:");
     switch (fault.kind) {
@@ -1932,6 +1990,15 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         false);
     if (!root_grant_capability) fail("M7_11_GRANT_CAP");
     el0_space_root_grant = root_grant_capability.value();
+
+    // The region A's fault probe lands in. Declared `paged`, which is the
+    // disclosure class that permits a pager to be asked at all - `sealed`
+    // would refuse to produce a question and terminate instead, which is the
+    // right default for key material and the wrong thing to demonstrate a
+    // report with.
+    if (!boot_fault_regions.declare(
+            fault_probe_virtual, page_size,
+            os::kernel::FaultDisclosure::paged)) fail("M7_11_DECLARE_REGION");
 
     if (!os::kernel::aarch64_create_address_space(
             dynamic_space, boot_physical_ledger, dynamic_builder)) fail("M7_11_CREATE");
