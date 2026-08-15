@@ -1,6 +1,7 @@
 #include <os/kernel/aarch64_mapping_state.hpp>
 
 #include <array>
+#include <cstdio>
 #include <cstdlib>
 #include <cstdint>
 
@@ -10,6 +11,17 @@ namespace {
 // an implicit conversion to a bool parameter.
 template <typename T>
 void require(const T& value) { if (!value) std::abort(); }
+
+// require() aborts silently, which costs a CI round trip to localise every
+// time one fails - there is no local toolchain here. Named for the assertions
+// added with the reservation work so a failure says which one.
+template <typename T>
+void require_named(const T& value, const char* what) {
+    if (!value) {
+        std::fprintf(stderr, "mapping state: %s\n", what);
+        std::abort();
+    }
+}
 }
 
 int main() {
@@ -401,8 +413,14 @@ int main() {
     // path is a rule that has already stopped being enforced; these pin it.
     // ---------------------------------------------------------------------
     {
-        alignas(4096) std::array<std::byte, 4U * 4096U> tables_x{};
-        alignas(4096) std::array<std::byte, 4U * 4096U> tables_y{};
+        // Eight table pages each, not four. This block makes two mappings at
+        // virtual addresses under different level-1 indices, so the second
+        // cannot reuse the first's level-2/level-3 tables and needs two more
+        // pages of its own. Four pages ran out and the map failed with
+        // `exhausted`, which looks exactly like a reservation refusal from the
+        // outside and is not one.
+        alignas(4096) std::array<std::byte, 8U * 4096U> tables_x{};
+        alignas(4096) std::array<std::byte, 8U * 4096U> tables_y{};
         alignas(4096) std::array<std::byte, 4096U> contested{};
         const auto x_begin = static_cast<std::uint64_t>(
             reinterpret_cast<std::uintptr_t>(tables_x.data()));
@@ -462,28 +480,32 @@ int main() {
         alignas(4096) std::array<std::byte, 4096U> table_like{};
         const auto table_like_base = static_cast<std::uint64_t>(
             reinterpret_cast<std::uintptr_t>(table_like.data()));
-        require(space_y.reserve_physical(
-            table_like_base, 4096ULL, PhysicalReservationKind::kernel_private));
+        require_named(space_y.reserve_physical(
+                      table_like_base, 4096ULL, PhysicalReservationKind::kernel_private),
+                  "kernel_private reservation on an unmapped page was refused");
 
         auto user_refused = space_y.map_user(
             0x0000'0000'7000'0000ULL, table_like_base, 4096ULL,
             MachinePermissions::read_write);
-        require(!user_refused);
-        require(user_refused.error().code == machine_errors::kernel_object_alias);
+        require_named(!user_refused, "a user-accessible mapping of a kernel_private range was allowed");
+        require_named(user_refused.error().code == machine_errors::kernel_object_alias,
+                  "user-accessible mapping refused, but not by the reservation");
 
         auto executable_refused = space_y.map(
             0x0000'0000'8000'0000ULL, table_like_base, 4096ULL,
             MachinePermissions::read_execute, MachineMemoryKind::normal);
-        require(!executable_refused);
-        require(executable_refused.error().code == machine_errors::kernel_object_alias);
+        require_named(!executable_refused, "an executable mapping of a kernel_private range was allowed");
+        require_named(executable_refused.error().code == machine_errors::kernel_object_alias,
+                  "executable mapping refused, but not by the reservation");
 
         // And the case that must still work, on the same page: a kernel-only
         // writable mapping from a space that does not own the reservation.
         // This is the whole point of the change - it is how the kernel edits a
         // created space's tables while running under another process's root.
-        require(space_x.map(
-            0x0000'0000'9000'0000ULL, table_like_base, 4096ULL,
-            MachinePermissions::read_write, MachineMemoryKind::normal));
+        require_named(space_x.map(
+                      0x0000'0000'9000'0000ULL, table_like_base, 4096ULL,
+                      MachinePermissions::read_write, MachineMemoryKind::normal),
+                  "a foreign kernel-only writable mapping of a kernel_private range was refused");
     }
 
     // The same conflict in the other order: reserve first, then attempt the
