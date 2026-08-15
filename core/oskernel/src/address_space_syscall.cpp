@@ -12,24 +12,19 @@ namespace {
 
 os::core::Result<AddressSpaceCreateSyscall> decode_address_space_create_syscall(
     std::uint64_t x0_authority,
-    std::uint64_t x1_root_page) noexcept {
-    if (x0_authority == 0ULL) {
+    std::uint64_t x1_root_grant) noexcept {
+    // Both are capabilities, and zero is the only value this layer can reject.
+    // Whether either names anything, and whether the holder holds it, are
+    // capability-table questions answered where the check is enforced. A second
+    // weaker copy of a rule beside the enforcing one is how the two come to
+    // disagree.
+    if (x0_authority == 0ULL || x1_root_grant == 0ULL) {
         return address_space_syscall_error(
             address_space_syscall_errors::invalid_capability);
     }
-    // Zero is the only value this layer can reject. Page alignment and whether
-    // the caller actually owns this page are deliberately not checked here:
-    // alignment is an architectural property the portable decoder would have to
-    // import a machine header to know, and ownership is a ledger question that
-    // aarch64_donate_table_page already answers by refusing a page some process
-    // can still reach. Re-checking either here would put a second, weaker copy
-    // of a rule beside the enforcing one, which is how the two come to disagree.
-    if (x1_root_page == 0ULL) {
-        return address_space_syscall_error(address_space_syscall_errors::invalid_page);
-    }
     return AddressSpaceCreateSyscall{
         .authority = static_cast<CapabilityId>(x0_authority),
-        .root_page = x1_root_page,
+        .root_grant = static_cast<CapabilityId>(x1_root_grant),
     };
 }
 

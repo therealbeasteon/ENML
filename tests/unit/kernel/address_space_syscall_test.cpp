@@ -81,20 +81,21 @@ int main() {
     static_assert(address_space_right_hold != address_space_right_destroy);
     static_assert((address_space_right_hold & address_space_right_destroy) == 0U);
 
-    // create: both arguments carried through, and each rejected on its own.
+    // create: both arguments are capabilities now, carried through and each
+    // rejected on its own.
     {
-        auto decoded = decode_address_space_create_syscall(7ULL, 0x4000'1000ULL);
+        auto decoded = decode_address_space_create_syscall(7ULL, 9ULL);
         if (!check(static_cast<bool>(decoded), "a valid create was refused")) return 1;
         if (!check(decoded.value().authority == 7ULL, "create lost the authority")) return 1;
-        if (!check(decoded.value().root_page == 0x4000'1000ULL,
-                   "create lost the root page")) return 1;
+        if (!check(decoded.value().root_grant == 9ULL,
+                   "create lost the memory capability")) return 1;
     }
-    if (!check(refused(decode_address_space_create_syscall(0ULL, 0x4000'1000ULL),
+    if (!check(refused(decode_address_space_create_syscall(0ULL, 9ULL),
                        address_space_syscall_errors::invalid_capability),
                "create accepted a null authority")) return 1;
     if (!check(refused(decode_address_space_create_syscall(7ULL, 0ULL),
-                       address_space_syscall_errors::invalid_page),
-               "create accepted a null root page")) return 1;
+                       address_space_syscall_errors::invalid_capability),
+               "create accepted a null memory capability")) return 1;
 
     // A null authority is reported as such even when the page is also null, so
     // the caller learns the first thing wrong rather than the last.
@@ -112,12 +113,13 @@ int main() {
                        address_space_syscall_errors::invalid_capability),
                "destroy accepted a null capability")) return 1;
 
-    // The decoders must not invent alignment or ownership rules. An unaligned
-    // page is accepted here on purpose: aarch64_donate_table_page is the
-    // enforcing check, and a second weaker copy of that rule in the portable
-    // decoder is how the two come to disagree.
-    if (!check(static_cast<bool>(decode_address_space_create_syscall(7ULL, 0x4000'1001ULL)),
-               "the decoder grew an alignment rule that belongs to the machine layer")) {
+    // The decoder must not invent rules that belong elsewhere. Whether either
+    // capability names anything, whether this holder holds it, and whether the
+    // grant is big enough are all checked where they are enforced - a second
+    // weaker copy here is how the two come to disagree.
+    if (!check(static_cast<bool>(decode_address_space_create_syscall(
+                   0xFFFF'FFFF'FFFF'FFFFULL, 0xFFFF'FFFF'FFFF'FFFFULL)),
+               "the decoder grew a rule that belongs to the capability table")) {
         return 1;
     }
 
