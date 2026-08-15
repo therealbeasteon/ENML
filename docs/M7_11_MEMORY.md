@@ -15,7 +15,8 @@ Landed so far, each in its own reviewable diff:
    destination changes.
 2. **The ledger knows which physical ranges hold kernel state.** Piece 1 below,
    partially: reservations, their three rules, and boot declaring the
-   page-table arena. Grant, split and reclaim are not written yet.
+   page-table arena. Grant and reclaim landed later, as items 10 and 11;
+   split is still unwritten.
 3. **The kernel's own writable state is declared too**, in the same table -
    `__cookie_data_start..__bss_end` and the kernel stack - under a second
    reservation kind that constrains writers less because TTBR0-only translation
