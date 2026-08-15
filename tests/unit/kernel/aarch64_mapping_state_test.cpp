@@ -443,6 +443,25 @@ int main() {
         // writable in every space, so a foreign writable mapping is expected.
         require(space_y.reserve_physical(
             contested_base, 4096ULL, PhysicalReservationKind::kernel_private));
+
+        // What kernel_private must NOT give up, checked because donated
+        // translation tables now use it (aarch64_donate_table_page): a process
+        // still cannot reach the range, and nothing can execute it. These are
+        // the properties that make the weaker kind safe for page tables - the
+        // relaxation is only between kernel-side writers, which are all the
+        // kernel. If either of these ever passes, a process can read or write
+        // its own page tables and the kind is no longer usable for them.
+        auto user_refused = space_y.map_user(
+            0x0000'0000'7000'0000ULL, contested_base, 4096ULL,
+            MachinePermissions::read_write);
+        require(!user_refused);
+        require(user_refused.error().code == machine_errors::kernel_object_alias);
+
+        auto executable_refused = space_y.map(
+            0x0000'0000'8000'0000ULL, contested_base, 4096ULL,
+            MachinePermissions::read_execute, MachineMemoryKind::normal);
+        require(!executable_refused);
+        require(executable_refused.error().code == machine_errors::kernel_object_alias);
     }
 
     // The same conflict in the other order: reserve first, then attempt the
