@@ -56,6 +56,8 @@ Landed so far, each in its own reviewable diff:
     `MemoryGrantAuthority` plus a capability encoding that names a grant, and
     `address_space_create` taking that capability instead of a physical
     address.
+12. **Donation is a loan, gated rather than assumed.** The same memory
+    capability builds a second space after the first is destroyed.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -284,12 +286,24 @@ refuses to confirm authority nobody holds. Boot is the origin of every grant,
 because boot is the only thing that has seen the memory map, and a process
 cannot grant itself memory.
 
-**Still missing: returning the pages, and subdividing them.** A destroyed
-space's pages are erased and unreserved, but the grant that covered them is not
-handed back or re-offered, so a caller that creates and destroys repeatedly
-still runs out. Split is absent for the same reason it was not built
-speculatively: nothing subdivides authority yet. Those two are the last
-unbuilt pieces of the physical-authority design.
+**Donating a page is a loan, and that is a decision rather than an accident.**
+Donation does not consume the grant. The alternative - revoke on donate,
+re-issue on destroy - was rejected because it would make the kernel an origin
+of grants, and boot being the only origin is what stops the grant table
+becoming a pool the kernel dispenses from. Under the loan reading the holder's
+authority never left, so there is nothing to hand back: what ends at destroy is
+the space's *use* of the page, not the holder's *claim* on it.
+
+This already worked before it was decided, which was the danger. The EL0 proof
+now creates a space, destroys it, and creates a second one with the same
+memory capability - `COOKIE:M7.11:EL0_GRANT_REUSED` - so the property is gated
+rather than incidental, and a later change that made donation consume the grant
+would fail here instead of silently.
+
+**Still missing: subdividing authority.** `split` is unbuilt, and deliberately
+so: nothing subdivides a grant yet, and building it now would be designing from
+zero examples. A donor that must hand over one page out of a larger range is
+the caller that will define its shape.
 
 **Also still missing: what creation should really be authorized by.** The
 creation authority is a distinguished object, and it is a placeholder. In the
