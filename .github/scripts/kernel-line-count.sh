@@ -855,8 +855,29 @@ discovery_ceiling=1272
 # has become a translation table. Relaxing it to make a proof pass would be
 # weakening a security rule to fit a demo. The ordering that satisfies both is
 # a real design decision and is left open rather than pre-empted here.
-entry_ceiling=1185
-total_ceiling=9407
+#
+# Raised again, completing M7.11's boot proof: entry 1,185 -> 1,214, total
+# 9,407 -> 9,436. The proof now donates pages, builds a translation root from
+# one of them, and maps a page into the created space -
+# COOKIE:M7.11:SPACE_MAPPED between SPACE_CREATED and SPACE_DESTROYED.
+#
+# The previous raise recorded this as blocked by forbidden_by_reservation and
+# left it open. That analysis was wrong in its premise and the correction is
+# worth keeping: early_identity_space has its own ledger, not
+# boot_physical_ledger, so the reservation a donation takes cannot see the
+# early map's writable mapping of the same page, and nothing refuses it. The
+# separation is deliberate - see early_identity_ledger's declaration, where it
+# exists because a_code is writable in the early map and read-execute in the
+# real one, which a shared ledger would call a writable_executable_alias.
+#
+# Relying on it here is sound for the same reason it exists: the two maps are
+# sequential rather than concurrent, the early one is kernel-only, and it is
+# abandoned before any process runs, so no EL0 translation of a table page
+# ever exists. The mapped page is deliberately not one of the donated ones,
+# because a user-accessible translation of a live translation table is exactly
+# what the kernel_object reservation is there to refuse.
+entry_ceiling=1214
+total_ceiling=9436
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

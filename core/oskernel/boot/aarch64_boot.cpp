@@ -60,6 +60,11 @@ constexpr std::size_t early_page_table_pages = 128U;
 // rather than a matched size.
 constexpr std::size_t early_identity_table_pages = 32U;
 constexpr std::size_t runtime_stack_pages = 8U;
+// Four table pages plus one page for the created space to map. See the
+// selection site for why they are selected rather than carved from the boot
+// plan's arena.
+constexpr std::size_t dynamic_proof_pages = 5U;
+constexpr std::uint64_t dynamic_proof_virtual = 0x0000'0000'2000'0000ULL;
 constexpr std::uint64_t runtime_stack_virtual = 0x0000'007F'FEF0'0000ULL;
 constexpr std::uint64_t user_code_virtual = 0x0000'0000'1000'0000ULL;
 constexpr std::uint64_t user_stack_virtual = 0x0000'0000'1001'0000ULL;
@@ -1254,6 +1259,22 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         std::span<const HardwareRange>{b_stack_protected});
     if (!b_stack) fail("RAM_B_STACK");
 
+    // Pages for the address space M7.11's proof builds after boot. Four for
+    // translation tables (a root, and the level-2 and level-3 tables one
+    // mapping needs, plus one spare) and a fifth to be the page that mapping
+    // points at, so the proof maps memory that is not itself a table.
+    //
+    // Selected here rather than carved out of plan.value().page_tables on
+    // purpose: the point of the exercise is that a space created after boot
+    // gets its pages from a caller, not from an arena the boot plan sized.
+    const std::array<HardwareRange, 8U> dynamic_protected{
+        image_range, dtb_range, plan.value().page_tables, plan.value().kernel_stack,
+        a_code.value(), a_stack.value(), b_code.value(), b_stack.value()};
+    auto dynamic_pages = os::kernel::select_early_ram(
+        inventory.value(), dynamic_proof_pages * page_size, page_size,
+        std::span<const HardwareRange>{dynamic_protected});
+    if (!dynamic_pages) fail("RAM_DYNAMIC");
+
     // Everything selected out of discovered RAM above is still outside the
     // early identity map, and all of it is written before the real mapping
     // takes over: the four process pages by the install/zero/write calls
@@ -1276,6 +1297,21 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!extend_early_identity_map(
             b_stack.value(), MachinePermissions::read_write,
             MachineMemoryKind::normal)) fail("EARLY_MAP_B_STACK");
+    // Writable here for the same reason a_code is: EarlyStage1Builder writes a
+    // translation table through its raw physical address, so the pages donated
+    // below have to be writable in whichever map is live while they are built,
+    // and this is that map.
+    //
+    // This relies on the two ledgers being separate, which they are, and
+    // deliberately - see early_identity_ledger's declaration. The reservation
+    // the donation takes lives in boot_physical_ledger and cannot see this
+    // mapping. That is sound for exactly the reason the separation is: the two
+    // maps are sequential rather than concurrent, this one is kernel-only, and
+    // it is abandoned before any process runs, so no EL0 translation of a
+    // table page ever exists.
+    if (!extend_early_identity_map(
+            dynamic_pages.value(), MachinePermissions::read_write,
+            MachineMemoryKind::normal)) fail("EARLY_MAP_DYNAMIC");
 
     install_process_a_program(a_code.value().base);
     install_process_b_program(b_code.value().base);
@@ -1553,6 +1589,36 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!dynamic_created || !dynamic_created.value().valid()) fail("M7_11_AUTHORIZE");
     if (!boot_epochs.active(dynamic_created.value().epoch)) fail("M7_11_NOT_ACTIVE");
     uart_write("COOKIE:M7.11:SPACE_CREATED\n");
+
+    // The space has no pages of its own, so the caller supplies them. This is
+    // the no-allocator decision made concrete: the kernel cannot answer "give
+    // me a page" and never has to, because the only way to get one is for
+    // whoever already holds it to hand it over.
+    for (std::size_t page = 0U; page + 1U < dynamic_proof_pages; ++page) {
+        if (!os::kernel::aarch64_donate_table_page(
+                dynamic_space, dynamic_arena,
+                static_cast<std::uintptr_t>(
+                    dynamic_pages.value().base + page * page_size))) fail("M7_11_DONATE");
+    }
+    // Refuses with `exhausted` before anything is donated, which is a caller
+    // error the caller can fix - never a kernel failure the caller can do
+    // nothing about. That is the property the no-allocator decision buys, so
+    // the root is built only after the donations above.
+    if (!os::kernel::aarch64_initialize_translation_root(dynamic_space)) {
+        fail("M7_11_ROOT");
+    }
+    // The last page, mapped user-accessible into the created space. Not one of
+    // the donated pages: those are reserved kernel_object, and a user-readable
+    // translation of a live translation table is precisely what that
+    // reservation exists to refuse.
+    if (!os::kernel::aarch64_map_user(
+            dynamic_space,
+            static_cast<std::uintptr_t>(dynamic_proof_virtual),
+            static_cast<std::uintptr_t>(
+                dynamic_pages.value().base + (dynamic_proof_pages - 1U) * page_size),
+            static_cast<std::size_t>(page_size),
+            MachinePermissions::read_write)) fail("M7_11_MAP");
+    uart_write("COOKIE:M7.11:SPACE_MAPPED\n");
 
     const auto dynamic_identity = dynamic_created.value().epoch.identity();
     auto dynamic_retiring = boot_kernel.address_space_begin_destroy(
