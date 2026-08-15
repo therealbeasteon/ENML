@@ -170,23 +170,40 @@ layer's release between them, and a capability over the identity it used to
 have refused afterwards. The stale-reference exit criterion is met on the
 machine, not only on the host.
 
-It does not donate a page or map anything, and the reason is a real conflict
-rather than an omission. A donated table page must be reserved `kernel_object`
-owned by the new space, while `EarlyStage1Builder` writes tables through their
-raw physical address - which under live translation needs that page mapped
-writable in the *active* space, which during boot is never the new one.
-`forbidden_by_reservation` refuses exactly that, and correctly: it is what
-stops a donor keeping write access to what has become a translation table.
-Relaxing it to make a marker appear would be weakening a security rule to fit
-a demo. Which way to resolve it - reserve through the donor and teardown
-ownership goes wrong, reserve through the recipient and the kernel cannot
-write the tables it must build - is undecided and should be decided on its
-own merits.
+It donates pages, builds a translation root from one of them, and maps a page
+into the created space, so the sequence this milestone had to invent - create,
+donate, initialize root, map, seal - is exercised on the machine rather than
+described.
 
-Worth recording because it explains why this surfaced so late: nothing
-anywhere calls `aarch64_donate_table_page`. Its test drives
-`EarlyPageArena::donate` directly, with no second space mapping the donated
-pages, so the two-owner case has no coverage at all.
+An earlier version of this section claimed that donating was blocked by
+`forbidden_by_reservation`, and that claim was wrong in its premise. It is
+left corrected rather than deleted because the mistake is instructive.
+`early_identity_space` has its own ledger, not `boot_physical_ledger`, and a
+reservation is checked only against the mappings of the ledger the reserving
+space is bound to. The early map's writable mapping of a donated page is
+therefore invisible to the reservation that donation takes, and nothing
+refuses it. There was no conflict to resolve.
+
+Relying on that is sound for the same reason the separation exists (see
+`early_identity_ledger`'s declaration): the two maps are sequential rather
+than concurrent, the early one is kernel-only, and it is abandoned before any
+process runs - so no EL0 translation of a translation table ever exists, which
+is the property the `kernel_object` reservation defends. The page the proof
+maps is deliberately not one of the donated ones, because a user-accessible
+translation of a live table is exactly what that reservation refuses.
+
+**`forbidden_by_reservation` is not a global invariant**, and it reads like
+one. It is scoped to a single ledger, and Cookie deliberately runs two. That
+is a boundary rather than a hole, but it is the kind of boundary that is
+easier to misread than to notice, as the erroneous claim above demonstrates.
+
+**Still untested: the two-owner case the ledger rule does describe.** Nothing
+calls `aarch64_donate_table_page` outside the boot proof, and its unit
+coverage drives `EarlyPageArena::donate` directly with a host array and no
+second space mapping those pages. The rule that a `kernel_object` reservation
+and a foreign writable mapping cannot coexist *on one ledger* is therefore
+asserted by no test. It should get one, precisely because the boundary above
+means the boot path does not exercise it.
 
 **Still missing: the syscall dispatch.** Nothing decodes calls 7 and 8 at the
 AArch64 syscall entry, so the composition is reachable from the boot routine
