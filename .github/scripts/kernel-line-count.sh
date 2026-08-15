@@ -76,17 +76,6 @@ label="${1:-kernel-line-count}"
 #                   includes it, which is the whole point of listing it here
 #                   by name rather than letting it slip in unclassified.
 #
-#   fault_region.*  The disclosure decision for fault reporting - which region a
-#                   pager is told about, and the one-shot that stops it being
-#                   told again. See docs/M7_11_FAULT_PRIVACY.md. It is built into
-#                   emnl::oskernel and unit-tested, but nothing in
-#                   cookie_kernel_aarch64_boot includes it yet, so it is not in
-#                   the shipped image and counting it would overstate what is
-#                   trusted today. It moves into `core` in the increment that
-#                   makes cookie_aarch64_unhandled_fault consult it - which is
-#                   the whole reason it is listed here by name rather than left
-#                   to be noticed later.
-#
 #   CMakeLists.txt, *.ld.in  Build description. Not code that runs.
 #
 # Any file under core/oskernel that appears in neither a category nor the
@@ -154,6 +143,7 @@ core_files=(
     "core/oskernel/include/os/kernel/ipc_endpoint.hpp"
     "core/oskernel/include/os/kernel/ipc_syscall.hpp"
     "core/oskernel/include/os/kernel/address_space_syscall.hpp"
+    "core/oskernel/include/os/kernel/fault_region.hpp"
     "core/oskernel/include/os/kernel/memory_grant.hpp"
     "core/oskernel/include/os/kernel/kernel.hpp"
     "core/oskernel/include/os/kernel/process_translation.hpp"
@@ -171,6 +161,7 @@ core_files=(
     "core/oskernel/src/ipc_endpoint.cpp"
     "core/oskernel/src/ipc_syscall.cpp"
     "core/oskernel/src/address_space_syscall.cpp"
+    "core/oskernel/src/fault_region.cpp"
     "core/oskernel/src/memory_grant.cpp"
     "core/oskernel/src/kernel.cpp"
     "core/oskernel/src/process_translation.cpp"
@@ -246,8 +237,6 @@ not_kernel=(
     "core/oskernel/CMakeLists.txt"
     "core/oskernel/boot/aarch64_qemu.ld.in"
     "core/oskernel/include/os/kernel/aarch64_kernel_translation_domain.hpp"
-    "core/oskernel/include/os/kernel/fault_region.hpp"
-    "core/oskernel/src/fault_region.cpp"
     "core/oskernel/include/os/kernel/machine_host.hpp"
     "core/oskernel/src/machine_host.cpp"
 )
@@ -830,7 +819,37 @@ not_kernel=(
 # transition that list exists to make visible - it was excluded while nothing
 # in the image included it, and counting it then would have overstated the TCB.
 # It is in the image now, so it counts now.
-core_ceiling=3945
+#
+# Raised again, wiring the fault-disclosure decision into the fault path: core
+# 3,945 -> 4,120, entry 1,414 -> 1,442, total 9,860 -> 10,063.
+#
+# core crosses 4,000 lines here, and that deserves a note rather than silence
+# because docs/M7_11_MEMORY.md spent this milestone asking about that number.
+# It is no longer the binding figure: the target was restated on 2026-08-15
+# (PR #120, docs/M7_0_KERNEL.md) to 4,529 *semicolons* - QNX's microkernel plus
+# Proc - because Cookie's kernel does the job both of those do. The restatement
+# landed before this increment and in its own diff, deliberately, so that
+# crossing 4,000 lines here is a number moving past a superseded marker rather
+# than a target being adjusted by the change that needed the room. The gap line
+# this script prints is the one to read.
+#
+# What the lines buy: fault_region.* moves out of the exclusion list and into
+# core, because cookie_aarch64_unhandled_fault now consults it - which is
+# exactly the increment its exclusion note named as the one that would.
+#
+# The property is what a fault is allowed to say. A fault inside a declared
+# region reports the REGION and never the faulting address, because the address
+# at page resolution is the controlled-channel primitive
+# docs/M7_11_FAULT_PRIVACY.md exists to withhold. The region's extent was chosen
+# by the process that declared it, so the resolution of anything observable is
+# the process's decision rather than the hardware's page size.
+#
+# The region path is consulted BEFORE the panic reporter, and that ordering is
+# the property rather than a style choice: second, every fault would already
+# have printed FAR on the way there. kernel-arm64-native checks the absence as
+# well as the marker - a regression that printed the address would still emit
+# COOKIE:M7.11:FAULT_REGION, so the marker alone proves nothing.
+core_ceiling=4120
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -975,8 +994,8 @@ discovery_ceiling=1272
 # the kernel dispenses from. Under the loan reading the holder's authority
 # never left, so there is nothing to hand back; what ends at destroy is the
 # space's use of the page, not the holder's claim on it.
-entry_ceiling=1414
-total_ceiling=9860
+entry_ceiling=1442
+total_ceiling=10063
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
