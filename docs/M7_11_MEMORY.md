@@ -48,6 +48,9 @@ Landed so far, each in its own reviewable diff:
    space that later occupies its slot.
 9. **A process can create and destroy one.** Calls 7 and 8 dispatched at the
    AArch64 syscall entry, proven from EL0 under `kernel-arm64-native`.
+10. **A destroyed space's pages are erased.** Every range it owned is zeroed
+    before its reservation is dropped, proven by a paired non-zero-then-zero
+    check rather than a one-sided one.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -237,13 +240,32 @@ error to the caller rather than halting, which is the no-allocator decision
 showing up where it should: running out is a condition a caller is told about
 and can act on, never a kernel failure it cannot.
 
-**Still missing: everything reclamation.** A destroyed space's pages are
-unmapped and its reservations dropped, but nothing zeroes them and nothing
-hands them back to a caller to donate again - the pool slot is reusable, the
-memory is not. The threat-model entry above ("a freed page must not carry data
-to its next holder") is therefore still a statement of intent. Grant, split
-and reclaim over the reservation table are what close it, and they are the
-last unbuilt piece of the physical-authority design.
+**Erasure is done; handing pages back is not.**
+`aarch64_release_address_space` zeroes every range a destroyed space owned
+before dropping its reservation, so the threat-model entry above - "a freed
+page must not carry data to its next holder" - is a property rather than an
+intention. What those ranges hold is translation tables, so what used to
+survive a destroy was the space's entire layout.
+
+Two orderings in it are the safety argument. Zeroing happens *before* the
+reservation is dropped, because an unreserved range is mappable and one zeroed
+after release could be claimed and read in between. And ranges are released one
+at a time, so a failure part-way leaves the rest reserved rather than
+unreserved and still carrying their contents.
+
+The zeroing writes through a `volatile` pointer, and the boot proof reads
+through one. Both are load-bearing: the write is a dead store to anything the
+compiler can see, so removing it would delete the property silently and leave a
+check for zeroes still passing, because a reclaimed range is usually zero
+anyway. The proof therefore asserts the pages are *non-zero before* the destroy
+as well as zero after - without that half it would pass on a range that was
+always zero and keep passing if reclamation were deleted.
+
+**Still missing: returning the pages.** They are erased and unreserved, but
+nothing hands them back to a donor to be donated again, so a caller that
+creates and destroys repeatedly runs out. Grant and split over the reservation
+table are what close that, and they are the last unbuilt piece of the
+physical-authority design.
 
 **Also still missing: what creation should really be authorized by.** The
 creation authority is a distinguished object, and it is a placeholder. In the
