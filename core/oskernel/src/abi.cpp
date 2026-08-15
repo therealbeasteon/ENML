@@ -16,7 +16,7 @@ namespace {
 // Written as data rather than as a switch so that the whole interface can be
 // counted, enumerated and asserted against the ceiling. A switch would let the
 // surface grow without anything noticing.
-inline constexpr std::array<CallDescriptor, 15U> call_table{
+inline constexpr std::array<CallDescriptor, 16U> call_table{
     // The unprivileged core. send and receive block by definition - a
     // synchronous message pass is a rendezvous - and reply does not, because a
     // server that could be blocked by a client refusing to collect its answer
