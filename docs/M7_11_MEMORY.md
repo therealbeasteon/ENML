@@ -58,6 +58,9 @@ Landed so far, each in its own reviewable diff:
     address.
 12. **Donation is a loan, gated rather than assumed.** The same memory
     capability builds a second space after the first is destroyed.
+13. **A fault reports its region, never its address.** `FaultRegionTable` wired
+    into the fault path, proven by faulting on purpose and by checking that no
+    address appears in the report.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -300,10 +303,27 @@ memory capability - `COOKIE:M7.11:EL0_GRANT_REUSED` - so the property is gated
 rather than incidental, and a later change that made donation consume the grant
 would fail here instead of silently.
 
-**Still missing: subdividing authority.** `split` is unbuilt, and deliberately
-so: nothing subdivides a grant yet, and building it now would be designing from
-zero examples. A donor that must hand over one page out of a larger range is
-the caller that will define its shape.
+**The fault path says what it is willing to say.**
+`cookie_aarch64_unhandled_fault` consults `FaultRegionTable`: a fault inside a
+declared region reports the *region* and never the faulting address, because
+the address at page resolution is the controlled-channel primitive
+`docs/M7_11_FAULT_PRIVACY.md` exists to withhold. The region's extent was
+chosen by the process that declared it, so the resolution of anything
+observable is the process's decision rather than the hardware's page size.
+
+The region path is consulted *before* the panic reporter, and that ordering is
+the property: second, every fault would already have printed FAR on the way
+there. `kernel-arm64-native` faults on purpose to prove it, and checks the
+absence of an address as well as the presence of the marker - a regression that
+printed FAR would still emit the marker, so the marker alone proves nothing.
+
+**Still missing: a pager to deliver to, and subdividing authority.** There is
+nowhere to send the question, so the kernel reports and halts; what is settled
+is what it is willing to say, which is the half that cannot be retrofitted once
+a pager is listening. An unresolvable fault should also kill the faulting
+thread rather than the machine, which needs the EL0 fault path restructured to
+return into the scheduler the way the timer path already does. And `split`
+stays unbuilt for want of a caller that would define its shape.
 
 **Also still missing: what creation should really be authorized by.** The
 creation authority is a distinguished object, and it is a placeholder. In the
