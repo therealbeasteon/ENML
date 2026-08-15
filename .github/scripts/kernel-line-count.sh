@@ -1014,8 +1014,8 @@ discovery_ceiling=1272
 # the kernel dispenses from. Under the loan reading the holder's authority
 # never left, so there is nothing to hand back; what ends at destroy is the
 # space's use of the page, not the holder's claim on it.
-entry_ceiling=1477
-total_ceiling=10101
+entry_ceiling=1479
+total_ceiling=10103
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

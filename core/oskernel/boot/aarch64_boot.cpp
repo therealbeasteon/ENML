@@ -994,16 +994,27 @@ extern "C" void cookie_aarch64_el0_fault(
     // unresolvable. That kills the thread, not the machine - the distinction
     // docs/M7_11_MEMORY.md's fault path is built on, and the reason halting
     // was only ever correct while nothing could possibly respond.
-    auto teardown = boot_kernel.destroy_thread(faulting);
-    if (!teardown) {
-        uart_write("COOKIE:PANIC:FAULT_TEARDOWN\n");
+    // Three steps in an order that is not the obvious one, and the first
+    // attempt got it wrong in a way worth recording.
+    //
+    // Destroying the thread first and then rescheduling fails: reschedule has
+    // to save the outgoing thread's context, and destroy_thread has already
+    // retired the bindings it needs to do that. It refuses, and what the log
+    // then shows is a reschedule that would not run with a thread still alive.
+    //
+    // Simply swapping them is worse rather than better: the scheduler would
+    // still see the faulting thread as runnable and could pick it again, and
+    // the fault would repeat forever.
+    //
+    // So the runqueue is told first, which is the smallest true statement -
+    // this thread is not runnable - and it is what lets the scheduler answer
+    // the question honestly. Only once something else is running does the
+    // thread get destroyed, by which point nothing needs it resolvable.
+    if (!boot_kernel.runqueue().update(faulting, false, process_priority)) {
+        uart_write("COOKIE:PANIC:FAULT_UNRUNNABLE\n");
         halt();
     }
-    uart_write("COOKIE:M7.11:THREAD_TERMINATED\n");
 
-    // Whoever is left runs. Same shape the timer path uses, because this is
-    // the same question - the running thread stopped being runnable and
-    // something has to be chosen.
     const auto now = os::kernel::machine_monotonic_nanoseconds();
     auto next = boot_preemption.reschedule(
         boot_kernel.runqueue(), boot_translations, boot_epochs, now, *frame,
@@ -1032,6 +1043,15 @@ extern "C" void cookie_aarch64_el0_fault(
         uart_write("COOKIE:PANIC:FAULT_COMMIT\n");
         halt();
     }
+
+    // Something else is running now, so nothing needs the faulting thread
+    // resolvable any more and it can go.
+    auto teardown = boot_kernel.destroy_thread(faulting);
+    if (!teardown) {
+        uart_write("COOKIE:PANIC:FAULT_TEARDOWN\n");
+        halt();
+    }
+    uart_write("COOKIE:M7.11:THREAD_TERMINATED\n");
     uart_write("COOKIE:M7.11:SURVIVED_FAULT\n");
 }
 
