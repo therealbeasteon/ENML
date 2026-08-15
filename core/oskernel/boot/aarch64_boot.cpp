@@ -1015,8 +1015,7 @@ extern "C" void cookie_aarch64_el0_fault(
     if (!next) {
         uart_write("COOKIE:PANIC:FAULT_RESCHEDULE live=");
         uart_write_hex(static_cast<std::uint64_t>(boot_kernel.live_thread_count()));
-        uart_write("
-");
+        uart_write("\n");
         halt();
     }
     uart_write("COOKIE:M7.11:FAULT_NEXT next=");
@@ -1024,8 +1023,7 @@ extern "C" void cookie_aarch64_el0_fault(
     uart_write(next.value().switched ? " switched=1" : " switched=0");
     uart_write(" live=");
     uart_write_hex(static_cast<std::uint64_t>(boot_kernel.live_thread_count()));
-    uart_write("
-");
+    uart_write("\n");
     if (!commit_result(next.value(), now) ||
         !complete_after_switch(next.value().next, *frame)) {
         // Nothing runnable is a real possibility rather than an invariant
