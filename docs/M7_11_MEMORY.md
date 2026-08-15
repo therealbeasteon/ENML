@@ -162,13 +162,35 @@ because the ASID was never independent information - `acquire()` derives it
 from the slot and `active()` already re-derives it to validate what it is
 handed.
 
-**Still missing: the syscall dispatch and the boot proof.** Nothing decodes
-calls 7 and 8 at the AArch64 syscall entry, so the composition is reachable
-from the boot routine and from host tests but not yet from EL0. And every
-claim above is host-tested only; under `kernel-arm64-native` no address space
-has yet been created after boot. That proof - create, donate, build a root,
-map, destroy, and refuse a stale capability, under QEMU - is what would let
-this milestone claim its first exit criterion rather than describe it.
+**The boot proof exists, and covers half of what it should.**
+`kernel-arm64-native` gates on `COOKIE:M7.11:SPACE_CREATED`,
+`..:SPACE_DESTROYED` and `..:STALE_REFUSED` - an address space created after
+boot, authorized by a capability, retired in two phases with the machine
+layer's release between them, and a capability over the identity it used to
+have refused afterwards. The stale-reference exit criterion is met on the
+machine, not only on the host.
+
+It does not donate a page or map anything, and the reason is a real conflict
+rather than an omission. A donated table page must be reserved `kernel_object`
+owned by the new space, while `EarlyStage1Builder` writes tables through their
+raw physical address - which under live translation needs that page mapped
+writable in the *active* space, which during boot is never the new one.
+`forbidden_by_reservation` refuses exactly that, and correctly: it is what
+stops a donor keeping write access to what has become a translation table.
+Relaxing it to make a marker appear would be weakening a security rule to fit
+a demo. Which way to resolve it - reserve through the donor and teardown
+ownership goes wrong, reserve through the recipient and the kernel cannot
+write the tables it must build - is undecided and should be decided on its
+own merits.
+
+Worth recording because it explains why this surfaced so late: nothing
+anywhere calls `aarch64_donate_table_page`. Its test drives
+`EarlyPageArena::donate` directly, with no second space mapping the donated
+pages, so the two-owner case has no coverage at all.
+
+**Still missing: the syscall dispatch.** Nothing decodes calls 7 and 8 at the
+AArch64 syscall entry, so the composition is reachable from the boot routine
+and from host tests but not yet from EL0.
 
 **Also still missing: what creation should really be authorized by.** The
 creation authority is a distinguished object, and it is a placeholder. In the
