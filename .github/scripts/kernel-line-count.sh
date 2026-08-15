@@ -87,6 +87,18 @@ label="${1:-kernel-line-count}"
 #                   the whole reason it is listed here by name rather than left
 #                   to be noticed later.
 #
+#   memory_grant.*  Authority over physical memory - who was handed which range,
+#                   and the capability encoding that names it. The referent the
+#                   no-allocator decision was missing. Built into emnl::oskernel
+#                   and unit-tested, but nothing in cookie_kernel_aarch64_boot
+#                   includes it yet, so it is not in the shipped image and
+#                   counting it would overstate what is trusted today. It moves
+#                   into `core` in the increment that makes
+#                   address_space_create check the caller's authority over the
+#                   page it names - which is the whole reason it exists, and the
+#                   reason it is listed here by name rather than left to be
+#                   noticed later.
+#
 #   CMakeLists.txt, *.ld.in  Build description. Not code that runs.
 #
 # Any file under core/oskernel that appears in neither a category nor the
@@ -246,6 +258,8 @@ not_kernel=(
     "core/oskernel/include/os/kernel/aarch64_kernel_translation_domain.hpp"
     "core/oskernel/include/os/kernel/fault_region.hpp"
     "core/oskernel/src/fault_region.cpp"
+    "core/oskernel/include/os/kernel/memory_grant.hpp"
+    "core/oskernel/src/memory_grant.cpp"
     "core/oskernel/include/os/kernel/machine_host.hpp"
     "core/oskernel/src/machine_host.cpp"
 )
