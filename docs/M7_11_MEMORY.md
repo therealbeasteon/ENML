@@ -61,6 +61,9 @@ Landed so far, each in its own reviewable diff:
 13. **A fault reports its region, never its address.** `FaultRegionTable` wired
     into the fault path, proven by faulting on purpose and by checking that no
     address appears in the report.
+14. **An EL0 fault kills the thread and the machine keeps running.** Proven by
+    the same deliberate fault: the scheduler switches to the surviving thread
+    and boot continues past it.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -317,13 +320,27 @@ there. `kernel-arm64-native` faults on purpose to prove it, and checks the
 absence of an address as well as the presence of the marker - a regression that
 printed FAR would still emit the marker, so the marker alone proves nothing.
 
+**An unresolvable fault kills the thread, not the machine.**
+`cookie_aarch64_el0_fault` is deliberately not `[[noreturn]]`: it reports the
+region, marks the faulting thread unrunnable, lets the scheduler choose, and
+returns having switched. Current-EL faults keep the halting path, because there
+the kernel itself faulted and there is no smaller thing to kill.
+
+The order inside it was got wrong first and is worth keeping written down.
+Destroying the thread before rescheduling fails - `reschedule` has to save the
+outgoing context and `destroy_thread` has already retired what it needs to do
+that - and simply swapping the two is worse, because the scheduler would still
+see the faulting thread as runnable and could pick it again, repeating the
+fault forever. Telling the runqueue first is the smallest true statement, and
+it is what lets the scheduler answer honestly; the thread is destroyed only
+once something else is running.
+
 **Still missing: a pager to deliver to, and subdividing authority.** There is
-nowhere to send the question, so the kernel reports and halts; what is settled
-is what it is willing to say, which is the half that cannot be retrofitted once
-a pager is listening. An unresolvable fault should also kill the faulting
-thread rather than the machine, which needs the EL0 fault path restructured to
-return into the scheduler the way the timer path already does. And `split`
-stays unbuilt for want of a caller that would define its shape.
+nowhere to send the question, so the region is reported and the thread dies
+rather than being resumed on backing that arrived. What is settled is what the
+kernel is willing to say, which is the half that cannot be retrofitted once a
+pager is listening. And `split` stays unbuilt for want of a caller that would
+define its shape.
 
 **Also still missing: what creation should really be authorized by.** The
 creation authority is a distinguished object, and it is a placeholder. In the
