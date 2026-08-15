@@ -812,35 +812,6 @@ extern "C" [[noreturn]] void cookie_aarch64_unhandled_fault(
     using os::kernel::aarch64::FaultKind;
     const auto fault = os::kernel::aarch64::describe_fault(frame->esr_el1);
 
-    // A fault inside a declared region is an answerable question, not a panic,
-    // and what the kernel says about it is deliberately not what it knows.
-    //
-    // resolve() reports the *region* the faulting address falls in - never the
-    // address - because the address at 4 KiB resolution is the controlled-
-    // channel primitive docs/M7_11_FAULT_PRIVACY.md exists to withhold. The
-    // region's extent was chosen by the process when it declared it, so the
-    // resolution of anything observable here is the process's own decision
-    // rather than the hardware's page size.
-    //
-    // Deliberately consulted before the panic reporter below, and the ordering
-    // is the property: if the region path ran second, every fault would have
-    // already printed FAR on its way here.
-    if ((fault.kind == FaultKind::data_abort ||
-         fault.kind == FaultKind::instruction_abort) &&
-        fault.far_valid && fault.from_lower_el) {
-        const auto report = boot_fault_regions.resolve(frame->far_el1, fault.write);
-        if (report.deliverable()) {
-            uart_write("COOKIE:M7.11:FAULT_REGION region=");
-            uart_write_hex(static_cast<std::uint64_t>(report.region));
-            uart_write(fault.write ? " write=1" : " write=0");
-            // No pager exists yet, so the question has nowhere to go. What is
-            // proven here is what the kernel is willing to say, which is the
-            // half that cannot be retrofitted once a pager is listening.
-            uart_write(" (no pager: halting)\n");
-            halt();
-        }
-    }
-
     uart_write("COOKIE:PANIC:FAULT:");
     switch (fault.kind) {
     case FaultKind::data_abort: uart_write("DATA_ABORT"); break;
@@ -990,6 +961,63 @@ namespace {
 }
 
 } // namespace
+
+// A synchronous EL0 fault that is not a system call.
+//
+// Reports what the kernel is willing to say, kills the thread that asked, and
+// returns having chosen what runs next. The machine survives one process
+// getting it wrong, which is the whole reason this is separate from the
+// [[noreturn]] reporter above.
+extern "C" void cookie_aarch64_el0_fault(
+    os::kernel::aarch64::ExceptionFrame* frame) noexcept {
+    if (frame == nullptr) cookie_aarch64_unhandled_exception();
+    using os::kernel::aarch64::FaultKind;
+    const auto fault = os::kernel::aarch64::describe_fault(frame->esr_el1);
+    const auto faulting = boot_preemption.running();
+
+    // What the kernel says. resolve() reports the region the address falls in,
+    // never the address - see docs/M7_11_FAULT_PRIVACY.md. Consulted before
+    // anything else prints, because a reporter that ran first would already
+    // have disclosed FAR on the way here.
+    if ((fault.kind == FaultKind::data_abort ||
+         fault.kind == FaultKind::instruction_abort) && fault.far_valid) {
+        const auto report = boot_fault_regions.resolve(frame->far_el1, fault.write);
+        if (report.deliverable()) {
+            uart_write("COOKIE:M7.11:FAULT_REGION region=");
+            uart_write_hex(static_cast<std::uint64_t>(report.region));
+            uart_write(fault.write ? " write=1" : " write=0");
+            uart_write("\n");
+        }
+    }
+
+    // No pager exists, so the question has nowhere to go and this fault is
+    // unresolvable. That kills the thread, not the machine - the distinction
+    // docs/M7_11_MEMORY.md's fault path is built on, and the reason halting
+    // was only ever correct while nothing could possibly respond.
+    auto teardown = boot_kernel.destroy_thread(faulting);
+    if (!teardown) {
+        uart_write("COOKIE:PANIC:FAULT_TEARDOWN\n");
+        halt();
+    }
+    uart_write("COOKIE:M7.11:THREAD_TERMINATED\n");
+
+    // Whoever is left runs. Same shape the timer path uses, because this is
+    // the same question - the running thread stopped being runnable and
+    // something has to be chosen.
+    const auto now = os::kernel::machine_monotonic_nanoseconds();
+    auto next = boot_preemption.reschedule(
+        boot_kernel.runqueue(), boot_translations, boot_epochs, now, *frame,
+        boot_kernel.ipc_earliest_receive_deadline());
+    if (!next || !commit_result(next.value(), now) ||
+        !complete_after_switch(next.value().next, *frame)) {
+        // Nothing runnable is a real possibility rather than an invariant
+        // violation - it is what happens when the last thread faults - so it
+        // halts with a name instead of trapping.
+        uart_write("COOKIE:PANIC:FAULT_NOTHING_RUNNABLE\n");
+        halt();
+    }
+    uart_write("COOKIE:M7.11:SURVIVED_FAULT\n");
+}
 
 extern "C" void cookie_kernel_syscall_entry(
     os::kernel::aarch64::ExceptionFrame* frame) noexcept {

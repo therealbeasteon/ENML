@@ -877,7 +877,27 @@ core_ceiling=4120
 # were deleted. It reads through volatile too, since the writes it is looking
 # for happen in another translation unit and the two reads would otherwise fold
 # into one.
-machine_ceiling=3229
+#
+# Raised again, making an EL0 fault kill the thread instead of the machine:
+# machine 3,229 -> 3,232, entry 1,442 -> 1,463, total 10,063 -> 10,087. core
+# untouched.
+#
+# docs/M7_11_MEMORY.md's fault path said halting "is correct only while there
+# is nothing that could possibly respond". A fault at EL0 is one process's
+# problem: the thread that took it may have to die, the machine has no reason
+# to. cookie_aarch64_el0_fault reports the region, destroys the faulting
+# thread, chooses what runs next and returns - the same shape the timer path
+# already uses, because it is the same question.
+#
+# The three machine lines are the split that makes it possible: the lower-EL
+# sync vector now calls a handler that is not [[noreturn]]. Current-EL faults
+# keep the [[noreturn]] path, and that asymmetry is deliberate - there the
+# kernel itself faulted and there is no smaller thing to kill.
+#
+# "Nothing runnable" halts with a name rather than trapping, because it is a
+# real outcome and not an invariant violation: it is what happens when the last
+# thread faults.
+machine_ceiling=3232
 discovery_ceiling=1272
 #
 # Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry
@@ -994,8 +1014,8 @@ discovery_ceiling=1272
 # the kernel dispenses from. Under the loan reading the holder's authority
 # never left, so there is nothing to hand back; what ends at destroy is the
 # space's use of the page, not the holder's claim on it.
-entry_ceiling=1442
-total_ceiling=10063
+entry_ceiling=1463
+total_ceiling=10087
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
