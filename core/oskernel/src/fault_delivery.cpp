@@ -11,6 +11,20 @@ namespace {
 
 } // namespace
 
+os::core::Result<FaultSupplySyscall> decode_fault_supply_syscall(
+    std::uint64_t x0_backing) noexcept {
+    // Zero is the only value this layer can reject. Whether the capability
+    // names memory, whether this pager holds it, and whether it is big enough
+    // for the region are checked where they are enforced - a second weaker
+    // copy of any of those beside the enforcing one is how the two come to
+    // disagree.
+    if (x0_backing == 0ULL) {
+        return os::core::Result<FaultSupplySyscall>{
+            delivery_error(fault_delivery_errors::invalid_capability)};
+    }
+    return FaultSupplySyscall{static_cast<CapabilityId>(x0_backing)};
+}
+
 FaultDeliveryTable::Slot* FaultDeliveryTable::find(ThreadId pager) noexcept {
     for (auto& slot : slots_) {
         if (slot.state != State::free && slot.pager == pager) return &slot;

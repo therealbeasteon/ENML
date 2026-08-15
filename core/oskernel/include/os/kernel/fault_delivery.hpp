@@ -5,6 +5,7 @@
 #include <cstdint>
 
 #include <os/core/result.hpp>
+#include <os/kernel/capability.hpp>
 #include <os/kernel/fault_region.hpp>
 #include <os/kernel/rendezvous.hpp>
 
@@ -16,6 +17,7 @@ inline constexpr std::uint32_t already_armed = 301U;
 inline constexpr std::uint32_t not_armed = 302U;
 inline constexpr std::uint32_t not_delivered = 303U;
 inline constexpr std::uint32_t exhausted = 304U;
+inline constexpr std::uint32_t invalid_capability = 305U;
 } // namespace fault_delivery_errors
 
 inline constexpr std::size_t max_fault_deliveries = 16U;
@@ -40,6 +42,20 @@ struct FaultDelivery final {
     [[nodiscard]] friend constexpr bool operator==(
         const FaultDelivery&, const FaultDelivery&) = default;
 };
+
+// KernelCall::fault_supply, one argument per abi.cpp's descriptor.
+//
+// The pager answers with a capability over memory and nothing else. It does
+// not name the region, and that omission is the point rather than an economy:
+// the kernel already knows which question this pager owes, and a pager able to
+// name a region could answer one it was never asked - which would hand back
+// exactly the ability to probe that the region-not-address reporting withholds.
+struct FaultSupplySyscall final {
+    CapabilityId backing {invalid_capability};
+};
+
+[[nodiscard]] os::core::Result<FaultSupplySyscall> decode_fault_supply_syscall(
+    std::uint64_t x0_backing) noexcept;
 
 // Holds a fault question between the kernel asking it and the pager answering.
 //

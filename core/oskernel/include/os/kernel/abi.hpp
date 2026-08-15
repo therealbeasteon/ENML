@@ -93,7 +93,25 @@ enum class KernelCall : std::uint16_t {
     // attacker with a memory-safety bug ignores.
     capability_grant = 14U,
     capability_revoke = 15U,
+
+    // --- Faults. The answer half of the pager handshake: the kernel asks a
+    // pager about a region that faulted, and this is how the backing comes
+    // back. There is no matching "receive" call, deliberately - the question
+    // rides back on the pager's wakeup the same way a driver's interrupt
+    // service does, so being asked costs no syscall.
+    //
+    // One argument, and it names the backing rather than the region. The
+    // kernel already knows which question this pager owes; letting the answer
+    // name a region would let a pager answer one it was never asked, which is
+    // a disclosure the fault path is otherwise careful to withhold.
+    fault_supply = 16U,
 };
+
+// This fills the table exactly: max_kernel_calls is 16 and fault_supply is the
+// sixteenth. The next call added has to raise that ceiling, and that is worth
+// deciding on purpose rather than in passing - docs/M7_0_KERNEL.md holds up
+// QNX's "four services behind fourteen calls" as the shape being aimed at, and
+// Cookie is already two past it.
 
 // What a caller must already hold to make the call.
 //

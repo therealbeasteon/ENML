@@ -80,7 +80,9 @@ int main() {
         if (!check(permitted, "a call outside the rendezvous may block")) return 1;
     }
 
-    const std::uint16_t rejected[]{0U, 16U, 100U, 0x7FFFU, 0xFFFFU};
+    // 16 was here until fault_supply took it. 17 is the first free number now,
+    // and the table is full - see max_kernel_calls.
+    const std::uint16_t rejected[]{0U, 17U, 100U, 0x7FFFU, 0xFFFFU};
     for (const auto raw : rejected) {
         auto decoded = os::kernel::decode_call(raw);
         if (!check(!decoded, "unknown call number accepted")) return 1;

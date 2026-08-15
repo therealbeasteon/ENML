@@ -860,7 +860,18 @@ not_kernel=(
 # have printed FAR on the way there. kernel-arm64-native checks the absence as
 # well as the marker - a regression that printed the address would still emit
 # COOKIE:M7.11:FAULT_REGION, so the marker alone proves nothing.
-core_ceiling=4120
+#
+# Raised again, by the fault_supply ABI entry: core 4,120 -> 4,122, total
+# 10,103 -> 10,105. Two lines, and they fill the call table exactly -
+# max_kernel_calls is 16 and fault_supply is the sixteenth. The next call added
+# has to raise that ceiling, which is worth deciding on purpose: M7_0_KERNEL.md
+# holds up QNX's "four services behind fourteen calls" as the shape being aimed
+# at, and Cookie is now two past it with the table full.
+#
+# fault_delivery.* stays excluded - the decoder lives there and nothing in the
+# image calls it yet. Only the ABI descriptor is in the image, which is why
+# this raise is two lines rather than the whole handshake.
+core_ceiling=4122
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -1026,7 +1037,7 @@ discovery_ceiling=1272
 # never left, so there is nothing to hand back; what ends at destroy is the
 # space's use of the page, not the holder's claim on it.
 entry_ceiling=1479
-total_ceiling=10103
+total_ceiling=10105
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
