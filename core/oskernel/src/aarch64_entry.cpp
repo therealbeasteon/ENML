@@ -44,7 +44,11 @@ extern "C" void cookie_aarch64_sync_exception_dispatch(
     }
     const auto syndrome = os::kernel::aarch64::decode_exception_syndrome(frame->esr_el1);
     if (!os::kernel::aarch64::valid_cookie_svc(syndrome)) {
-        cookie_aarch64_unhandled_fault(frame);
+        // Every fault reaching here is from a lower EL by construction - this
+        // is the lower-EL sync vector - so it is one process's problem and not
+        // the machine's. The handler chooses what runs next and returns.
+        cookie_aarch64_el0_fault(frame);
+        return;
     }
     cookie_kernel_syscall_entry(frame);
 }

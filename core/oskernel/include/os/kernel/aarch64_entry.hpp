@@ -33,3 +33,16 @@ extern "C" [[noreturn]] void cookie_aarch64_unhandled_exception() noexcept;
 // halt with delivery to a userland pager; the reporting stays.
 extern "C" [[noreturn]] void cookie_aarch64_unhandled_fault(
     const os::kernel::aarch64::ExceptionFrame* frame) noexcept;
+
+// A synchronous fault from EL0 that is not a system call.
+//
+// Deliberately not [[noreturn]], and that is the whole difference from the two
+// above. A fault at EL0 is one process's problem: the thread that took it may
+// have to die, but the machine has no reason to. This returns having chosen
+// what runs next, exactly as the timer path does, and the vector's frame
+// restore resumes whoever that is.
+//
+// Current-EL faults keep the [[noreturn]] path, because there halting is
+// right: the kernel itself faulted, and there is no smaller thing to kill.
+extern "C" void cookie_aarch64_el0_fault(
+    os::kernel::aarch64::ExceptionFrame* frame) noexcept;
