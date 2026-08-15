@@ -834,8 +834,29 @@ discovery_ceiling=1272
 # failed and with what values, on the same argument the M7.11 fault decoder
 # was justified on: the evidence exists at the moment of failure and costs
 # nothing to print, and reconstructing it afterwards costs hours.
-entry_ceiling=1148
-total_ceiling=9370
+#
+# Raised again, by M7.11's boot proof: entry 1,148 -> 1,185, total 9,370 ->
+# 9,407. Everything M7.11 had landed was host-tested, and this milestone's
+# exit criteria are written in terms of a running system - a proof that exists
+# only on the host cannot meet them. kernel-arm64-native now gates on
+# COOKIE:M7.11:SPACE_CREATED, ..:SPACE_DESTROYED and ..:STALE_REFUSED: an
+# address space created after boot, authorized by a capability, retired in the
+# two phases the ASID lifecycle requires, and a capability over the identity it
+# used to have refused afterwards.
+#
+# It deliberately does not donate a page or map anything, so it proves the
+# kernel composition rather than the whole of creation-after-boot. The reason
+# is recorded at the call site and is not a schedule compromise: a donated
+# table page must be reserved kernel_object owned by the new space, while
+# EarlyStage1Builder writes tables through their raw physical address, which
+# under live translation needs the page mapped writable in the active space -
+# which is not the new one. forbidden_by_reservation refuses exactly that, and
+# correctly, since that rule is what stops a donor keeping write access to what
+# has become a translation table. Relaxing it to make a proof pass would be
+# weakening a security rule to fit a demo. The ordering that satisfies both is
+# a real design decision and is left open rather than pre-empted here.
+entry_ceiling=1185
+total_ceiling=9407
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
