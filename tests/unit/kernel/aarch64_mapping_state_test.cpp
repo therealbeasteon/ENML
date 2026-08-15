@@ -451,17 +451,39 @@ int main() {
         // relaxation is only between kernel-side writers, which are all the
         // kernel. If either of these ever passes, a process can read or write
         // its own page tables and the kind is no longer usable for them.
+        //
+        // Deliberately on a page nothing else has mapped. The first attempt at
+        // this test put them on `contested`, which space_x already maps
+        // writable - so the executable case was refused by the older
+        // writable_executable_alias check before the reservation was ever
+        // consulted, and the assertion proved that check rather than this one.
+        // An isolated page is what makes the reservation the only thing that
+        // can refuse these.
+        alignas(4096) std::array<std::byte, 4096U> table_like{};
+        const auto table_like_base = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(table_like.data()));
+        require(space_y.reserve_physical(
+            table_like_base, 4096ULL, PhysicalReservationKind::kernel_private));
+
         auto user_refused = space_y.map_user(
-            0x0000'0000'7000'0000ULL, contested_base, 4096ULL,
+            0x0000'0000'7000'0000ULL, table_like_base, 4096ULL,
             MachinePermissions::read_write);
         require(!user_refused);
         require(user_refused.error().code == machine_errors::kernel_object_alias);
 
         auto executable_refused = space_y.map(
-            0x0000'0000'8000'0000ULL, contested_base, 4096ULL,
+            0x0000'0000'8000'0000ULL, table_like_base, 4096ULL,
             MachinePermissions::read_execute, MachineMemoryKind::normal);
         require(!executable_refused);
         require(executable_refused.error().code == machine_errors::kernel_object_alias);
+
+        // And the case that must still work, on the same page: a kernel-only
+        // writable mapping from a space that does not own the reservation.
+        // This is the whole point of the change - it is how the kernel edits a
+        // created space's tables while running under another process's root.
+        require(space_x.map(
+            0x0000'0000'9000'0000ULL, table_like_base, 4096ULL,
+            MachinePermissions::read_write, MachineMemoryKind::normal));
     }
 
     // The same conflict in the other order: reserve first, then attempt the
