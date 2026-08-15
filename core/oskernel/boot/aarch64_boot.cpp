@@ -805,9 +805,14 @@ namespace {
     os::kernel::CapabilityId authority,
     std::uint64_t root_page) noexcept {
     slot.arena = os::kernel::aarch64::EarlyPageArena{};
-    slot.builder = os::kernel::aarch64::EarlyStage1Builder{};
-    auto attached = slot.builder.attach_arena(slot.arena);
-    if (!attached) return attached.error();
+    // Constructed with the arena rather than attach_arena'd to it, and the
+    // difference is not style. attach_arena validates the arena, and an arena
+    // with no bump range and nothing donated yet is not valid - which is
+    // precisely the state every post-boot arena starts in, because its pages
+    // arrive by donation and donation needs the space already bound to this
+    // builder. The same circular dependency that shaped create -> donate ->
+    // initialize root, one level down.
+    slot.builder = os::kernel::aarch64::EarlyStage1Builder{slot.arena};
 
     auto bound = os::kernel::aarch64_create_address_space(
         slot.space, boot_physical_ledger, slot.builder);
@@ -907,7 +912,13 @@ extern "C" void cookie_kernel_syscall_entry(
             *slot, current, decoded.value().authority, decoded.value().root_page);
         if (!created) {
             frame->x[0] = 0ULL;
-            uart_write("COOKIE:M7.11:EL0_CREATE_REFUSED\n");
+            // With the code, because "refused" alone cost a CI round trip to
+            // turn into "attach_arena rejected an arena that is empty by
+            // construction". A refusal a caller can act on is also one a
+            // reader has to be able to diagnose.
+            uart_write("COOKIE:M7.11:EL0_CREATE_REFUSED code=");
+            uart_write_hex(static_cast<std::uint64_t>(created.error().code));
+            uart_write("\n");
             return;
         }
         el0_space_capability = created.value();
