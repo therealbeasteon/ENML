@@ -2,9 +2,9 @@
 
 `docs/M7_0_KERNEL.md` states the condition the whole kernel decision rests on:
 
-> The measure of whether it was worth it is a single number: how many lines of
-> code have to be trusted. If ENML's kernel reaches Linux's size, the exercise
-> has failed regardless of what else it achieved.
+> The measure of whether it was worth it is a single number: how much code has
+> to be trusted. If ENML's kernel reaches Linux's size, the exercise has failed
+> regardless of what else it achieved.
 
 Nothing measured that number. It was a sentence in a document, which is the
 weakest form a constraint can take. `.github/scripts/kernel-line-count.sh`
@@ -30,8 +30,11 @@ so that lines cannot be moved between categories to get under a ceiling:
 | entry | 1,399 | 1,399 | Reset vector, freestanding memory primitives, the boot routine (including the minimal pre-discovery identity map that closes "the pre-MMU window," below, and the declaration of the page-table arena, the kernel's writable image and its stack as kernel state), syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the decoded fault reporter, the M7.9 end-to-end driver proof, the M7.11 address-space create/destroy proof, its EL0 syscall dispatch, and the paired non-zero-then-zero reclamation check |
 | **total** | **9,845** | **9,845** | |
 
-`core` is the number comparable to QNX's 605. The others are trusted but are not
-what that figure described.
+`core` is the number the QNX comparison is about. The others are trusted but are
+not what that figure described. Since 2026-08-15 the figure it is held against
+is 4,529 semicolons - QNX's microkernel plus `Proc` - rather than 605; see "The
+target was restated" below for why, and for what that deliberately did not
+change.
 
 **Discovery is counted, and the argument for excluding it is rejected here.**
 The argument is decent: FDT parsing and hardware inventory run once, before any
@@ -79,8 +82,11 @@ to permit it are one reviewable diff instead of a drift nobody voted for.
 The script prints this on every run, pass or fail, so the distance stays visible
 rather than becoming something the project stopped mentioning:
 
-- `core` is **3.0x** the QNX microkernel measured the way QNX measured itself —
-  **1,787 semicolons against 605**.
+- `core` is **0.4x its comparable target** — **1,787 semicolons against 4,529**
+  (QNX's microkernel *plus* `Proc`), with **2,742 to spare**.
+- Against the microkernel alone it is **1,787 against 605** — printed too,
+  because hiding the unflattering number would be the wrong kind of honesty.
+  But that half does no memory management and Cookie's does; see below.
 - In this gate's own metric `core` is **3,945 lines**, and the whole trusted
   image is **9,845 lines / 4,379 semicolons**.
 - QNX for scale, all semicolons: microkernel **605** *(no memory management)*,
@@ -110,9 +116,34 @@ carries low-level networking, which Cookie's `core` does not and will not.
 **None of this is headroom, and no ceiling moved because of it.** The ratchet
 measures Cookie against its own past in one metric, and that job never depended
 on what QNX counted. What changed is only what this gate is entitled to claim.
-The claim that remains is still uncomfortable and still honest: 3.0x a 1992
-realtime microkernel, for a kernel that cannot mount anything and has no
-drivers, is a number to defend rather than celebrate.
+
+### The target was restated on 2026-08-15, and what that did and did not change
+
+`docs/M7_0_KERNEL.md` now holds `core` against **4,529 semicolons** — QNX's
+microkernel plus `Proc` — rather than 605, because Cookie's kernel does the job
+both of those do. This was decided when `core` reached 3,945 lines and the
+open question in `docs/M7_11_MEMORY.md` asked whether a VM subsystem would push
+it past 4,000.
+
+The decision was made **before** the increment that would have crossed it, not
+after, and that ordering is the point: a target restated in the diff that
+needed the extra room is a target that was never binding.
+
+What it did not change:
+
+- **No ceiling moved.** The ratchet is still the measured value, so `core`
+  cannot grow by one line without someone editing a number and defending it.
+- **The unflattering comparison is still printed** on every run. 1,787 against
+  605 stays visible; it is simply labelled with the reason it is not the
+  comparison being defended.
+- **The gate still says when the target is passed.** The distance is printed
+  pass or fail, and the wording changes to `core has PASSED its comparable
+  target` the day it does, rather than the day someone recomputes it by hand.
+
+What remains uncomfortable, and should: a kernel that cannot mount anything and
+has no drivers is spending 1,787 semicolons where a shipped 1992 system spent
+4,529 on the same responsibilities *plus* a filesystem-grade resource manager.
+Being under the target is not the same as being small.
 
 ## What this does not measure
 

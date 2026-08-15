@@ -1081,9 +1081,26 @@ done
 # by both, and stay counted in lines: they ratchet Cookie against its own past
 # in one metric, and that job never depended on what QNX counted. What changes
 # here is only what this script is entitled to claim.
-ratio_tenths=$(((core_semicolons * 10 + qnx_microkernel / 2) / qnx_microkernel))
-note "$(printf 'gap   core is %d.%dx the QNX microkernel measured its way - %d semicolons against %d' \
-    $((ratio_tenths / 10)) $((ratio_tenths % 10)) "$core_semicolons" "$qnx_microkernel")"
+# The figure core is actually held against, decided 2026-08-15 and recorded in
+# docs/M7_0_KERNEL.md: QNX's microkernel plus Proc, because Cookie's kernel does
+# the job both of those do. Memory management is not in QNX's 605 - it is in
+# Proc - and M7.11 put it inside Cookie's kernel deliberately.
+#
+# Printed as a distance, not enforced as a ceiling. The ratchet above is what
+# stops growth; this says how far the thing being defended actually is, so the
+# day core passes it is a day the build says so rather than one nobody notices.
+qnx_comparable=$((qnx_microkernel + qnx_proc))
+ratio_tenths=$(((core_semicolons * 10 + qnx_comparable / 2) / qnx_comparable))
+if [ "$core_semicolons" -le "$qnx_comparable" ]; then
+    note "$(printf 'gap   core is %d.%dx its comparable target - %d semicolons against %d (QNX microkernel + Proc), %d to spare' \
+        $((ratio_tenths / 10)) $((ratio_tenths % 10)) "$core_semicolons" "$qnx_comparable" \
+        $((qnx_comparable - core_semicolons)))"
+else
+    note "$(printf 'gap   core has PASSED its comparable target - %d semicolons against %d (QNX microkernel + Proc), over by %d' \
+        "$core_semicolons" "$qnx_comparable" $((core_semicolons - qnx_comparable)))"
+fi
+note "$(printf 'gap   against the microkernel alone it is %d against %d - but that half does no memory management and Cookie'"'"'s does' \
+    "$core_semicolons" "$qnx_microkernel")"
 note "$(printf 'gap   core in this gate'"'"'s own metric is %d lines; the whole trusted image is %d lines / %d semicolons' \
     "$core_lines" "$total_lines" "$total_semicolons")"
 note "$(printf 'gap   QNX for scale, all semicolons: microkernel %d (no memory management), +Proc %d, whole OS %d' \

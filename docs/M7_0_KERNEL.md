@@ -42,11 +42,41 @@ stays small. Every argument in this document is downstream of that.
 
 The references make the target concrete rather than aspirational. QNX shipped an
 entire operating system - filesystem, device manager, networking, drivers - in
-15,930 lines and 204 KB, on a kernel of 605 lines and 7 KB implementing four
-services behind fourteen calls. That is the class of artefact the Cookie Kernel is aiming at.
-Against tens of millions of lines of Linux, a 605-line kernel is not a smaller
-version of the same thing; it is a different kind of object, one a person can
-read completely.
+15,930 semicolons and 204 KB, on a kernel of 605 semicolons and 7 KB
+implementing four services behind fourteen calls. That is the class of artefact
+the Cookie Kernel is aiming at. Against tens of millions of lines of Linux, a
+605-semicolon kernel is not a smaller version of the same thing; it is a
+different kind of object, one a person can read completely.
+
+**605 is not the figure Cookie should be measured against, and saying so is a
+correction rather than an excuse.** Two things were wrong with the way this
+document used it for a year, both recorded in
+`docs/REFERENCE_NOTES_2026_08_14_QNX.md` and neither noticed until the paper was
+actually read.
+
+The first is metric: QNX's numbers are semicolon counts, and this document
+called them lines. Comparing a line count against them roughly doubled the
+apparent gap.
+
+The second is scope, and it matters more. **QNX's 605-semicolon microkernel does
+not do memory management.** Its four services are IPC, low-level network
+communication, process scheduling and interrupt dispatching; memory management
+lives in `Proc`, a user-space resource manager of 3,924 semicolons. M7.11 puts
+memory management inside Cookie's kernel - deliberately, because the
+no-allocator decision makes memory authority a capability question and
+capabilities are kernel business - so the comparable figure stopped being 605
+the moment that work started. **It is 605 + `Proc` = 4,529 semicolons.**
+
+The comparison cuts against Cookie once, and that is part of the restatement:
+QNX's microkernel carries low-level networking, which Cookie's `core` does not
+and will not.
+
+This is a restatement of what the target always meant, not a relaxation of it.
+The claim was never "605 exactly"; it was that the trusted core stays small
+enough for one person to read completely, measured against a system that proved
+it could be done. Measuring against the wrong half of that system made the
+target unreachable by arithmetic rather than by engineering, which is a way of
+making a constraint meaningless while appearing to honour it.
 
 ## What goes in the kernel
 
@@ -138,6 +168,19 @@ eventually be - is genuinely worse than what it replaces, for as long as it
 lasts. That is the price of the decision and it should be visible in the ledger
 rather than discovered.
 
-The measure of whether it was worth it is a single number: how many lines of
-code have to be trusted. If ENML's kernel reaches Linux's size, the exercise has
-failed regardless of what else it achieved.
+The measure of whether it was worth it is a single number: how much code has to
+be trusted. If ENML's kernel reaches Linux's size, the exercise has failed
+regardless of what else it achieved.
+
+The number is **semicolons in `core`**, and the figure it is held against is
+**4,529** - QNX's microkernel plus `Proc`, because Cookie's kernel does the job
+both of those do. `.github/scripts/kernel-line-count.sh` measures it on every
+push and prints the distance whether the gate passes or fails.
+
+Two guards against this becoming a number that only ever moves one way. The
+ratchet is still the measured value in the gate's own line metric, so `core`
+cannot grow by a single line without someone editing a ceiling and defending it
+in review - restating the reference figure did not hand anyone headroom, and no
+ceiling moved when it was restated. And the comparison stays printed on every
+run, so the day `core` passes 4,529 is a day the build says so rather than a
+day nobody notices.
