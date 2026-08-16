@@ -50,6 +50,14 @@ option(EMNL_BUILD_AARCH64_BOOT_IMAGE "Build the freestanding Cookie AArch64 kern
 # supply their own non-overlapping placement without changing kernel code.
 set(EMNL_AARCH64_BOOT_LOAD_ADDRESS "0x40200000" CACHE STRING
     "Machine-port load address for the standalone AArch64 image")
+# The base of RAM on the same machine port. It exists so the ARM64 Image
+# header's text_offset can be *derived* rather than written by hand: the header
+# and the linker script were previously free to disagree, and did - the header
+# said 0x80000 while the image was linked 2 MiB above the base. A bootloader
+# honouring the header would have placed Cookie where none of its absolute
+# references resolve. A port now sets these two numbers and the header follows.
+set(EMNL_AARCH64_BOOT_RAM_BASE "0x40000000" CACHE STRING
+    "Machine-port base of RAM, used to derive the Image header's text_offset")
 
 if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     enable_language(ASM)

@@ -107,7 +107,7 @@ Measured. Each is a real constraint, not a preference.
 | **PL011** UART | `find_pl011` | Almost all of them. Qualcomm (GENI), Exynos, MediaTek all use their own. No console means no bring-up. |
 | **Flattened device tree** | `FdtView`, `hardware_inventory` | None — phones are DT, not ACPI. This one is already right. |
 | **4 KiB granule, 39-bit VA** | `stage1_va_bits = 39`, `architectural_page_size` | Nothing in practice, but it is *assumed* rather than checked: `TCR_EL1.TG0` is left at its `0b00` default and `ID_AA64MMFR0_EL1.TGran4` is never read. |
-| **Loaded at exactly its link address** | `-no-pie`, absolute `SECTIONS` in `aarch64_qemu.ld.in` | All of them. See below. |
+| **Loaded at exactly its link address** | `-no-pie`, absolute `SECTIONS` in `aarch64_qemu.ld.in` | All of them. The header now *tells the truth* about which address that is, and a gate checks it — but telling the truth about a single address is not the same as being loadable anywhere. See below. |
 | **One CPU** | one runqueue, `initialize_gic_v3_primary_cpu`, no locks anywhere | None, but every phone would run on one core. |
 
 Already portable, and worth saying because the inventory is otherwise a list of
@@ -117,7 +117,7 @@ device tree with no hardcoded constants, the timer is discovered including which
 PPI is which, and the load address is a machine-port cache variable rather than
 a literal in the source.
 
-### The Image header does not describe the image
+### The Image header did not describe the image (fixed here)
 
 `aarch64_start.S` publishes an ARM64 Image header declaring
 `text_offset = 0x80000`, with a comment saying that matches a linked placement
@@ -134,12 +134,24 @@ Nothing catches this because the boot proof loads the ELF via
 Image header at all. The one field that would be exercised on a phone is the one
 field no gate exercises.
 
-Two things follow, and they are separable:
+Two things followed, and they were separable. The first is done:
 
-- **The header must not be able to disagree with the link.** `image_size` is
-  already linker-derived (`__cookie_image_size`); `text_offset` should be too,
-  computed from the load address and a declared RAM base, so a port sets two
-  numbers and the header follows.
+**`text_offset` is now derived by the linker script** from the port's load
+address and a declared `EMNL_AARCH64_BOOT_RAM_BASE`, the way `image_size`
+already was, so the header cannot disagree with the link. The linker asserts
+that the RAM base is 2 MiB aligned and that the image is not linked below it;
+both are build failures rather than boot failures. The flags word now declares a
+4 KiB granule instead of "unspecified", which was a licence to place the image
+for a granule Cookie does not use.
+
+And the gap that let it survive is closed: **a CI step reads the header out of
+the raw `.bin`** — what a loader is actually handed — and checks `text_offset`
+against `__cookie_image_start - __cookie_ram_base` taken from the ELF's symbols,
+plus the magic, the size and the flags. The field a phone would use is now the
+field a gate exercises.
+
+The second is not:
+
 - **Being loadable only at one address is not phone-neutrality.** A phone's
   bootloader chooses where the image goes. Fixing this properly means
   position-independent early boot — build PIE and apply `R_AARCH64_RELATIVE`
