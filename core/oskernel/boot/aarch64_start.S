@@ -26,12 +26,19 @@ _start:
     nop
     .quad __cookie_text_offset                 // derived; see cookie_aarch64_boot.ld
     .quad __cookie_image_size                 // image_size, resolved by linker script
-    // Little-endian, 4 KiB pages. The page-size field was previously
-    // "unspecified", which is a bootloader's licence to place the image for a
-    // granule Cookie does not use - docs/M7_13_HARDWARE_NEUTRALITY.md records
-    // that 4 KiB is assumed throughout, and this is the one place the assumption
-    // is visible to anything outside the image.
-    .quad 0x0000000000000002                  // flags: LE, 4 KiB granule
+    // Little-endian, 4 KiB pages, placeable anywhere.
+    //
+    // Bit 3 is the claim that matters and it was previously false. It says the
+    // 2 MiB-aligned base may be anywhere in physical memory rather than needing
+    // to sit as close as possible to the start of DRAM - which is what a phone's
+    // bootloader wants to hear, and which Cookie could not honestly say while
+    // it was linked -no-pie and ran only at one address. The image is now built
+    // -fpie and the linker asserts it needs no runtime relocations, so the
+    // claim is true and is checked rather than declared.
+    //
+    // The page-size field was previously "unspecified", which is a licence to
+    // place the image for a granule Cookie does not use.
+    .quad 0x000000000000000A                  // flags: LE, 4 KiB granule, anywhere
     .quad 0x0000000000000000                  // reserved
     .quad 0x0000000000000000                  // reserved
     .quad 0x0000000000000000                  // reserved

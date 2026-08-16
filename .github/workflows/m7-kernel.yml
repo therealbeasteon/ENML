@@ -153,6 +153,17 @@ jobs:
           #
           # Read out of the raw .bin, not out of the ELF, because the .bin is
           # what a loader is handed.
+          # Every relocation in the image, not a count. Cookie is built -fpie and
+          # claims in its header that it may be placed anywhere; that claim is
+          # only true while nothing needs fixing up at load time, and this is
+          # where a reader can see the list is empty rather than take the
+          # linker's ASSERT on trust.
+          echo '--- relocations (must be none) ---'
+          readelf -r "$elf" | tee cookie-relocs.txt
+          if grep -qE '^[0-9a-f]{6,}' cookie-relocs.txt; then
+            echo 'image contains runtime relocations; it is not position independent' >&2
+            exit 1
+          fi
           echo '--- ARM64 Image header ---'
           python3 - "$image" "$elf" <<'PYEOF'
           import struct, subprocess, sys
@@ -198,6 +209,11 @@ jobs:
               sys.exit(f'Image flags 0x{flags:x} do not declare a 4 KiB granule')
           if flags & 1:
               sys.exit('Image flags declare big-endian')
+          # Bit 3: the 2 MiB-aligned base may be anywhere in physical memory.
+          # Only honest while the image needs no runtime relocations, which the
+          # linker script asserts and the relocation dump below shows.
+          if not (flags >> 3) & 1:
+              sys.exit('Image flags do not claim position independence')
           print('Image header agrees with the linked image')
           PYEOF
       - name: Boot Cookie Kernel as bare-metal ELF and prove isolated EL0 native IPC under QEMU virt GICv3
@@ -375,3 +391,38 @@ jobs:
             fi
           done
           echo 'EL2 entry with PAN enabled reached every milestone the EL1 entry does'
+      - name: Boot the raw image at an address it was not linked for
+        shell: bash
+        run: |
+          set -euo pipefail
+          image=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot.bin
+          test -s "$image"
+          # The claim the Image header now makes to a bootloader is that the
+          # 2 MiB-aligned base may be anywhere in physical memory. Every other
+          # run in this job loads the ELF, which places it exactly where it was
+          # linked - so none of them can test that claim, and a header field
+          # nothing exercises is how the text_offset contradiction survived.
+          #
+          # This loads the raw .bin 4 MiB above the link address and starts the
+          # CPU there. Nothing else changes: same milestones, same assertions.
+          # If any absolute address had been baked in at link time, execution
+          # would leave the image immediately and print nothing.
+          set +e
+          timeout 12s qemu-system-aarch64             -machine virt,gic-version=3,virtualization=off             -cpu cortex-a72             -m 512M             -nographic             -monitor none             -no-reboot             -device loader,file="$image",addr=0x40600000,force-raw=on             -device loader,addr=0x40600000,cpu-num=0 >cookie-qemu-reloc.log 2>&1
+          status=$?
+          set -e
+          cat cookie-qemu-reloc.log
+          if [[ $status -ne 0 && $status -ne 124 ]]; then
+            exit "$status"
+          fi
+          if grep -F 'COOKIE:PANIC:' cookie-qemu-reloc.log; then
+            echo '--- kernel reported the stage above and halted when relocated ---'
+            exit 1
+          fi
+          for marker in             COOKIE:M7.5d:MMU             COOKIE:M7.5d:GUARDED             COOKIE:M7.5f:EL0_SVC_RETURN             COOKIE:M7.5g:GICV3             COOKIE:M7.5i:ISOLATED_A_B_A             COOKIE:M7.6:IPC_A_B_REPLY             COOKIE:M7.9:COMPLETED             COOKIE:M7.11:FAULT_RESUMED             COOKIE:M7.12:PROCESS_RAN ; do
+            if ! grep -F "$marker" cookie-qemu-reloc.log >/dev/null; then
+              echo "relocated image did not reach: $marker" >&2
+              exit 1
+            fi
+          done
+          echo 'the image runs at an address it was not linked for'

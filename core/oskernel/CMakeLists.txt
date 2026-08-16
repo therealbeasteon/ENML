@@ -168,17 +168,32 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         # Both flags are load-bearing and independent. Neither substitutes for
         # the other, and dropping either one produces an image that links but
         # faults during early boot.
+        #
+        # -fpie, and the image is linked -pie. A phone's bootloader chooses
+        # where the image goes; an image that only runs at its link address is
+        # not portable to a machine whose RAM starts somewhere else, however
+        # honest its header is about which address that is.
+        #
+        # The interesting part is what this does *not* need. Cookie has no
+        # virtual functions, so no vtables; no absolute pointers in initialised
+        # data; and no global constructors - the linker script already asserts
+        # the last of those. So position independence costs a compiler flag and
+        # PC-relative addressing rather than a relocation processor running
+        # before anything is verified. The build asserts that the relocation
+        # count is zero, which is what turns that from an observation into a
+        # property: the day something introduces an absolute pointer in static
+        # data, the build says so instead of the phone doing.
         target_compile_options(cookie_kernel_aarch64_boot PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fno-pie -mstrict-align -mgeneral-regs-only>
-            $<$<COMPILE_LANGUAGE:ASM>:-ffreestanding -fno-pie>)
+            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fpie -mstrict-align -mgeneral-regs-only>
+            $<$<COMPILE_LANGUAGE:ASM>:-ffreestanding -fpie>)
         target_link_options(cookie_kernel_aarch64_boot PRIVATE
             -nostdlib
-            -static
-            -no-pie
+            -pie
+            -Wl,--no-dynamic-linker
             -Wl,--build-id=none
             -Wl,-T,${CMAKE_CURRENT_BINARY_DIR}/cookie_aarch64_boot.ld)
         set_target_properties(cookie_kernel_aarch64_boot PROPERTIES
-            POSITION_INDEPENDENT_CODE OFF
+            POSITION_INDEPENDENT_CODE ON
             LINK_DEPENDS ${CMAKE_CURRENT_BINARY_DIR}/cookie_aarch64_boot.ld)
 
         if(CMAKE_OBJCOPY)

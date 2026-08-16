@@ -97,10 +97,30 @@ SECTIONS
     __cookie_image_end = .;
     __cookie_image_size = __cookie_image_end - __cookie_image_start;
 
+    /* Dynamic-linking machinery a -pie link produces and a freestanding image
+     * has no use for. Kept visible rather than silently discarded: .rela.dyn is
+     * the one that matters, and it is asserted empty rather than dropped,
+     * because dropping it would turn "this image needs no relocations" from a
+     * checked property into a hope. */
+    .rela.dyn ALIGN(8) : {
+        __cookie_rela_start = .;
+        *(.rela .rela.*)
+        __cookie_rela_end = .;
+    } :data
+    ASSERT(__cookie_rela_end == __cookie_rela_start,
+        "Cookie image needs runtime relocations; something introduced an absolute pointer in static data")
+
     /DISCARD/ : {
         *(.comment)
         *(.note .note.*)
         *(.eh_frame .eh_frame.*)
         *(.gcc_except_table .gcc_except_table.*)
+        *(.dynamic)
+        *(.dynsym)
+        *(.dynstr)
+        *(.hash)
+        *(.gnu.hash)
+        *(.interp)
+        *(.got .got.plt)
     }
 }
