@@ -2098,6 +2098,17 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
 
     install_process_a_program(a_code.value().base);
     install_process_b_program(b_code.value().base);
+    // The words above were written as data and are about to be executed. On a
+    // core with split instruction and data caches - every phone - the fetch
+    // would otherwise be free to read whatever was in those lines before. QEMU
+    // needs none of this and would run correctly without it, which is exactly
+    // why it has to be here rather than discovered on a device.
+    if (!os::kernel::aarch64_publish_instructions(
+            static_cast<std::uintptr_t>(a_code.value().base),
+            static_cast<std::size_t>(page_size))) fail("PUBLISH_A_CODE");
+    if (!os::kernel::aarch64_publish_instructions(
+            static_cast<std::uintptr_t>(b_code.value().base),
+            static_cast<std::size_t>(page_size))) fail("PUBLISH_B_CODE");
     zero_page(a_stack.value().base);
     zero_page(b_stack.value().base);
     const std::array<std::byte, ipc_request_size> request_bytes{
@@ -2587,6 +2598,10 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     }
 
     install_process_c_program(c_pages.value().base + c_donated_pages * page_size);
+    if (!os::kernel::aarch64_publish_instructions(
+            static_cast<std::uintptr_t>(
+                c_pages.value().base + c_donated_pages * page_size),
+            static_cast<std::size_t>(page_size))) fail("PUBLISH_C_CODE");
     zero_page(c_pages.value().base + (c_donated_pages + 1U) * page_size);
     if (!os::kernel::aarch64_map_user(
             c_space,
