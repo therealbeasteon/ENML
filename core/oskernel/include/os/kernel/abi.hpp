@@ -70,6 +70,15 @@ enum class KernelCall : std::uint16_t {
     thread_exit = 5U,
 
     // --- Scheduling and threads.
+    //
+    // Two arguments: the address space to admit the thread into, and where its
+    // stack is. What it deliberately does not take is the design -
+    // docs/M7_12_ENTRY_BINDING.md. No entry point, because that is fixed in the
+    // space's sealed root and a caller holding a space it did not author must
+    // not choose where signed code begins. No thread identifier, because a
+    // caller naming one learns which are live from the refusal. No priority,
+    // because the new thread inherits its creator's and a caller-chosen one is
+    // a scheduling-escalation lever.
     thread_create = 6U,
 
     // --- Address spaces. Held by the process manager alone.

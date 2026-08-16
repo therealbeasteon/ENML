@@ -2140,8 +2140,8 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             static_cast<std::uintptr_t>(b_stack.value().base),
             static_cast<std::size_t>(page_size))) fail("MAP_B_STACK");
 
-    auto sealed_a = os::kernel::aarch64::TranslationRootSealer::seal(builder_a);
-    auto sealed_b = os::kernel::aarch64::TranslationRootSealer::seal(builder_b);
+    auto sealed_a = os::kernel::aarch64::TranslationRootSealer::seal(builder_a, user_code_virtual);
+    auto sealed_b = os::kernel::aarch64::TranslationRootSealer::seal(builder_b, user_code_virtual);
     auto epoch_a = boot_epochs.acquire();
     auto epoch_b = boot_epochs.acquire();
     if (!sealed_a || !sealed_b || !epoch_a || !epoch_b ||

@@ -508,9 +508,14 @@ os::core::Result<AddressSpaceCreation> Kernel::address_space_create(
     auto epoch = epochs.acquire();
     if (!epoch) return epoch.error();
 
+    // hold | destroy | admit. The creator built the space and there is nobody
+    // else to hold any of the three yet; anything narrower is a derived
+    // capability with bits removed, which is what a pager gets.
     auto minted = capabilities_.mint(
         creator, address_space_object_id(epoch.value().identity()),
-        address_space_right_hold | address_space_right_destroy, true);
+        address_space_right_hold | address_space_right_destroy |
+            address_space_right_admit,
+        true);
     if (!minted) {
         // Give the slot back rather than leaking a lifetime nothing can name.
         //
@@ -582,6 +587,86 @@ os::core::Result<void> Kernel::address_space_complete_destroy(
     auto revoked = capabilities_.revoke(owner, space);
     if (!revoked) return revoked.error();
     return {};
+}
+
+os::core::Result<ThreadAdmission> Kernel::thread_admit(
+    ThreadId creator,
+    CapabilityId space,
+    std::uint64_t stack,
+    SealedTranslationRoot root,
+    AddressSpaceEpochAuthority& epochs,
+    ProcessTranslationTable& translations) noexcept {
+    if (stack == 0ULL) {
+        return os::core::Result<ThreadAdmission>{
+            address_space_error(thread_admission_errors::invalid_stack)};
+    }
+    // Non-zero is all this layer checks of the stack. Whether it is mapped is
+    // the fault path's question and answering it weakly here would be a second
+    // copy of a check that already exists - the same reasoning that keeps the
+    // entry unverified against what the space maps.
+
+    auto identity = address_space_identity_for_capability(
+        creator, space, capabilities_, address_space_right_admit);
+    if (!identity) return os::core::Result<ThreadAdmission>{identity.error()};
+
+    // Refuses a capability over a space that has already been destroyed, for
+    // the same reason destroy does: the generation is part of what resolves.
+    auto epoch = epochs.resolve(identity.value());
+    if (!epoch) return os::core::Result<ThreadAdmission>{epoch.error()};
+
+    // The entry is read here and never taken from the caller. `root` is the
+    // machine layer's own lookup of the space named above, so nothing an EL0
+    // caller controls reaches this value. See docs/M7_12_ENTRY_BINDING.md.
+    if (!root.valid()) {
+        return os::core::Result<ThreadAdmission>{
+            address_space_error(thread_admission_errors::invalid_capability)};
+    }
+
+    // Issued rather than accepted. A caller that named its own identifier
+    // would learn from the refusal which ones are live.
+    auto issued = thread_identifiers_.issue();
+    if (!issued) return os::core::Result<ThreadAdmission>{issued.error()};
+
+    // The creator's priority, not a caller's choice: a thread more urgent than
+    // the thread that asked for it is a scheduling escalation, and no caller
+    // needs the argument yet.
+    // Read from the rendezvous rather than the scheduler because that is the
+    // number synchronise_thread already treats as authoritative, and it fails
+    // for a creator that is not a live thread - which is the check that a
+    // caller has to exist at all.
+    auto creator_priority = threads_.effective_priority_of(creator);
+    if (!creator_priority) {
+        return os::core::Result<ThreadAdmission>{creator_priority.error()};
+    }
+
+    auto created = create_thread(issued.value(), creator_priority.value());
+    if (!created) return os::core::Result<ThreadAdmission>{created.error()};
+
+    auto bound = translations.bind(issued.value(), epoch.value(), root, epochs);
+    if (!bound) {
+        // Unwound completely. A thread that exists and is bound to nothing is
+        // one the scheduler may pick and the switch path cannot resolve.
+        (void)destroy_thread(issued.value());
+        return os::core::Result<ThreadAdmission>{bound.error()};
+    }
+
+    // Not runnable until the machine layer has given it architectural state.
+    // The opposite order leaves a window in which the scheduler may select a
+    // thread whose frame was never written, and under preemption the width of
+    // that window is whatever the timer decides.
+    auto parked = scheduler_.update(issued.value(), false, creator_priority.value());
+    if (!parked) {
+        (void)translations.retire(issued.value(), epoch.value());
+        (void)destroy_thread(issued.value());
+        return os::core::Result<ThreadAdmission>{
+            address_space_error(thread_admission_errors::creation_incomplete)};
+    }
+
+    return ThreadAdmission{
+        .thread = issued.value(),
+        .entry = root.entry(),
+        .stack = stack,
+    };
 }
 
 os::core::Result<Dispatch> Kernel::dispatch_interrupt(InterruptSource source) noexcept {

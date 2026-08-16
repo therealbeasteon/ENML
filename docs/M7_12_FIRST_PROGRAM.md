@@ -109,6 +109,13 @@ already built. The kernel is not involved.
 
 ## What this does not decide
 
+- **Where a thread is allowed to begin.** Decided separately in
+  `docs/M7_12_ENTRY_BINDING.md`, because it is the question this document's
+  loader/image split immediately raises and it had to be settled before
+  `thread_create` had a caller. The short form: the entry address is a property
+  of the address space, bound when its root is sealed, and is never an argument
+  to the call that creates a thread — otherwise a loader could enter signed code
+  past its own initialisation while the digest above still verified.
 - **The toolchain path.** How the build produces a fixed-layout image from
   compiled objects — a linker script and an objcopy step, most likely — is an
   implementation question, not an architectural one.

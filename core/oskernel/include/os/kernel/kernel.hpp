@@ -13,8 +13,11 @@
 #include <os/kernel/ipc_continuation.hpp>
 #include <os/kernel/ipc_endpoint.hpp>
 #include <os/kernel/memory_grant.hpp>
+#include <os/kernel/process_translation.hpp>
 #include <os/kernel/rendezvous.hpp>
 #include <os/kernel/scheduler.hpp>
+#include <os/kernel/thread_admission.hpp>
+#include <os/kernel/translation_root.hpp>
 
 namespace os::kernel {
 
@@ -206,6 +209,30 @@ public:
         RetiringAddressSpaceEpoch retiring,
         AddressSpaceEpochAuthority& epochs) noexcept;
 
+    // Admits a thread into an address space the caller holds with
+    // address_space_right_admit. See docs/M7_12_ENTRY_BINDING.md for why the
+    // things this does *not* take are the design: no entry point, no thread
+    // identifier, no priority.
+    //
+    // `root` comes from the machine layer's own lookup of the space named by
+    // `space`, never from the caller - it is how the entry reaches this layer,
+    // and routing it through the caller would hand back exactly the choice the
+    // sealed entry exists to withhold. The split is the same one
+    // address_space_create draws: the kernel owns which lifetimes exist and who
+    // may name them, the machine layer owns the tables.
+    //
+    // The admitted thread is left *not runnable*. It becomes runnable when the
+    // machine layer has admitted an exception frame built from the returned
+    // entry and stack, because a thread the scheduler can select before its
+    // architectural state exists is one it can select and fail to resume.
+    [[nodiscard]] os::core::Result<ThreadAdmission> thread_admit(
+        ThreadId creator,
+        CapabilityId space,
+        std::uint64_t stack,
+        SealedTranslationRoot root,
+        AddressSpaceEpochAuthority& epochs,
+        ProcessTranslationTable& translations) noexcept;
+
     os::core::Result<Dispatch> dispatch_interrupt(InterruptSource source) noexcept;
     // What begin_service collected the instant this driver was last woken, if
     // it has not already been delivered. See interrupt_delivery.hpp -
@@ -241,6 +268,7 @@ private:
     IpcEndpointTable ipc_ {};
     IpcContinuationTable ipc_continuations_ {};
     Scheduler scheduler_ {};
+    ThreadIdentifierIssuer thread_identifiers_ {};
 
     std::array<ThreadId, max_threads> live_ {};
     std::size_t live_count_ {0U};

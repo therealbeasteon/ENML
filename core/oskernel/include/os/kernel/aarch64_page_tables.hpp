@@ -138,6 +138,11 @@ inline constexpr std::uint32_t sealed = 100U;
 inline constexpr std::uint32_t not_sealed = 101U;
 inline constexpr std::uint32_t retiring = 102U;
 inline constexpr std::uint32_t wrong_region = 103U;
+// Sealing was asked for an entry that no thread could ever begin at. See
+// docs/M7_12_ENTRY_BINDING.md: the entry is bound in the seal because that is
+// what makes it unchangeable, so a seal without a usable one would mint an
+// executable root that nothing can enter.
+inline constexpr std::uint32_t invalid_entry = 104U;
 } // namespace translation_root_errors
 
 enum class Stage1Region : std::uint8_t {

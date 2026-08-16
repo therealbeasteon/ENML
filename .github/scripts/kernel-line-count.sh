@@ -148,6 +148,7 @@ core_files=(
     "core/oskernel/include/os/kernel/memory_grant.hpp"
     "core/oskernel/include/os/kernel/kernel.hpp"
     "core/oskernel/include/os/kernel/process_translation.hpp"
+    "core/oskernel/include/os/kernel/thread_admission.hpp"
     "core/oskernel/include/os/kernel/rendezvous.hpp"
     "core/oskernel/include/os/kernel/scheduler.hpp"
     "core/oskernel/include/os/kernel/scheduler_deadline.hpp"
@@ -167,6 +168,7 @@ core_files=(
     "core/oskernel/src/memory_grant.cpp"
     "core/oskernel/src/kernel.cpp"
     "core/oskernel/src/process_translation.cpp"
+    "core/oskernel/src/thread_admission.cpp"
     "core/oskernel/src/rendezvous.cpp"
     "core/oskernel/src/scheduler.cpp"
     "core/oskernel/src/scheduler_deadline.cpp"
@@ -888,7 +890,29 @@ not_kernel=(
 # unmap have no dispatch, and admitting the class without refusing them would
 # let a caller reach the yield tail and get a wrong answer rather than a
 # refusal.
-core_ceiling=4284
+#
+# Raised by M7.12's thread admission: core 4,284 -> 4,415, machine 3,289 ->
+# 3,297, total 10,444 -> 10,583.
+#
+# What the core lines bought is one decision, made before thread_create has a
+# caller: the address at which a thread begins is a property of the address
+# space, fixed when its root is sealed, and is never an argument to the call
+# that creates the thread. docs/M7_12_ENTRY_BINDING.md has the reasoning; the
+# short form is that Cookie's own decisions already made the loader and the
+# image different principals, so a creator-supplied entry would let a process
+# manager enter signed code past its own initialisation while the content
+# digest still verified.
+#
+# Two more decisions ride in the same lines because they are the same call.
+# The kernel issues the thread identifier rather than accepting one, because a
+# caller that names an identifier learns which are live from the refusal - the
+# disclosure class M7.11's fault path already refused, reached through another
+# door. And identifiers are never reused within a boot, which is the whole of
+# the POSIX pid-reuse defect family removed by not having a successor.
+#
+# The eight machine lines are the entry travelling through the sealer and the
+# sealed root that carries it.
+core_ceiling=4415
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -962,7 +986,7 @@ core_ceiling=4284
 # still passes the W^X ledger check, the reservation rules, the guard-page rule
 # and the table budget. A backing path that skipped those would be a hole
 # shaped like a feature.
-machine_ceiling=3289
+machine_ceiling=3297
 discovery_ceiling=1272
 #
 # Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry
@@ -1080,7 +1104,7 @@ discovery_ceiling=1272
 # never left, so there is nothing to hand back; what ends at destroy is the
 # space's use of the page, not the holder's claim on it.
 entry_ceiling=1599
-total_ceiling=10444
+total_ceiling=10583
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
