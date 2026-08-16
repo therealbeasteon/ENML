@@ -21,6 +21,7 @@
 #include <os/kernel/arch_timer_discovery.hpp>
 #include <os/kernel/boot_memory.hpp>
 #include <os/kernel/boot_memory_plan.hpp>
+#include <os/kernel/fault_delivery.hpp>
 #include <os/kernel/fault_region.hpp>
 #include <os/kernel/fdt.hpp>
 #include <os/kernel/gic_v3_discovery.hpp>
@@ -64,7 +65,7 @@ constexpr std::size_t runtime_stack_pages = 8U;
 // Four table pages plus one page for the created space to map. See the
 // selection site for why they are selected rather than carved from the boot
 // plan's arena.
-constexpr std::size_t dynamic_proof_pages = 6U;
+constexpr std::size_t dynamic_proof_pages = 7U;
 // Of those, the ones the boot proof donates as translation tables. The next
 // page is what it maps, and the last is kept back for the EL0 proof to name as
 // its own space's root - separate pages throughout, so neither proof can pass
@@ -125,6 +126,14 @@ constexpr std::uint64_t fault_probe_entry_virtual =
 // address space and deliberately never mapped, so the load faults; inside a
 // declared region, so the kernel has a defined answer rather than a panic.
 constexpr std::uint64_t fault_probe_virtual = 0x0000'0000'3000'0000ULL;
+
+// Where A continues once its fault is answered, and where B is sent to answer
+// it. Word indices are per-program - A and B have their own code pages - so
+// these do not collide despite the arithmetic looking as though they might.
+constexpr std::uint64_t fault_resume_entry_virtual =
+    user_code_virtual + 21U * sizeof(std::uint32_t);
+constexpr std::uint64_t pager_supply_entry_virtual =
+    user_code_virtual + 16U * sizeof(std::uint32_t);
 
 // How many address spaces this image can hold at once for spaces created from
 // EL0. Two rather than one so the structure is a pool with a real bound and a
@@ -196,7 +205,17 @@ std::uint32_t el0_space_creates = 0U;
 // Per-address-space by design (see fault_region.hpp); this harness runs one,
 // for process A.
 os::kernel::FaultRegionTable boot_fault_regions{};
+os::kernel::FaultDeliveryTable boot_fault_deliveries{};
 bool fault_probe_armed = false;
+// B answers A's faults. One pager for one faulting thread, named at boot
+// because nothing yet registers a pager - that is a capability-gated call this
+// harness does not need to invent to prove the handshake works.
+constexpr os::kernel::ThreadId boot_pager_thread = process_b_thread;
+os::kernel::CapabilityId boot_pager_backing_cap = os::kernel::invalid_capability;
+std::uint64_t boot_pager_backing_page = 0ULL;
+bool pager_question_delivered = false;
+bool fault_backed = false;
+bool fault_resume_reported = false;
 bool device_proof_complete = false;
 
 os::kernel::MachinePhysicalLedger boot_physical_ledger{};
@@ -552,7 +571,13 @@ void install_process_a_program(std::uint64_t physical_page) noexcept {
     // if the kernel discloses on a read it discloses on a write too.
     constexpr std::uint32_t ldr_x0_x1 = 0xF9400020U;
     words[20] = ldr_x0_x1;
-    words[21] = branch_self;
+    // Where A lands if the load succeeds - which it only does if a pager
+    // supplied backing and the kernel resumed it. A yield rather than a
+    // branch-to-self, because "A continued" has to be observable: a thread
+    // spinning silently is indistinguishable from one that never resumed.
+    words[21] = movz_x8_base | (yield_number << 5U);
+    words[22] = svc_zero;
+    words[23] = branch_self;
 }
 
 void install_process_b_program(std::uint64_t physical_page) noexcept {
@@ -585,6 +610,17 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
     words[12] = movz_x8_base | (reply_number << 5U);
     words[13] = svc_zero;
     words[14] = branch_self;
+
+    // B's pager entry. The kernel redirects it here when A faults in a region
+    // B answers for, with the backing capability in x0 and fault_supply's call
+    // number in x8 - the same bare-svc shape every other redirect uses, so B
+    // needs nothing baked into its own bytes beyond the svc.
+    //
+    // What B is *told* arrives in x2: the region. Not the address, which is
+    // the entire point of the fault path - see docs/M7_11_FAULT_PRIVACY.md.
+    // B never learns where in its client's address space the fault happened.
+    words[16] = svc_zero;
+    words[17] = branch_self;
 }
 
 // Arms the reused virtual-timer PPI (boot_gic.device_intid) as M7.9's
@@ -753,6 +789,25 @@ void disarm_stand_in_device_source() noexcept {
         frame.elr_el1 = address_space_destroy_entry_virtual;
         frame.x[0] = el0_space_capability;
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_destroy);
+    } else if (next == boot_pager_thread && boot_fault_deliveries.armed(next) &&
+               !pager_question_delivered) {
+        // The pager is about to run and owes an answer it has not been told
+        // about. Hand it the question here rather than making it call to ask -
+        // the same "rides back on the wakeup" arrangement a driver's interrupt
+        // service uses, and the reason there is no fault_receive call.
+        auto question = boot_fault_deliveries.take(next);
+        if (!question) {
+            uart_write("COOKIE:PANIC:FAULT_TAKE\n");
+            halt();
+        }
+        pager_question_delivered = true;
+        frame.elr_el1 = pager_supply_entry_virtual;
+        frame.x[0] = boot_pager_backing_cap;
+        // The region, and only the region. x2 carries what the pager is
+        // allowed to know; there is deliberately no register holding the
+        // faulting address.
+        frame.x[2] = static_cast<std::uint64_t>(question.value().region);
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::fault_supply);
     } else if (next == process_a_thread && el0_space_stage == 4U && !fault_probe_armed) {
         // Last, because it ends the run: send A to touch an address inside a
         // declared region that has no backing. Everything above has already
@@ -987,6 +1042,37 @@ extern "C" void cookie_aarch64_el0_fault(
             uart_write_hex(static_cast<std::uint64_t>(report.region));
             uart_write(fault.write ? " write=1" : " write=0");
             uart_write("\n");
+
+            // Ask the pager rather than killing the thread. This is the
+            // difference between a fault the system can answer and one it can
+            // only report, and it is the only branch here that does not end
+            // with the faulting thread dead.
+            //
+            // If arming fails - no pager, one already owing an answer, the
+            // table full - the code falls through to the termination path
+            // below rather than retrying. A fault that cannot be asked about
+            // is unresolvable by definition, and the region's one announcement
+            // is already spent either way, so there is nothing to preserve by
+            // trying again.
+            if (boot_fault_deliveries.arm(boot_pager_thread, faulting, report)) {
+                // Blocked, not dead: A waits for backing rather than being
+                // destroyed, which is what makes this a fault that resumes.
+                if (!boot_kernel.runqueue().update(faulting, false, process_priority)) {
+                    uart_write("COOKIE:PANIC:FAULT_UNRUNNABLE\n");
+                    halt();
+                }
+                const auto asked_now = os::kernel::machine_monotonic_nanoseconds();
+                auto asked = boot_preemption.reschedule(
+                    boot_kernel.runqueue(), boot_translations, boot_epochs, asked_now, *frame,
+                    boot_kernel.ipc_earliest_receive_deadline());
+                if (!asked || !commit_result(asked.value(), asked_now) ||
+                    !complete_after_switch(asked.value().next, *frame)) {
+                    uart_write("COOKIE:PANIC:FAULT_ASK_RESCHEDULE\n");
+                    halt();
+                }
+                uart_write("COOKIE:M7.11:FAULT_ASKED\n");
+                return;
+            }
         }
     }
 
@@ -1063,7 +1149,8 @@ extern "C" void cookie_kernel_syscall_entry(
     if (!call ||
         (call.value().authority != os::kernel::CallAuthority::unprivileged &&
          call.value().authority != os::kernel::CallAuthority::interrupt_control &&
-         call.value().authority != os::kernel::CallAuthority::process_control) ||
+         call.value().authority != os::kernel::CallAuthority::process_control &&
+         call.value().authority != os::kernel::CallAuthority::memory_control) ||
         (current != process_a_thread && current != process_b_thread)) {
         uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
         halt();
@@ -1081,6 +1168,94 @@ extern "C" void cookie_kernel_syscall_entry(
         call.value().call != os::kernel::KernelCall::address_space_destroy) {
         uart_write("COOKIE:PANIC:EL0_PROCESS_CONTROL\n");
         halt();
+    }
+    // Same rule for memory_control, and the same reason: map and unmap carry
+    // that authority and have no dispatch here, so admitting the class without
+    // refusing them would let a caller fall through to the yield tail and get a
+    // wrong answer rather than a refusal.
+    if (call.value().authority == os::kernel::CallAuthority::memory_control &&
+        call.value().call != os::kernel::KernelCall::fault_supply) {
+        uart_write("COOKIE:PANIC:EL0_MEMORY_CONTROL\n");
+        halt();
+    }
+
+    if (call.value().call == os::kernel::KernelCall::fault_supply) {
+        auto decoded = os::kernel::decode_fault_supply_syscall(frame->x[0]);
+        if (!decoded) {
+            uart_write("COOKIE:PANIC:FAULT_SUPPLY_DECODE\n");
+            halt();
+        }
+        // The pager's claim on the memory it is offering. memory_right_map
+        // rather than donate: backing is memory to be mapped for someone else,
+        // not memory being spent on a kernel object.
+        auto backing = boot_kernel.memory_for_capability(
+            current, decoded.value().backing, os::kernel::memory_right_map, boot_grants);
+        if (!backing) {
+            frame->x[0] = 0ULL;
+            uart_write("COOKIE:M7.11:SUPPLY_REFUSED\n");
+            return;
+        }
+        // answer() is what proves this pager was actually asked. A pager that
+        // was never asked, or has not collected its question, is refused here
+        // rather than being allowed to push memory into somebody's address
+        // space unprompted.
+        auto answered = boot_fault_deliveries.answer(current);
+        if (!answered) {
+            frame->x[0] = 0ULL;
+            uart_write("COOKIE:M7.11:SUPPLY_UNASKED\n");
+            return;
+        }
+
+        // The backing goes in where the region is, which the kernel knows and
+        // the pager was never told. This is the point at which withholding the
+        // address costs nothing: the kernel had it all along.
+        if (!os::kernel::aarch64_back_user_page(
+                process_space_a,
+                static_cast<std::uintptr_t>(fault_probe_virtual),
+                static_cast<std::uintptr_t>(backing.value().physical_base),
+                static_cast<std::size_t>(page_size),
+                MachinePermissions::read_write)) {
+            uart_write("COOKIE:PANIC:FAULT_BACKING_MAP\n");
+            halt();
+        }
+        if (!boot_fault_regions.mark_backed(
+                answered.value().region,
+                os::kernel::FaultRegionState::backed_private)) {
+            uart_write("COOKIE:PANIC:FAULT_MARK_BACKED\n");
+            halt();
+        }
+        // The thread that faulted becomes runnable again. It resumes on the
+        // instruction that faulted, which now succeeds - that is the whole
+        // claim, and A's own yield afterwards is what makes it observable.
+        if (!boot_kernel.runqueue().update(
+                answered.value().faulting, true, process_priority)) {
+            uart_write("COOKIE:PANIC:FAULT_RESUME_RUNNABLE\n");
+            halt();
+        }
+        fault_backed = true;
+        frame->x[0] = 1ULL;
+        uart_write("COOKIE:M7.11:PAGER_BACKED\n");
+
+        // Tell the scheduler now rather than waiting for a timer, because
+        // there may not be one. When the fault was taken the faulting thread
+        // was made unrunnable, which left the pager as the only runnable
+        // thread - an uncontested decision arms no deadline. Marking the
+        // faulting thread runnable again therefore changes nothing observable
+        // until something reschedules, and without this the pager simply spins
+        // and the thread it just answered for never runs again.
+        //
+        // This is what reschedule is for: an event-driven transition for
+        // exactly the runnable-state change that just happened.
+        const auto resumed_now = os::kernel::machine_monotonic_nanoseconds();
+        auto resumed = boot_preemption.reschedule(
+            boot_kernel.runqueue(), boot_translations, boot_epochs, resumed_now, *frame,
+            boot_kernel.ipc_earliest_receive_deadline());
+        if (!resumed || !commit_result(resumed.value(), resumed_now) ||
+            !complete_after_switch(resumed.value().next, *frame)) {
+            uart_write("COOKIE:PANIC:FAULT_RESUME_RESCHEDULE\n");
+            halt();
+        }
+        return;
     }
 
     if (call.value().call == os::kernel::KernelCall::address_space_create) {
@@ -1276,6 +1451,22 @@ extern "C" void cookie_kernel_syscall_entry(
     if (call.value().call != os::kernel::KernelCall::yield || current != process_a_thread) {
         uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
         halt();
+    }
+
+    // A reached the instruction after its fault. That is the claim the whole
+    // pager path exists to support, and it is only observable because A yields
+    // here rather than spinning - a thread that resumed and a thread that never
+    // did look identical from outside if neither makes a call.
+    if (fault_backed && !fault_resume_reported) {
+        fault_resume_reported = true;
+        uart_write("COOKIE:M7.11:FAULT_RESUMED\n");
+        // Returns rather than falling through, because the yield state machine
+        // below is a closed set - it ends in COOKIE:PANIC:EL0_STATE for any
+        // yield it does not recognise, which is the right default and is what
+        // caught this one. A's post-fault yield is a new legitimate state, so
+        // it is named here instead of being left to look like an unexplained
+        // call.
+        return;
     }
 
     if (el0_yield_count == 0U) {
@@ -1792,13 +1983,28 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // rather than properties of the order this routine happens to do things in.
     //
     // The arena the three builders draw from is where every translation table on
-    // this machine lives, including the two processes' own, and exactly one
-    // space edits it.
+    // this machine lives, including the two processes' own.
+    //
+    // kernel_private rather than kernel_object, and the comment this replaces
+    // said "exactly one space edits it" - which was true only while the kernel
+    // edited tables from its own root. It stopped being true the moment a
+    // process could make a syscall that edits another space's tables: Cookie
+    // translates through TTBR0 only, so EL1 runs under whichever process root
+    // is installed, and the arena has to be readable and writable under all of
+    // them or the table walk itself faults. It does, and did - an EL1
+    // translation fault inside the pager path is how this was found.
+    //
+    // Same forced compromise as aarch64_donate_table_page's, for the same
+    // cause, with the same fix: M7.7's TTBR1 split makes owner-write-only
+    // achievable here, and this should tighten back to kernel_object then.
+    // What is not given up either way: both kinds refuse every EL0 translation
+    // of the range and every executable one, so no process can read or write a
+    // page table.
     if (!os::kernel::aarch64_reserve_physical(
             boot_kernel_space,
             static_cast<std::uintptr_t>(plan.value().page_tables.base),
             static_cast<std::size_t>(plan.value().page_tables.size),
-            os::kernel::aarch64::PhysicalReservationKind::kernel_object)) {
+            os::kernel::aarch64::PhysicalReservationKind::kernel_private)) {
         fail("RESERVE_TABLES");
     }
 
@@ -1850,6 +2056,20 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             MachinePermissions::read_write,
             MachineMemoryKind::normal,
             os::kernel::aarch64::KernelMappingRole::guarded_stack) ||
+        // Every translation table on the machine. In the manifest rather than
+        // mapped into boot_kernel_space alone, because the kernel walks and
+        // edits these tables from inside whatever process happened to make the
+        // syscall - a pager answering for someone else, most obviously - and
+        // under TTBR0-only translation that means the walk runs with the
+        // caller's root installed. Mapped in one space, the walk faults in the
+        // other two.
+        !add_manifest_range(
+            kernel_manifest,
+            plan.value().page_tables.base,
+            plan.value().page_tables.base,
+            plan.value().page_tables.size,
+            MachinePermissions::read_write,
+            MachineMemoryKind::normal) ||
         // The page EL0 will name as its created space's root. It has to be in
         // the manifest, which means mapped in all three spaces, because the
         // kernel builds that space's tables from inside A's syscall - and
@@ -1889,13 +2109,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!os::kernel::aarch64::replay_kernel_mapping_manifest(kernel_manifest, process_space_b)) {
         fail("REPLAY_B");
     }
-    if (!os::kernel::machine_map(
-            boot_kernel_space,
-            static_cast<std::uintptr_t>(plan.value().page_tables.base),
-            static_cast<std::uintptr_t>(plan.value().page_tables.base),
-            static_cast<std::size_t>(plan.value().page_tables.size),
-            MachinePermissions::read_write,
-            MachineMemoryKind::normal)) fail("MAP_TABLES");
+
     if (!os::kernel::machine_map(
             boot_kernel_space,
             static_cast<std::uintptr_t>(dtb_range.base),
@@ -2060,6 +2274,25 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // would refuse to produce a question and terminate instead, which is the
     // right default for key material and the wrong thing to demonstrate a
     // report with.
+    // The page B hands back when asked, and B's claim on it. Granted from boot
+    // because boot is the only origin of grants - B cannot grant itself the
+    // memory it pages with, which is the property that makes a pager a
+    // supplier rather than an authority.
+    boot_pager_backing_page =
+        dynamic_pages.value().base + (dynamic_proof_pages - 2U) * page_size;
+    auto pager_granted = boot_grants.create(boot_pager_backing_page, page_size);
+    if (!pager_granted) fail("M7_11_PAGER_GRANT");
+    // memory_right_map, not donate: B supplies memory to be mapped for someone
+    // else. It is never spending it on a kernel object, and giving it the
+    // stronger right would be authority the pager role does not need.
+    auto pager_backing_capability = boot_kernel.capabilities().mint(
+        boot_pager_thread,
+        os::kernel::memory_grant_object_id(pager_granted.value().identity),
+        os::kernel::memory_right_map,
+        false);
+    if (!pager_backing_capability) fail("M7_11_PAGER_CAP");
+    boot_pager_backing_cap = pager_backing_capability.value();
+
     if (!boot_fault_regions.declare(
             fault_probe_virtual, page_size,
             os::kernel::FaultDisclosure::paged)) fail("M7_11_DECLARE_REGION");

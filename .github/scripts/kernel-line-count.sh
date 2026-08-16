@@ -76,15 +76,6 @@ label="${1:-kernel-line-count}"
 #                   includes it, which is the whole point of listing it here
 #                   by name rather than letting it slip in unclassified.
 #
-#   fault_delivery.*  The question a fault asks, held between the kernel asking
-#                   it and the pager answering. Built into emnl::oskernel and
-#                   unit-tested, but nothing in cookie_kernel_aarch64_boot
-#                   includes it yet - there is no pager - so it is not in the
-#                   shipped image and counting it would overstate what is
-#                   trusted today. It moves into `core` in the increment that
-#                   makes the EL0 fault path arm a pager instead of terminating
-#                   the faulting thread, which is the whole reason it exists.
-#
 #   CMakeLists.txt, *.ld.in  Build description. Not code that runs.
 #
 # Any file under core/oskernel that appears in neither a category nor the
@@ -152,6 +143,7 @@ core_files=(
     "core/oskernel/include/os/kernel/ipc_endpoint.hpp"
     "core/oskernel/include/os/kernel/ipc_syscall.hpp"
     "core/oskernel/include/os/kernel/address_space_syscall.hpp"
+    "core/oskernel/include/os/kernel/fault_delivery.hpp"
     "core/oskernel/include/os/kernel/fault_region.hpp"
     "core/oskernel/include/os/kernel/memory_grant.hpp"
     "core/oskernel/include/os/kernel/kernel.hpp"
@@ -170,6 +162,7 @@ core_files=(
     "core/oskernel/src/ipc_endpoint.cpp"
     "core/oskernel/src/ipc_syscall.cpp"
     "core/oskernel/src/address_space_syscall.cpp"
+    "core/oskernel/src/fault_delivery.cpp"
     "core/oskernel/src/fault_region.cpp"
     "core/oskernel/src/memory_grant.cpp"
     "core/oskernel/src/kernel.cpp"
@@ -246,8 +239,6 @@ not_kernel=(
     "core/oskernel/CMakeLists.txt"
     "core/oskernel/boot/aarch64_qemu.ld.in"
     "core/oskernel/include/os/kernel/aarch64_kernel_translation_domain.hpp"
-    "core/oskernel/include/os/kernel/fault_delivery.hpp"
-    "core/oskernel/src/fault_delivery.cpp"
     "core/oskernel/include/os/kernel/machine_host.hpp"
     "core/oskernel/src/machine_host.cpp"
 )
@@ -871,7 +862,33 @@ not_kernel=(
 # fault_delivery.* stays excluded - the decoder lives there and nothing in the
 # image calls it yet. Only the ABI descriptor is in the image, which is why
 # this raise is two lines rather than the whole handshake.
-core_ceiling=4122
+#
+# Raised again, closing M7.11's fault path end to end: core 4,122 -> 4,284,
+# entry 1,479 -> 1,589, total 10,162 -> 10,434.
+#
+# A process faults in a declared region, a userland pager is asked, the pager
+# answers with memory it holds authority over, the kernel maps it and the
+# faulting thread resumes on the instruction that faulted. That is this
+# milestone's last exit criterion, and kernel-arm64-native gates on the whole
+# chain: FAULT_REGION, FAULT_ASKED, PAGER_BACKED, FAULT_RESUMED.
+#
+# fault_delivery.* moves out of the exclusion list here, which is exactly the
+# transition its exclusion note named - it was excluded while nothing in the
+# image armed a pager, and this is the increment that does.
+#
+# The disclosure decision survives the whole path, which is the part worth
+# checking in review rather than trusting. The pager is handed a region in x2
+# and there is no register carrying the faulting address. Its answer names
+# backing and not a region, so it cannot answer a question it was not asked.
+# And answer() refuses a pager that was never asked or has not collected, so
+# memory cannot be pushed into an address space unprompted.
+#
+# memory_control is admitted at the syscall entry and every other call carrying
+# it is refused immediately, the same discipline process_control got: map and
+# unmap have no dispatch, and admitting the class without refusing them would
+# let a caller reach the yield tail and get a wrong answer rather than a
+# refusal.
+core_ceiling=4284
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -1062,8 +1079,8 @@ discovery_ceiling=1272
 # the kernel dispenses from. Under the loan reading the holder's authority
 # never left, so there is nothing to hand back; what ends at destroy is the
 # space's use of the page, not the holder's claim on it.
-entry_ceiling=1479
-total_ceiling=10162
+entry_ceiling=1599
+total_ceiling=10444
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

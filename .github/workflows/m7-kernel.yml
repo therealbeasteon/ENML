@@ -251,8 +251,9 @@ jobs:
           grep -F 'COOKIE:M7.11:EL0_DESTROYED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:EL0_GRANT_REUSED' cookie-qemu.log
           grep -F 'COOKIE:M7.11:FAULT_REGION' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:THREAD_TERMINATED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:SURVIVED_FAULT' cookie-qemu.log
+          grep -F 'COOKIE:M7.11:FAULT_ASKED' cookie-qemu.log
+          grep -F 'COOKIE:M7.11:PAGER_BACKED' cookie-qemu.log
+          grep -F 'COOKIE:M7.11:FAULT_RESUMED' cookie-qemu.log
           # The disclosure property itself, checked as an absence: the fault
           # report must name a region and must not name the faulting address.
           # A regression that started printing FAR would still emit the marker
