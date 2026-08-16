@@ -30,6 +30,18 @@ target_link_options(kernel_ipc_syscall_fuzz PRIVATE
     -fsanitize=fuzzer,address,undefined
 )
 
+add_executable(kernel_syscall_surface_fuzz kernel/syscall_surface_fuzz.cpp)
+target_link_libraries(kernel_syscall_surface_fuzz PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_syscall_surface_fuzz PRIVATE
+    -fno-exceptions
+    -fno-rtti
+    -fsanitize=fuzzer,address,undefined
+    -fno-omit-frame-pointer
+)
+target_link_options(kernel_syscall_surface_fuzz PRIVATE
+    -fsanitize=fuzzer,address,undefined
+)
+
 add_executable(kernel_capability_fuzz kernel/capability_fuzz.cpp)
 target_link_libraries(kernel_capability_fuzz PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_capability_fuzz PRIVATE
