@@ -1,6 +1,6 @@
 # M7.11 - Memory as a first-class object
 
-**Status: memory complete; two criteria met only for an address space rather than a process - see "Exit criteria: where they actually stand".** `docs/ROADMAP.md` added this milestone (Phase 2b)
+**Status: memory complete. The two criteria that were met only for an address space are now met for a process too, by M7.12 rather than by this milestone - see "Exit criteria: where they actually stand".** `docs/ROADMAP.md` added this milestone (Phase 2b)
 after a gap review found virtual memory absent from the phase list rather than
 deferred within it. This document makes the decisions that have to be made
 before any of it is written, because the central one - whether the kernel
@@ -609,8 +609,10 @@ ends the line-count claim.
 
 ## Exit criteria: where they actually stand
 
-Four of the six are met on hardware. Two are met only in the address-space
-sense, and the difference is worth stating rather than rounding away.
+All six are met on hardware. Two of them were met only in the address-space
+sense when this milestone closed, and were finished by M7.12 rather than by
+stretching this one - the paragraphs below are kept in that order because the
+distinction is the point.
 
 **Met.** A fault is resolved by a userland pager and the faulting thread
 continues - `FAULT_REGION` to `FAULT_ASKED` to `PAGER_BACKED` to
@@ -620,19 +622,24 @@ space afterwards. A stale reference fails closed with the same error a wrong
 reference gets. Everything is proven under QEMU rather than only on the host,
 and every increment raised M7.10 in its own diff.
 
-**Met for an address space, not for a process.** The first criterion says a
-*process* is created after boot, and the third says its pages are reused by a
-later *process*. What exists is an address space: created from a memory
-capability, given a root, mapped into, destroyed, and its pages reclaimed - but
-nothing runs in it. No thread is admitted, no program is placed, and the
-faulting thread in the pager proof is one boot created rather than one this
-milestone made.
+**Was met for an address space, not for a process; closed by M7.12.** The
+first criterion says a *process* is created after boot, and the third says its
+pages are reused by a later *process*. What this milestone produced was an
+address space: created from a memory capability, given a root, mapped into,
+destroyed, and its pages reclaimed - with nothing running in it. No thread was
+admitted, no program placed, and the faulting thread in the pager proof was one
+boot created rather than one this milestone made.
 
-That gap is not memory work and should not be closed by stretching this
-milestone to cover it. Admitting a thread into a created space is thread and
-process lifecycle, which is where M7.12 lives. The memory underneath it is
-finished: the space, its pages, its authority and its faults are all
-first-class now, which is what "memory as a first-class object" named.
+That gap was not memory work and was deliberately not closed by stretching this
+milestone to cover it. It is closed in M7.12, which admits a thread into a
+space created after boot and runs it there - `COOKIE:M7.12:THREAD_ADMITTED`,
+`..:THREAD_WOKEN`, `..:PROCESS_RAN` under `kernel-arm64-native`. See
+`docs/M7_12_ENTRY_BINDING.md` for the decision that had to be made first, about
+who chooses the address a thread starts at.
+
+The memory underneath it was finished here: the space, its pages, its authority
+and its faults are all first-class, which is what "memory as a first-class
+object" named.
 
 ## Exit criteria
 
