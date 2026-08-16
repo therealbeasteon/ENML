@@ -1235,6 +1235,26 @@ extern "C" void cookie_kernel_syscall_entry(
         fault_backed = true;
         frame->x[0] = 1ULL;
         uart_write("COOKIE:M7.11:PAGER_BACKED\n");
+
+        // Tell the scheduler now rather than waiting for a timer, because
+        // there may not be one. When the fault was taken the faulting thread
+        // was made unrunnable, which left the pager as the only runnable
+        // thread - an uncontested decision arms no deadline. Marking the
+        // faulting thread runnable again therefore changes nothing observable
+        // until something reschedules, and without this the pager simply spins
+        // and the thread it just answered for never runs again.
+        //
+        // This is what reschedule is for: an event-driven transition for
+        // exactly the runnable-state change that just happened.
+        const auto resumed_now = os::kernel::machine_monotonic_nanoseconds();
+        auto resumed = boot_preemption.reschedule(
+            boot_kernel.runqueue(), boot_translations, boot_epochs, resumed_now, *frame,
+            boot_kernel.ipc_earliest_receive_deadline());
+        if (!resumed || !commit_result(resumed.value(), resumed_now) ||
+            !complete_after_switch(resumed.value().next, *frame)) {
+            uart_write("COOKIE:PANIC:FAULT_RESUME_RESCHEDULE\n");
+            halt();
+        }
         return;
     }
 
