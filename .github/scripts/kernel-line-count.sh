@@ -919,7 +919,33 @@ core_ceiling=4122
 # "Nothing runnable" halts with a name rather than trapping, because it is a
 # real outcome and not an invariant violation: it is what happens when the last
 # thread faults.
-machine_ceiling=3232
+#
+# Raised again, making demand paging expressible at all: machine 3,232 ->
+# 3,289, total 10,105 -> 10,162. core untouched.
+#
+# This unblocks something that turned out to be impossible rather than merely
+# unwritten. A sealed translation root refuses every mapping - map_page and
+# map_user_page both go through require_building, which rejects `sealed` - and
+# every process root is sealed before it runs. So a running process could never
+# gain a translation, which is exactly what demand paging is. The fault path
+# could report a region and kill a thread, and could never have backed one.
+#
+# The relaxation is deliberately the narrowest that makes it expressible, and
+# it rests on a line that was already there rather than on an argument:
+# install_leaf refuses a leaf that is already valid, with already_mapped. So
+# back_absent_user_page can only ever fill a hole. Nothing a live translation
+# resolves to can change under the CPU through it, which is the property
+# sealing has to protect - construction authority and execution authority stay
+# separated for everything that exists.
+#
+# Retiring is still refused. Unlike the sealed case there is no operation that
+# needs it, and a space being torn down has no business gaining translations.
+#
+# map_user_backing routes through map_impl rather than around it, so backing
+# still passes the W^X ledger check, the reservation rules, the guard-page rule
+# and the table budget. A backing path that skipped those would be a hole
+# shaped like a feature.
+machine_ceiling=3289
 discovery_ceiling=1272
 #
 # Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry
@@ -1037,7 +1063,7 @@ discovery_ceiling=1272
 # never left, so there is nothing to hand back; what ends at destroy is the
 # space's use of the page, not the holder's claim on it.
 entry_ceiling=1479
-total_ceiling=10105
+total_ceiling=10162
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

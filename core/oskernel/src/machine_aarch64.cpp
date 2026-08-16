@@ -175,6 +175,20 @@ os::core::Result<void> aarch64_donate_table_page(
     return arena.donate(static_cast<std::uint64_t>(physical));
 }
 
+os::core::Result<void> aarch64_back_user_page(
+    MachineAddressSpace& space,
+    std::uintptr_t virtual_base,
+    std::uintptr_t physical_base,
+    std::size_t length,
+    MachinePermissions permissions) noexcept {
+    if (space.early_builder == nullptr) return machine_error(machine_errors::address_space_unbound);
+    return space.mappings.map_user_backing(
+        static_cast<std::uint64_t>(virtual_base),
+        static_cast<std::uint64_t>(physical_base),
+        static_cast<std::uint64_t>(length),
+        permissions);
+}
+
 os::core::Result<void> aarch64_map_user(
     MachineAddressSpace& space,
     std::uintptr_t virtual_base,

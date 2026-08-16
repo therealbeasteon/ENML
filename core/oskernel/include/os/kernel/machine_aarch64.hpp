@@ -105,6 +105,17 @@ struct MachineAddressSpace final {
     aarch64::EarlyPageArena& arena,
     std::uintptr_t physical) noexcept;
 
+// Backs a page in a space that may already be sealed and executing, which is
+// what the fault path needs and what aarch64_map_user cannot do. See
+// EarlyStage1Builder::back_absent_user_page for why permitting it does not
+// weaken the seal: it can only fill an absent translation, never change one.
+[[nodiscard]] os::core::Result<void> aarch64_back_user_page(
+    MachineAddressSpace& space,
+    std::uintptr_t virtual_base,
+    std::uintptr_t physical_base,
+    std::size_t length,
+    MachinePermissions permissions) noexcept;
+
 [[nodiscard]] os::core::Result<void> aarch64_map_user(
     MachineAddressSpace& space,
     std::uintptr_t virtual_base,
