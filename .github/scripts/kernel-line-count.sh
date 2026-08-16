@@ -1103,8 +1103,29 @@ discovery_ceiling=1272
 # the kernel dispenses from. Under the loan reading the holder's authority
 # never left, so there is nothing to hand back; what ends at destroy is the
 # space's use of the page, not the holder's claim on it.
-entry_ceiling=1599
-total_ceiling=10583
+#
+# Raised by M7.12's boot proof: entry 1,599 -> 1,721, total 10,583 -> 10,705.
+#
+# What the lines buy is the claim M7.11's own document said it had not earned.
+# That milestone created an address space after boot, mapped it, destroyed it
+# and reclaimed its pages with *nothing ever running in it*, and recorded that
+# two of its exit criteria were therefore met for an address space rather than
+# for a process. This is a second space, built the same way, that a thread is
+# admitted into and runs in - COOKIE:M7.12:THREAD_ADMITTED, ..:THREAD_WOKEN,
+# ..:PROCESS_RAN.
+#
+# The proof is built so it can fail. The first four words of the created
+# space's code page set the *wrong* marker and yield exactly as the real entry
+# does, so a kernel that entered the mapping at its base rather than at the
+# address the sealed root declared halts with COOKIE:PANIC:M7_12_ENTRY instead
+# of quietly passing. And the code it runs is mapped only in the created
+# space, at a virtual address neither existing process maps at all.
+#
+# The thread is woken at the end of the M7.11 chain rather than at admission,
+# so a third runnable thread cannot perturb the deliberately uncontested
+# scheduling decisions the contention and pager proofs are built on.
+entry_ceiling=1721
+total_ceiling=10705
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

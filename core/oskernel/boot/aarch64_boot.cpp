@@ -72,6 +72,28 @@ constexpr std::size_t dynamic_proof_pages = 7U;
 // because of state the other left behind.
 constexpr std::size_t dynamic_donated_pages = 4U;
 constexpr std::uint64_t dynamic_proof_virtual = 0x0000'0000'2000'0000ULL;
+
+// M7.12's proof: a thread that runs in a space created after boot. Its own
+// pages throughout, separate from the M7.11 proof's, so neither can pass
+// because of state the other left behind.
+//
+// Most of the donation is not for C's own two mappings - those need three
+// tables between them - but for replaying the kernel mapping manifest into
+// C's root. Cookie translates through TTBR0 only, so EL1 executes under
+// whichever process root is installed, and a space with no kernel mappings is
+// a space whose first syscall faults inside the kernel. That is not a
+// generous allowance; it is the cost of the TTBR1 split not having landed.
+constexpr std::size_t c_donated_pages = 16U;
+constexpr std::size_t c_proof_pages = c_donated_pages + 2U;
+constexpr std::uint64_t c_code_virtual = 0x0000'0000'2100'0000ULL;
+constexpr std::uint64_t c_stack_virtual = 0x0000'0000'2101'0000ULL;
+// Where the space says execution begins - four words in, not at the page
+// base. The first four words are a decoy that sets the wrong marker and
+// yields, so a kernel that entered at the start of the mapping rather than at
+// the sealed entry is caught by the check rather than passing silently.
+constexpr std::uint64_t c_entry_virtual = c_code_virtual + 4U * sizeof(std::uint32_t);
+constexpr std::uint64_t c_marker = 0xC33CULL;
+constexpr std::uint64_t c_decoy_marker = 0xDEADULL;
 constexpr std::uint64_t runtime_stack_virtual = 0x0000'007F'FEF0'0000ULL;
 constexpr std::uint64_t user_code_virtual = 0x0000'0000'1000'0000ULL;
 constexpr std::uint64_t user_stack_virtual = 0x0000'0000'1001'0000ULL;
@@ -171,6 +193,19 @@ os::kernel::aarch64::GicV3PrimaryCpu boot_gic{};
 os::kernel::aarch64::EarlyPageArena dynamic_arena{};
 os::kernel::aarch64::EarlyStage1Builder dynamic_builder{dynamic_arena};
 os::kernel::MachineAddressSpace dynamic_space{};
+
+// The space M7.12's proof creates after boot and then *runs a thread in*.
+// Separate from dynamic_space above, which is created and destroyed without
+// anything ever executing in it - that was M7.11's claim and this is a
+// different one.
+os::kernel::aarch64::EarlyPageArena c_arena{};
+os::kernel::aarch64::EarlyStage1Builder c_builder{c_arena};
+os::kernel::MachineAddressSpace c_space{};
+// Issued by the kernel rather than chosen here. That is the point: boot names
+// process_a_thread and process_b_thread as constants because it made them by
+// hand, and this one is whatever thread_admit handed back.
+os::kernel::ThreadId c_thread = os::kernel::invalid_thread;
+bool c_ran = false;
 
 // The pool spaces created from EL0 live in. A real system needs this in the
 // machine layer with the rest of address-space lifetime; it is here because
@@ -621,6 +656,40 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
     // B never learns where in its client's address space the fault happened.
     words[16] = svc_zero;
     words[17] = branch_self;
+}
+
+// M7.12's program. Deliberately in two halves, and the first half is a trap.
+//
+// Words 0-3 set the *wrong* marker and yield. Nothing ever branches there;
+// they exist so that a kernel which entered this mapping at its base rather
+// than at the entry its address space declared arrives at the yield handler
+// carrying c_decoy_marker, and is caught. Without them, entering anywhere in
+// the page that happened to reach word 4 would look identical to entering
+// where the seal said, and the property being proved would not be tested.
+//
+// Words 4-7 are the real entry: set the marker, yield, and stop. The yield is
+// what makes "it ran" observable - a thread spinning silently is
+// indistinguishable from one that never started.
+void install_process_c_program(std::uint64_t physical_page) noexcept {
+    zero_page(physical_page);
+    auto* words = reinterpret_cast<volatile std::uint32_t*>(
+        static_cast<std::uintptr_t>(physical_page));
+    constexpr std::uint32_t movz_x8_base = 0xD2800008U;
+    constexpr std::uint32_t movz_x19_base = 0xD2800013U;
+    constexpr std::uint32_t svc_zero = 0xD4000001U;
+    constexpr std::uint32_t branch_self = 0x14000000U;
+    constexpr std::uint32_t yield_number =
+        static_cast<std::uint32_t>(os::kernel::KernelCall::yield);
+
+    words[0] = movz_x19_base | (static_cast<std::uint32_t>(c_decoy_marker) << 5U);
+    words[1] = movz_x8_base | (yield_number << 5U);
+    words[2] = svc_zero;
+    words[3] = branch_self;
+
+    words[4] = movz_x19_base | (static_cast<std::uint32_t>(c_marker) << 5U);
+    words[5] = movz_x8_base | (yield_number << 5U);
+    words[6] = svc_zero;
+    words[7] = branch_self;
 }
 
 // Arms the reused virtual-timer PPI (boot_gic.device_intid) as M7.9's
@@ -1151,7 +1220,8 @@ extern "C" void cookie_kernel_syscall_entry(
          call.value().authority != os::kernel::CallAuthority::interrupt_control &&
          call.value().authority != os::kernel::CallAuthority::process_control &&
          call.value().authority != os::kernel::CallAuthority::memory_control) ||
-        (current != process_a_thread && current != process_b_thread)) {
+        (current != process_a_thread && current != process_b_thread &&
+         !(c_thread != os::kernel::invalid_thread && current == c_thread))) {
         uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
         halt();
     }
@@ -1448,6 +1518,32 @@ extern "C" void cookie_kernel_syscall_entry(
         return;
     }
 
+    // M7.12: the thread admitted into a space created after boot reached its
+    // first system call. Everything this proves is in the two checks.
+    //
+    // x19 carries the marker set by the instruction at the entry the *space*
+    // declared. The four words before it set a different one and yield the
+    // same way, so a kernel that entered the mapping at its base instead of at
+    // the sealed entry arrives here and is refused rather than passing.
+    //
+    // And the code it executed is mapped only in the space created after boot,
+    // at a virtual address neither A's nor B's space maps at all. So reaching
+    // this line at all is the created space's translation root having been
+    // installed and executed under - which is what "a thread runs in a space
+    // created after boot" means.
+    if (c_thread != os::kernel::invalid_thread && current == c_thread) {
+        if (call.value().call != os::kernel::KernelCall::yield ||
+            frame->x[19] != c_marker) {
+            uart_write("COOKIE:PANIC:M7_12_ENTRY x19=");
+            uart_write_hex(frame->x[19]);
+            uart_write("\n");
+            halt();
+        }
+        c_ran = true;
+        uart_write("COOKIE:M7.12:PROCESS_RAN\n");
+        return;
+    }
+
     if (call.value().call != os::kernel::KernelCall::yield || current != process_a_thread) {
         uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
         halt();
@@ -1460,6 +1556,36 @@ extern "C" void cookie_kernel_syscall_entry(
     if (fault_backed && !fault_resume_reported) {
         fault_resume_reported = true;
         uart_write("COOKIE:M7.11:FAULT_RESUMED\n");
+
+        // The M7.11 chain is finished, so M7.12's thread is woken here rather
+        // than at admission. Waking it earlier would put a third runnable
+        // thread into every scheduling decision above - including the
+        // deliberately uncontested ones the contention and pager proofs are
+        // built on - so a failure in either could be caused by the other.
+        //
+        // C has never run, so it sits ahead of A at the same priority (see
+        // Scheduler::Slot's sequence) and the reschedule below picks it. And
+        // the reschedule is explicit for the reason the pager path already
+        // records: making a thread runnable changes nothing observable until
+        // something reschedules, and there may be no timer armed.
+        if (c_thread != os::kernel::invalid_thread && !c_ran) {
+            if (!boot_kernel.runqueue().update(c_thread, true, process_priority)) {
+                uart_write("COOKIE:PANIC:M7_12_WAKE\n");
+                halt();
+            }
+            const auto c_now = os::kernel::machine_monotonic_nanoseconds();
+            auto to_c = boot_preemption.reschedule(
+                boot_kernel.runqueue(), boot_translations, boot_epochs, c_now, *frame,
+                boot_kernel.ipc_earliest_receive_deadline());
+            if (!to_c || !commit_result(to_c.value(), c_now) ||
+                !complete_after_switch(to_c.value().next, *frame)) {
+                uart_write("COOKIE:PANIC:M7_12_RESCHEDULE\n");
+                halt();
+            }
+            uart_write("COOKIE:M7.12:THREAD_WOKEN next=");
+            uart_write_hex(static_cast<std::uint64_t>(to_c.value().next));
+            uart_write("\n");
+        }
         // Returns rather than falling through, because the yield state machine
         // below is a closed set - it ends in COOKIE:PANIC:EL0_STATE for any
         // yield it does not recognise, which is the right default and is what
@@ -1899,6 +2025,17 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         std::span<const HardwareRange>{dynamic_protected});
     if (!dynamic_pages) fail("RAM_DYNAMIC");
 
+    // M7.12's pages, selected the same way and protected against the M7.11
+    // proof's so the two cannot overlap.
+    const std::array<HardwareRange, 9U> c_protected{
+        image_range, dtb_range, plan.value().page_tables, plan.value().kernel_stack,
+        a_code.value(), a_stack.value(), b_code.value(), b_stack.value(),
+        dynamic_pages.value()};
+    auto c_pages = os::kernel::select_early_ram(
+        inventory.value(), c_proof_pages * page_size, page_size,
+        std::span<const HardwareRange>{c_protected});
+    if (!c_pages) fail("RAM_C");
+
     // Everything selected out of discovered RAM above is still outside the
     // early identity map, and all of it is written before the real mapping
     // takes over: the four process pages by the install/zero/write calls
@@ -1936,6 +2073,13 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!extend_early_identity_map(
             dynamic_pages.value(), MachinePermissions::read_write,
             MachineMemoryKind::normal)) fail("EARLY_MAP_DYNAMIC");
+    // Same reasoning for M7.12's pages: its tables are written through their
+    // raw physical addresses while this map is the live one, and its code page
+    // has a program installed into it here even though it is read-execute in
+    // the space that will eventually run it.
+    if (!extend_early_identity_map(
+            c_pages.value(), MachinePermissions::read_write,
+            MachineMemoryKind::normal)) fail("EARLY_MAP_C");
 
     install_process_a_program(a_code.value().base);
     install_process_b_program(b_code.value().base);
@@ -2383,6 +2527,92 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         fail("M7_11_STALE_ACCEPTED");
     }
     uart_write("COOKIE:M7.11:STALE_REFUSED\n");
+
+    // M7.12: a thread admitted into a space created after boot.
+    //
+    // M7.11 proved a space could be created, mapped, destroyed and its pages
+    // reclaimed - with nothing ever running in it. The doc said so rather than
+    // rounding it away, and this is the gap it named being closed: a second
+    // space, built the same way, that a thread is admitted into and runs in.
+    //
+    // Built here, before the real map is activated, for the same reason the
+    // M7.11 proof is: EarlyStage1Builder writes tables through their raw
+    // physical addresses, which are only reachable while the early identity
+    // map is live.
+    auto c_created = boot_kernel.address_space_create(
+        process_a_thread, address_space_authority.value(), boot_epochs);
+    if (!c_created || !c_created.value().valid()) fail("M7_12_AUTHORIZE");
+    if (!os::kernel::aarch64_create_address_space(
+            c_space, boot_physical_ledger, c_builder)) fail("M7_12_CREATE");
+    for (std::size_t page = 0U; page < c_donated_pages; ++page) {
+        if (!os::kernel::aarch64_donate_table_page(
+                c_space, c_arena,
+                static_cast<std::uintptr_t>(
+                    c_pages.value().base + page * page_size))) fail("M7_12_DONATE");
+    }
+    if (!os::kernel::aarch64_initialize_translation_root(c_space)) fail("M7_12_ROOT");
+
+    // Without this the space has no kernel mappings, and its first syscall
+    // faults inside the kernel rather than in the process. Cookie translates
+    // through TTBR0 only, so EL1 runs under whichever process root is
+    // installed - the constraint that already forced two reservations to
+    // weaken, showing up a third time. A created space that is never entered
+    // does not need this, which is why M7.11 never did it.
+    if (!os::kernel::aarch64::replay_kernel_mapping_manifest(kernel_manifest, c_space)) {
+        fail("M7_12_REPLAY");
+    }
+
+    install_process_c_program(c_pages.value().base + c_donated_pages * page_size);
+    zero_page(c_pages.value().base + (c_donated_pages + 1U) * page_size);
+    if (!os::kernel::aarch64_map_user(
+            c_space,
+            static_cast<std::uintptr_t>(c_code_virtual),
+            static_cast<std::uintptr_t>(
+                c_pages.value().base + c_donated_pages * page_size),
+            static_cast<std::size_t>(page_size),
+            MachinePermissions::read_execute)) fail("M7_12_MAP_CODE");
+    if (!os::kernel::aarch64_map_user_stack(
+            c_space,
+            static_cast<std::uintptr_t>(c_stack_virtual),
+            static_cast<std::uintptr_t>(
+                c_pages.value().base + (c_donated_pages + 1U) * page_size),
+            static_cast<std::size_t>(page_size))) fail("M7_12_MAP_STACK");
+
+    // The entry is declared here, while this routine still holds construction
+    // authority over the space, and is unchangeable from this line onward -
+    // docs/M7_12_ENTRY_BINDING.md. Nothing downstream, including thread_admit
+    // itself, is given the opportunity to name a different one.
+    auto c_sealed = os::kernel::aarch64::TranslationRootSealer::seal(
+        c_builder, c_entry_virtual);
+    if (!c_sealed) fail("M7_12_SEAL");
+
+    // A is the creator, so A holds the space with address_space_right_admit.
+    // The stack top is the caller's to choose and the entry is not: this call
+    // passes one of the two.
+    auto c_admitted = boot_kernel.thread_admit(
+        process_a_thread,
+        c_created.value().capability,
+        c_stack_virtual + page_size,
+        c_sealed.value(),
+        boot_epochs,
+        boot_translations);
+    if (!c_admitted || !c_admitted.value().valid()) fail("M7_12_ADMIT");
+    if (c_admitted.value().entry != c_entry_virtual) fail("M7_12_ENTRY");
+    c_thread = c_admitted.value().thread;
+
+    // The frame is built from what admission returned rather than from the
+    // constants above. If the kernel had handed back a different entry this
+    // would start C somewhere else and the decoy at word 0 would catch it.
+    os::kernel::aarch64::ExceptionFrame initial_c{};
+    initial_c.elr_el1 = c_admitted.value().entry;
+    initial_c.sp_el0 = c_admitted.value().stack;
+    initial_c.spsr_el1 = 0x340ULL;
+    if (!boot_preemption.admit_frame(c_thread, initial_c)) fail("M7_12_ADMIT_FRAME");
+
+    // Left not runnable, which thread_admit already made it. It is woken at
+    // the end of the M7.11 chain rather than here, so a third runnable thread
+    // cannot perturb the scheduling every proof above it depends on.
+    uart_write("COOKIE:M7.12:THREAD_ADMITTED\n");
 
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(
         static_cast<std::uintptr_t>(uart->registers.base));
