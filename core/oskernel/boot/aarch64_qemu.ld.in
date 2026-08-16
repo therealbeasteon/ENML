@@ -29,6 +29,28 @@ SECTIONS
     . = @EMNL_AARCH64_BOOT_LOAD_ADDRESS@;
     __cookie_image_start = .;
 
+    /* The ARM64 Image header's text_offset, derived here rather than written
+     * into aarch64_start.S by hand.
+     *
+     * The two used to be independent and were wrong: the header declared
+     * 0x80000 while the image linked at 0x40200000, so a loader honouring the
+     * header placed Cookie 1.5 MiB below where its absolute references point.
+     * Nothing caught it, because the boot proof loads the ELF by program
+     * headers and never reads this field - the one field a phone would use is
+     * the one no gate exercised.
+     *
+     * Deriving it makes disagreement unrepresentable. The assertions below are
+     * the remaining ways a port could still be wrong, and each is a build
+     * failure rather than a boot failure. */
+    __cookie_ram_base = @EMNL_AARCH64_BOOT_RAM_BASE@;
+    __cookie_text_offset = __cookie_image_start - __cookie_ram_base;
+    ASSERT(__cookie_image_start >= __cookie_ram_base,
+        "Cookie image is linked below the declared base of RAM")
+    ASSERT((__cookie_ram_base & 0x1FFFFF) == 0,
+        "Cookie RAM base must be 2 MiB aligned, per the AArch64 Image contract")
+    ASSERT((__cookie_text_offset & 0xFFFF) == 0,
+        "Cookie text_offset must be 64 KiB aligned, per the AArch64 Image contract")
+
     .text ALIGN(4096) : {
         __cookie_text_start = .;
         KEEP(*(.text.boot))

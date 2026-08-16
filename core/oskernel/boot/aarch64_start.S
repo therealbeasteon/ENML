@@ -8,14 +8,30 @@
 // its own kernel ABI and does not consume Linux services or Linux runtime state.
 //
 // code0/code1 occupy the first 8 bytes and branch over the 64-byte header.
-// text_offset=0x80000 matches Cookie's linked 0x4008_0000 placement when RAM
-// begins at a 2 MiB-aligned 0x4000_0000 base. image_size is linker-derived.
+//
+// Both size fields are linker-derived and neither is written here, which is the
+// point rather than a convenience. text_offset used to be the literal 0x80000
+// while the image linked at 0x40200000 - so the header told a bootloader to
+// place Cookie 1.5 MiB below where every absolute reference in it points, and
+// nothing caught it because the boot proof loads the ELF by program headers and
+// never reads this field. The one field a phone would actually use was the one
+// no gate exercised. It is now __cookie_text_offset, computed by the linker
+// script from the port's load address and RAM base, so the header cannot
+// disagree with the link.
+//
+// This remains transport metadata only: Cookie keeps its own kernel ABI and
+// consumes no Linux services or runtime state.
 _start:
     b .Lcookie_entry
     nop
-    .quad 0x0000000000080000                  // text_offset
+    .quad __cookie_text_offset                 // derived; see cookie_aarch64_boot.ld
     .quad __cookie_image_size                 // image_size, resolved by linker script
-    .quad 0x0000000000000000                  // flags: LE, page size unspecified
+    // Little-endian, 4 KiB pages. The page-size field was previously
+    // "unspecified", which is a bootloader's licence to place the image for a
+    // granule Cookie does not use - docs/M7_13_HARDWARE_NEUTRALITY.md records
+    // that 4 KiB is assumed throughout, and this is the one place the assumption
+    // is visible to anything outside the image.
+    .quad 0x0000000000000002                  // flags: LE, 4 KiB granule
     .quad 0x0000000000000000                  // reserved
     .quad 0x0000000000000000                  // reserved
     .quad 0x0000000000000000                  // reserved
