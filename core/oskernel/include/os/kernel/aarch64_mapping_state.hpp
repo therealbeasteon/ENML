@@ -19,12 +19,15 @@ inline constexpr std::size_t max_native_physical_mappings = 256U;
 //
 // Raised from 16 for M7.12, and the reason is a capacity fact rather than a
 // rule being relaxed. Each page donated to a post-boot address space takes a
-// slot, because reserving is per page: a space that replays the kernel mapping
-// manifest into its own root - which every space a thread will run in must, so
-// long as Cookie translates through TTBR0 only - needs a dozen or so table
-// pages, and 16 was chosen when nothing had donated any. Nothing about what a
-// reservation *means* changes with the count.
-inline constexpr std::size_t max_native_physical_reservations = 32U;
+// slot, because reserving is per page - and a space a thread will actually run
+// in has to replay the whole kernel mapping manifest into its own root, so
+// long as Cookie translates through TTBR0 only. That is tens of table pages,
+// where 16 was chosen at a time when nothing had donated any. Nothing about
+// what a reservation *means* changes with the count.
+//
+// It shrinks when M7.7's TTBR1 split lands and a process root stops having to
+// carry the kernel's mappings at all.
+inline constexpr std::size_t max_native_physical_reservations = 64U;
 
 struct NativeMapping final {
     std::uint64_t virtual_base {0ULL};

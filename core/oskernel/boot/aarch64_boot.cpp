@@ -83,7 +83,7 @@ constexpr std::uint64_t dynamic_proof_virtual = 0x0000'0000'2000'0000ULL;
 // whichever process root is installed, and a space with no kernel mappings is
 // a space whose first syscall faults inside the kernel. That is not a
 // generous allowance; it is the cost of the TTBR1 split not having landed.
-constexpr std::size_t c_donated_pages = 16U;
+constexpr std::size_t c_donated_pages = 48U;
 constexpr std::size_t c_proof_pages = c_donated_pages + 2U;
 constexpr std::uint64_t c_code_virtual = 0x0000'0000'2100'0000ULL;
 constexpr std::uint64_t c_stack_virtual = 0x0000'0000'2101'0000ULL;
@@ -2558,8 +2558,18 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // installed - the constraint that already forced two reservations to
     // weaken, showing up a third time. A created space that is never entered
     // does not need this, which is why M7.11 never did it.
-    if (!os::kernel::aarch64::replay_kernel_mapping_manifest(kernel_manifest, c_space)) {
-        fail("M7_12_REPLAY");
+    auto c_replayed =
+        os::kernel::aarch64::replay_kernel_mapping_manifest(kernel_manifest, c_space);
+    if (!c_replayed) {
+        // With the code. "Replay refused" alone cost a CI round trip on the
+        // first attempt and turned out to be the donated arena running out,
+        // which is a number in this file rather than anything structural - the
+        // same lesson EL0_CREATE_REFUSED already carries.
+        uart_write("COOKIE:PANIC:M7_12_REPLAY code=");
+        uart_write_hex(static_cast<std::uint64_t>(c_replayed.error().code));
+        uart_write("
+");
+        halt();
     }
 
     install_process_c_program(c_pages.value().base + c_donated_pages * page_size);
