@@ -1,11 +1,19 @@
 # M7.12 — The first program
 
-**Status: design.** No code. `docs/M7_2_NO_DESTINATION.md` found that nothing can
+**Status: in progress.** Two of the four pieces below have decisions and code:
+`docs/M7_12_ENTRY_BINDING.md` settles who chooses the address a thread starts
+at, and `Kernel::thread_admit` implements it - proven under
+`kernel-arm64-native` by a thread that runs in a space created after boot,
+entering where that space's sealed root declared and nowhere else. What remains
+is the toolchain half: an image format, a loader, syscall stubs, and a first
+process that is compiled rather than hand-assembled instruction words.
+
+The original framing, which still holds: `docs/M7_2_NO_DESTINATION.md` found that nothing can
 move off Linux because Cookie has no userland — no syscall stubs, no image
 format, no loader, and only hand-assembled instruction words have ever run at
-EL0. This is the milestone that does not exist yet, named and decided before it
-is written, for the same reason M7.11 decided the allocator question first: the
-choices here cannot be revisited once anything depends on them.
+EL0. This milestone was named and decided before it was written, for the same
+reason M7.11 decided the allocator question first: the choices here cannot be
+revisited once anything depends on them.
 
 ## What has to exist
 
@@ -126,6 +134,22 @@ already built. The kernel is not involved.
   those.** A structural question worth its own review; it changes nothing above.
 
 ## Exit criteria
+
+Where they stand today, stated the way M7.11's were rather than left to be
+inferred:
+
+- **Not met.** A compiled program. Everything that has run at EL0 is still
+  hand-assembled instruction words.
+- **Not met.** A content digest checked before it runs. There is no image to
+  digest yet.
+- **Met.** Loaded into an address space created after boot rather than one
+  `plan_early_boot_memory` planned - `COOKIE:M7.12:PROCESS_RAN`.
+- **Met, vacuously so far, and worth keeping true.** The kernel contains no
+  code that parses an image format. There is no format yet; the M7.10 count is
+  where that will stay visible.
+- **Met for what exists.** Proven under `kernel-arm64-native`, not on the host.
+
+The full list:
 
 - A compiled C++ program, built by this repository's own toolchain, runs at EL0
   on Cookie and makes a system call. Not written instruction words.

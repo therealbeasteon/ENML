@@ -702,7 +702,7 @@ accepted deliberately and should stay visible.
 
 ---
 
-## Phase 2b — Memory as a first-class object (M7.11) *(memory complete)*
+## Phase 2b — Memory as a first-class object (M7.11) *(complete)*
 
 Design document: `docs/M7_11_MEMORY.md`, which makes the decisions listed
 below rather than restating them — in particular the one that cannot be
@@ -716,10 +716,12 @@ the same error a wrong one gets; and a fault is resolved by a userland pager
 with the faulting thread continuing — `FAULT_REGION` → `FAULT_ASKED` →
 `PAGER_BACKED` → `FAULT_RESUMED`.
 
-Two of the exit criteria are met **for an address space rather than a
-process**, and the design document says so rather than rounding it away:
-nothing runs in the created space. Admitting a thread into one is thread and
-process lifecycle, not memory, and belongs with M7.12.
+Two of the exit criteria were met **for an address space rather than a
+process** when this phase closed - nothing ran in the created space. That was
+recorded rather than rounded away, and is now closed by M7.12 rather than by
+stretching this phase: a thread is admitted into a space created after boot and
+runs there, entering at the address that space's sealed root declared and
+nowhere else (`COOKIE:M7.12:PROCESS_RAN`). See `docs/M7_12_ENTRY_BINDING.md`.
 
 What Phase 3 needed from this phase — an address space that can be torn down
 and rebuilt — exists.
