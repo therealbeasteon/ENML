@@ -1460,6 +1460,13 @@ extern "C" void cookie_kernel_syscall_entry(
     if (fault_backed && !fault_resume_reported) {
         fault_resume_reported = true;
         uart_write("COOKIE:M7.11:FAULT_RESUMED\n");
+        // Returns rather than falling through, because the yield state machine
+        // below is a closed set - it ends in COOKIE:PANIC:EL0_STATE for any
+        // yield it does not recognise, which is the right default and is what
+        // caught this one. A's post-fault yield is a new legitimate state, so
+        // it is named here instead of being left to look like an unexplained
+        // call.
+        return;
     }
 
     if (el0_yield_count == 0U) {
