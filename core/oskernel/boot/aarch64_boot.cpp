@@ -1836,6 +1836,18 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // mappings keep the address they point at.
     if (!os::kernel::aarch64::install_exception_vectors()) halt_no_vectors();
 
+    // Immediately after the vectors and before anything else, because this is
+    // the first line at which a trap can be reported rather than lost, and
+    // because everything below runs with whatever CPACR_EL1 firmware left until
+    // it does. Advanced SIMD, FP, SVE and SME become unavailable at EL0 and
+    // EL1 from here - see cookie_cpacr_el1 for why that is a privacy decision
+    // and not a configuration one.
+    //
+    // halt_no_vectors rather than a named failure: this runs before the UART is
+    // located, so there is nothing to print with yet, and continuing with a
+    // register file no switch preserves is not an option.
+    if (!os::kernel::aarch64::establish_execution_controls()) halt_no_vectors();
+
     const auto dtb_blob = bounded_dtb(dtb_physical);
     if (dtb_blob.empty()) halt_no_dtb();
 

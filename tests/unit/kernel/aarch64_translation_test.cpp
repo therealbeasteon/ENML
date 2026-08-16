@@ -73,6 +73,41 @@ int main() {
     require(descriptor::not_global == (1ULL << 11U));
     require((table_descriptor(page) & descriptor::not_global) == 0ULL);
 
+    // The EL1 control state Cookie establishes rather than inherits. Asserted
+    // bit by bit rather than against one magic number, because the number is
+    // not the claim - each bit is a separate decision and a reader has to be
+    // able to see which one changed.
+    constexpr auto sctlr = cookie_sctlr_el1();
+    require((sctlr & (1ULL << 0U)) != 0ULL);   // M, translation enabled
+    require((sctlr & (1ULL << 2U)) != 0ULL);   // C, data cache
+    require((sctlr & (1ULL << 12U)) != 0ULL);  // I, instruction cache
+    require((sctlr & (1ULL << 3U)) != 0ULL);   // SA, EL1 stack alignment
+    require((sctlr & (1ULL << 4U)) != 0ULL);   // SA0, EL0 stack alignment
+    require((sctlr & (1ULL << 19U)) != 0ULL);  // WXN, writable implies non-executable
+    // The three that deny EL0 a cache side channel: no cache maintenance, no
+    // cache geometry to aim it with, no DC ZVA. Cleared, and the assertion is
+    // that they are cleared rather than that they happen to be.
+    require((sctlr & (1ULL << 26U)) == 0ULL);  // UCI
+    require((sctlr & (1ULL << 15U)) == 0ULL);  // UCT
+    require((sctlr & (1ULL << 14U)) == 0ULL);  // DZE
+    require((sctlr & (1ULL << 9U)) == 0ULL);   // UMA, EL0 cannot touch DAIF
+    require((sctlr & (1ULL << 24U)) == 0ULL);  // E0E, EL0 little-endian
+    require((sctlr & (1ULL << 25U)) == 0ULL);  // EE, EL1 little-endian
+    // Every ARMv8.0 RES1 bit, because a zero in one of these is CONSTRAINED
+    // UNPREDICTABLE rather than a milder configuration.
+    for (const std::uint64_t res1 : {11U, 20U, 22U, 23U, 28U, 29U}) {
+        require((sctlr & (1ULL << res1)) != 0ULL);
+    }
+
+    // Advanced SIMD, FP, SVE and SME trapped at EL0 and EL1. Nothing in Cookie
+    // saves or restores V0-V31 across a context switch, so leaving them
+    // reachable would share a register file between processes.
+    constexpr auto cpacr = cookie_cpacr_el1();
+    require((cpacr & (3ULL << 20U)) == 0ULL);  // FPEN
+    require((cpacr & (3ULL << 16U)) == 0ULL);  // ZEN
+    require((cpacr & (3ULL << 24U)) == 0ULL);  // SMEN
+    require((cpacr & (1ULL << 28U)) != 0ULL);  // TTA, trace access trapped
+
     // The future TTBR1 map is projected from the one reviewed physical manifest,
     // preserving attributes while replacing temporary low aliases with a
     // deterministic upper-canonical alias.

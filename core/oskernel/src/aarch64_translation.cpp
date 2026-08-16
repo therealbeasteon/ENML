@@ -53,15 +53,31 @@ activate_stage1_translation(std::uint64_t level1_root_physical) noexcept {
     asm volatile("dsb ish" ::: "memory");
     asm volatile("isb" ::: "memory");
 
-    std::uint64_t sctlr = 0ULL;
-    asm volatile("mrs %0, sctlr_el1" : "=r"(sctlr));
-    constexpr std::uint64_t m = 1ULL << 0U;
-    constexpr std::uint64_t c = 1ULL << 2U;
-    constexpr std::uint64_t i = 1ULL << 12U;
-    sctlr |= m | c | i;
-    asm volatile("msr sctlr_el1, %0" :: "r"(sctlr) : "memory");
+    // Written, not read-modify-written. The previous version set three bits and
+    // inherited every other one from firmware - including EL0 endianness, stack
+    // alignment checking, hardware W^X, and whether EL0 could execute cache
+    // maintenance. See cookie_sctlr_el1 for what each of those decides.
+    asm volatile("msr sctlr_el1, %0" :: "r"(cookie_sctlr_el1()) : "memory");
     asm volatile("isb" ::: "memory");
 
+    return {};
+}
+
+os::core::Result<void> establish_execution_controls() noexcept {
+    asm volatile("msr cpacr_el1, %0" :: "r"(cookie_cpacr_el1()) : "memory");
+    asm volatile("isb" ::: "memory");
+
+    // Read back. FPEN, ZEN and SMEN must all read as trapped; a core that
+    // ignored the write would leave Cookie believing it had denied a register
+    // file it is not preserving, which is worse than never having tried.
+    std::uint64_t cpacr = 0ULL;
+    asm volatile("mrs %0, cpacr_el1" : "=r"(cpacr));
+    constexpr std::uint64_t fpen = 3ULL << 20U;
+    constexpr std::uint64_t zen = 3ULL << 16U;
+    constexpr std::uint64_t smen = 3ULL << 24U;
+    if ((cpacr & (fpen | zen | smen)) != 0ULL) {
+        return machine_error(machine_errors::unsupported);
+    }
     return {};
 }
 
