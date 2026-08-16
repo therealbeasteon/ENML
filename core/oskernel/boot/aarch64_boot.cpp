@@ -753,6 +753,14 @@ void disarm_stand_in_device_source() noexcept {
     std::span<const std::byte> expected) noexcept {
     auto binding = boot_translations.resolve(thread, boot_epochs);
     if (!binding || expected.empty()) return false;
+    // The landing buffer below is a fixed array on this function's own stack,
+    // and the span handed to copy_from_user_current is built from
+    // expected.size(). Every caller passes a small literal today, so this
+    // cannot fire - which is exactly why it is written down rather than
+    // reasoned about: an unchecked length used to size a span over a fixed
+    // buffer is a kernel stack overflow one caller away, and the caller that
+    // introduces it will not be looking here.
+    if (expected.size() > os::kernel::max_ipc_inline_bytes) return false;
     auto ticket = os::kernel::prepare_user_access(
         thread,
         binding.value().epoch,

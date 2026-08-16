@@ -1198,8 +1198,8 @@ discovery_ceiling=1272
 # Gated by a second QEMU run with virtualization=on, asserting the same
 # milestone set as the EL1 run rather than a subset. Untested boot assembly is
 # how the two defects in docs/M7_13_HARDWARE_NEUTRALITY.md survived.
-entry_ceiling=1768
-total_ceiling=10864
+entry_ceiling=1769
+total_ceiling=10865
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
