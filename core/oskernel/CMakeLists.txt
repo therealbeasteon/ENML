@@ -7,6 +7,7 @@ add_library(oskernel STATIC
     src/address_space_syscall.cpp
     src/memory_grant.cpp
     src/fault_delivery.cpp
+    src/thread_admission.cpp
     src/ipc_continuation.cpp
     src/interrupt.cpp
     src/interrupt_delivery.cpp
@@ -97,6 +98,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             src/memory_grant.cpp
             src/fault_region.cpp
             src/fault_delivery.cpp
+            src/thread_admission.cpp
             src/ipc_continuation.cpp
             src/interrupt.cpp
             src/interrupt_delivery.cpp

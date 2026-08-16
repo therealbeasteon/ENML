@@ -8,6 +8,12 @@
 #include <cstdlib>
 
 namespace {
+
+// Any four-byte-aligned user virtual address will do here: these tests are
+// about roots and bindings rather than about where a thread begins. The
+// sealer refuses zero, unaligned and non-user entries, and
+// aarch64_translation_root_sealer is where that is tested.
+constexpr std::uint64_t test_entry = 0x0040'0000ULL;
 // Templated so a Result can be passed directly. Result's operator bool is
 // explicit, which satisfies the contextual conversion in `!value` but not
 // an implicit conversion to a bool parameter.
@@ -28,8 +34,8 @@ int main() {
     EarlyStage1Builder builder_b{arena};
     require(static_cast<bool>(builder_a.initialize()));
     require(static_cast<bool>(builder_b.initialize()));
-    auto root_a = TranslationRootSealer::seal(builder_a);
-    auto root_b = TranslationRootSealer::seal(builder_b);
+    auto root_a = TranslationRootSealer::seal(builder_a, test_entry);
+    auto root_b = TranslationRootSealer::seal(builder_b, test_entry);
     require(root_a && root_b);
 
     AddressSpaceEpochAuthority epochs{};

@@ -6,6 +6,12 @@
 #include <os/kernel/aarch64_translation_root_sealer.hpp>
 
 namespace {
+
+// Any four-byte-aligned user virtual address will do here: these tests are
+// about roots and bindings rather than about where a thread begins. The
+// sealer refuses zero, unaligned and non-user entries, and
+// aarch64_translation_root_sealer is where that is tested.
+constexpr std::uint64_t test_entry = 0x0040'0000ULL;
 // Templated so a Result can be passed directly. Result's operator bool is
 // explicit, which satisfies the contextual conversion in `!value` but not
 // an implicit conversion to a bool parameter.
@@ -25,7 +31,7 @@ int main() {
 
     EarlyStage1Builder user_builder{arena, Stage1Region::lower};
     require(user_builder.initialize());
-    auto user_root = TranslationRootSealer::seal(user_builder);
+    auto user_root = TranslationRootSealer::seal(user_builder, test_entry);
     require(user_root && user_root.value().valid());
 
     KernelMappingManifest manifest{};

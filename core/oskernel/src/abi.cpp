@@ -27,7 +27,7 @@ inline constexpr std::array<CallDescriptor, 16U> call_table{
     CallDescriptor{KernelCall::yield, CallAuthority::unprivileged, 0U, false},
     CallDescriptor{KernelCall::thread_exit, CallAuthority::unprivileged, 1U, false},
 
-    CallDescriptor{KernelCall::thread_create, CallAuthority::process_control, 4U, false},
+    CallDescriptor{KernelCall::thread_create, CallAuthority::process_control, 2U, false},
 
     CallDescriptor{KernelCall::address_space_create, CallAuthority::process_control, 2U, false},
     CallDescriptor{KernelCall::address_space_destroy, CallAuthority::process_control, 1U, false},

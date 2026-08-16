@@ -34,16 +34,24 @@ inline constexpr ObjectId address_space_object_tag_mask = 0xFFFF'0000'0000'0000U
            static_cast<ObjectId>(identity.slot);
 }
 
-// Two rights rather than one, because unlike an interrupt source there really
-// are two different things to authorize. Holding a space so it can be mapped
+// Three rights rather than one, because unlike an interrupt source there really
+// are three different things to authorize. Holding a space so it can be mapped
 // into is not the same authority as being able to destroy it: a pager may need
 // the first over spaces it services and must not have the second.
+//
+// Admission is the third, and it is the one that must not be folded into
+// `hold`. A pager holds every space it services; a pager that could also admit
+// a thread could run code of its choosing inside every process it pages for,
+// which is a strictly larger authority than paging and is held by a different
+// principal. See docs/M7_12_ENTRY_BINDING.md.
 inline constexpr Rights address_space_right_hold = 1U << 0U;
 inline constexpr Rights address_space_right_destroy = 1U << 1U;
 
 // The right to create address spaces at all, held over the one object below
 // rather than over any particular space.
 inline constexpr Rights address_space_right_create = 1U << 2U;
+
+inline constexpr Rights address_space_right_admit = 1U << 3U;
 
 // The object that authorizes creation. It is the bare tag - slot 0,
 // generation 0 - and that encoding is free by construction rather than by

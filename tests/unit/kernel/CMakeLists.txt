@@ -70,6 +70,14 @@ target_compile_options(kernel_fault_delivery_test PRIVATE
 add_test(NAME kernel_fault_delivery_test COMMAND kernel_fault_delivery_test)
 set_tests_properties(kernel_fault_delivery_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_thread_admission_test thread_admission_test.cpp)
+target_link_libraries(kernel_thread_admission_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_thread_admission_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_thread_admission_test COMMAND kernel_thread_admission_test)
+set_tests_properties(kernel_thread_admission_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_memory_grant_test memory_grant_test.cpp)
 target_link_libraries(kernel_memory_grant_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_memory_grant_test PRIVATE
