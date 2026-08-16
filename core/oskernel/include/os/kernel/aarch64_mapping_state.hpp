@@ -177,6 +177,25 @@ public:
             MachineMemoryKind::normal, false, false, true);
     }
 
+    // Demand-paged backing for a space that may already be executing.
+    //
+    // Identical to map_user in every check it performs - W^X across the
+    // ledger, the reservation rules, the guard-page and table-budget limits -
+    // and different in exactly one respect: it reaches the builder through
+    // back_absent_user_page, which a sealed space accepts and map_user_page
+    // does not. Routing it through map_impl rather than around it is the
+    // point; a backing path that skipped those checks would be a hole shaped
+    // like a feature.
+    [[nodiscard]] os::core::Result<void> map_user_backing(
+        std::uint64_t virtual_base,
+        std::uint64_t physical_base,
+        std::uint64_t length,
+        MachinePermissions permissions) noexcept {
+        return map_impl(
+            virtual_base, physical_base, length, permissions,
+            MachineMemoryKind::normal, false, false, true, true);
+    }
+
     [[nodiscard]] os::core::Result<void> map_kernel_stack(
         std::uint64_t virtual_base,
         std::uint64_t physical_base,
@@ -421,7 +440,8 @@ private:
         MachineMemoryKind kind,
         bool kernel_stack,
         bool user_stack,
-        bool user_accessible) noexcept {
+        bool user_accessible,
+        bool backing = false) noexcept {
         if (ledger_ == nullptr || builder_ == nullptr) {
             return error(machine_errors::address_space_unbound);
         }
@@ -489,9 +509,11 @@ private:
         for (std::uint64_t page = 0ULL; page < page_count; ++page) {
             const auto va = virtual_base + page * architectural_page_size;
             const auto pa = physical_base + page * architectural_page_size;
-            auto mapped = user_accessible
-                ? builder_->map_user_page(va, pa, permissions)
-                : builder_->map_page(va, pa, permissions, kind);
+            auto mapped = backing
+                ? builder_->back_absent_user_page(va, pa, permissions)
+                : (user_accessible
+                    ? builder_->map_user_page(va, pa, permissions)
+                    : builder_->map_page(va, pa, permissions, kind));
             if (!mapped) os::core::invariant_violated();
         }
 

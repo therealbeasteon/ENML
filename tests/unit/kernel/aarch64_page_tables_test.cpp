@@ -255,5 +255,68 @@ int main() {
         require(overlap.error().code == machine_errors::already_mapped);
     }
 
+    // ---------------------------------------------------------------------
+    // Backing a sealed space. Demand paging has to insert a translation into
+    // a space that is already executing, and map_user_page refuses a sealed
+    // builder - correctly, because sealing separates construction authority
+    // from execution authority.
+    //
+    // back_absent_user_page is the narrow exception, and these check that it
+    // is narrow: it may fill a hole and may not touch anything present. The
+    // guarantee sealing has to make is that a live translation cannot change
+    // under the CPU, not that a page can never be added.
+    // ---------------------------------------------------------------------
+    {
+        alignas(4096) std::array<std::byte, 12U * 4096U> tables{};
+        const auto base = static_cast<std::uint64_t>(
+            reinterpret_cast<std::uintptr_t>(tables.data()));
+        EarlyPageArena sealed_arena{base, base + tables.size()};
+        EarlyStage1Builder sealed_builder{sealed_arena};
+        require(sealed_builder.initialize());
+
+        constexpr std::uint64_t present = 0x0000'0000'2000'0000ULL;
+        constexpr std::uint64_t absent = 0x0000'0000'2000'1000ULL;
+        constexpr std::uint64_t frame_a = 0x0000'0000'9000'0000ULL;
+        constexpr std::uint64_t frame_b = 0x0000'0000'9001'0000ULL;
+
+        require(sealed_builder.map_user_page(present, frame_a, MachinePermissions::read_write));
+        require(sealed_builder.seal());
+
+        // The rule that made this necessary: a sealed space refuses ordinary
+        // mapping outright.
+        auto refused = sealed_builder.map_user_page(absent, frame_b, MachinePermissions::read_write);
+        require(!refused);
+        require(refused.error().code == translation_root_errors::sealed);
+
+        // The hole can be filled.
+        require(sealed_builder.back_absent_user_page(absent, frame_b, MachinePermissions::read_write));
+        auto now_mapped = sealed_builder.mapped(absent);
+        require(now_mapped);
+        require(now_mapped.value());
+
+        // What is already there cannot be changed, which is the whole
+        // guarantee. If this ever succeeds, a live translation can be swapped
+        // under a running thread and sealing means nothing.
+        auto replaced = sealed_builder.back_absent_user_page(
+            present, frame_b, MachinePermissions::read_write);
+        require(!replaced);
+        require(replaced.error().code == machine_errors::already_mapped);
+
+        // Nor may a filled hole be refilled - it is present now like any other.
+        auto refilled = sealed_builder.back_absent_user_page(
+            absent, frame_a, MachinePermissions::read_write);
+        require(!refilled);
+        require(refilled.error().code == machine_errors::already_mapped);
+
+        // A retiring space gains nothing. Unlike the sealed case there is no
+        // operation that needs it to, and a space being torn down has no
+        // business acquiring translations.
+        require(sealed_builder.begin_retire());
+        auto retiring = sealed_builder.back_absent_user_page(
+            0x0000'0000'2000'2000ULL, frame_b, MachinePermissions::read_write);
+        require(!retiring);
+        require(retiring.error().code == translation_root_errors::retiring);
+    }
+
     return 0;
 }

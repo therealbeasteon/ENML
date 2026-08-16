@@ -250,6 +250,37 @@ public:
             user_page_descriptor(physical_address, permissions));
     }
 
+    // Fills a translation that is absent, in a space that may already be
+    // executing. This is what demand paging is, and without it a sealed space
+    // could never receive backing at all.
+    //
+    // Sealing exists to separate construction authority from execution
+    // authority - a caller must not hold a mutable builder for a space it can
+    // also run. Permitting this does not weaken that, and the reason is one
+    // line further down rather than an argument: install_leaf already refuses a
+    // leaf that is valid, with `already_mapped`. So this can only ever fill a
+    // hole. Nothing that a live translation resolves to can change under the
+    // CPU through this path, which is the property the seal has to protect.
+    //
+    // Retiring is still refused. A space being torn down has no business
+    // gaining translations, and unlike the sealed case there is no operation
+    // that needs it to.
+    [[nodiscard]] os::core::Result<void> back_absent_user_page(
+        std::uint64_t virtual_address,
+        std::uint64_t physical_address,
+        MachinePermissions permissions) noexcept {
+        auto backable = require_backable();
+        if (!backable) return backable.error();
+        if (region_ != Stage1Region::lower) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                translation_root_errors::wrong_region);
+        }
+        return install_leaf(
+            virtual_address,
+            user_page_descriptor(physical_address, permissions));
+    }
+
     [[nodiscard]] os::core::Result<bool> mapped(std::uint64_t virtual_address) const noexcept {
         auto leaf = leaf_pointer(virtual_address);
         if (!leaf) {
@@ -305,6 +336,21 @@ private:
         return region_ == Stage1Region::lower
             ? user_stage1_virtual_address(virtual_address)
             : kernel_stage1_virtual_address(virtual_address);
+    }
+
+    // Building or sealed, but never retiring or uninitialized. The difference
+    // from require_building is deliberate and narrow: only back_absent_user_page
+    // uses this, and only because it cannot change a translation that exists.
+    [[nodiscard]] os::core::Result<void> require_backable() const noexcept {
+        if (lifecycle_ == Lifecycle::retiring) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel, translation_root_errors::retiring);
+        }
+        if (lifecycle_ != Lifecycle::building && lifecycle_ != Lifecycle::sealed) {
+            return os::core::make_error(
+                os::core::ErrorDomain::kernel, machine_errors::address_space_unbound);
+        }
+        return {};
     }
 
     [[nodiscard]] os::core::Result<void> require_building() const noexcept {
