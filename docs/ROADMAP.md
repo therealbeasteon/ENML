@@ -702,11 +702,27 @@ accepted deliberately and should stay visible.
 
 ---
 
-## Phase 2b — Memory as a first-class object (M7.11)
+## Phase 2b — Memory as a first-class object (M7.11) *(memory complete)*
 
 Design document: `docs/M7_11_MEMORY.md`, which makes the decisions listed
 below rather than restating them — in particular the one that cannot be
 revisited later, that **the kernel has no dynamic allocator**.
+
+**Where it stands.** The memory half is done and proven under
+`kernel-arm64-native`: an address space is created after boot from a caller's
+memory capability, mapped into, destroyed, and its pages zeroed before release
+and reused afterwards; a stale reference to a destroyed space fails closed with
+the same error a wrong one gets; and a fault is resolved by a userland pager
+with the faulting thread continuing — `FAULT_REGION` → `FAULT_ASKED` →
+`PAGER_BACKED` → `FAULT_RESUMED`.
+
+Two of the exit criteria are met **for an address space rather than a
+process**, and the design document says so rather than rounding it away:
+nothing runs in the created space. Admitting a thread into one is thread and
+process lifecycle, not memory, and belongs with M7.12.
+
+What Phase 3 needed from this phase — an address space that can be torn down
+and rebuilt — exists.
 
 Added because a gap review found it missing rather than deferred, and it
 blocks Phase 3 whether or not it is written down. Everything M7 built —
