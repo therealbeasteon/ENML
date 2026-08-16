@@ -1956,13 +1956,28 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     // rather than properties of the order this routine happens to do things in.
     //
     // The arena the three builders draw from is where every translation table on
-    // this machine lives, including the two processes' own, and exactly one
-    // space edits it.
+    // this machine lives, including the two processes' own.
+    //
+    // kernel_private rather than kernel_object, and the comment this replaces
+    // said "exactly one space edits it" - which was true only while the kernel
+    // edited tables from its own root. It stopped being true the moment a
+    // process could make a syscall that edits another space's tables: Cookie
+    // translates through TTBR0 only, so EL1 runs under whichever process root
+    // is installed, and the arena has to be readable and writable under all of
+    // them or the table walk itself faults. It does, and did - an EL1
+    // translation fault inside the pager path is how this was found.
+    //
+    // Same forced compromise as aarch64_donate_table_page's, for the same
+    // cause, with the same fix: M7.7's TTBR1 split makes owner-write-only
+    // achievable here, and this should tighten back to kernel_object then.
+    // What is not given up either way: both kinds refuse every EL0 translation
+    // of the range and every executable one, so no process can read or write a
+    // page table.
     if (!os::kernel::aarch64_reserve_physical(
             boot_kernel_space,
             static_cast<std::uintptr_t>(plan.value().page_tables.base),
             static_cast<std::size_t>(plan.value().page_tables.size),
-            os::kernel::aarch64::PhysicalReservationKind::kernel_object)) {
+            os::kernel::aarch64::PhysicalReservationKind::kernel_private)) {
         fail("RESERVE_TABLES");
     }
 
@@ -2014,6 +2029,20 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             MachinePermissions::read_write,
             MachineMemoryKind::normal,
             os::kernel::aarch64::KernelMappingRole::guarded_stack) ||
+        // Every translation table on the machine. In the manifest rather than
+        // mapped into boot_kernel_space alone, because the kernel walks and
+        // edits these tables from inside whatever process happened to make the
+        // syscall - a pager answering for someone else, most obviously - and
+        // under TTBR0-only translation that means the walk runs with the
+        // caller's root installed. Mapped in one space, the walk faults in the
+        // other two.
+        !add_manifest_range(
+            kernel_manifest,
+            plan.value().page_tables.base,
+            plan.value().page_tables.base,
+            plan.value().page_tables.size,
+            MachinePermissions::read_write,
+            MachineMemoryKind::normal) ||
         // The page EL0 will name as its created space's root. It has to be in
         // the manifest, which means mapped in all three spaces, because the
         // kernel builds that space's tables from inside A's syscall - and
@@ -2053,13 +2082,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!os::kernel::aarch64::replay_kernel_mapping_manifest(kernel_manifest, process_space_b)) {
         fail("REPLAY_B");
     }
-    if (!os::kernel::machine_map(
-            boot_kernel_space,
-            static_cast<std::uintptr_t>(plan.value().page_tables.base),
-            static_cast<std::uintptr_t>(plan.value().page_tables.base),
-            static_cast<std::size_t>(plan.value().page_tables.size),
-            MachinePermissions::read_write,
-            MachineMemoryKind::normal)) fail("MAP_TABLES");
+
     if (!os::kernel::machine_map(
             boot_kernel_space,
             static_cast<std::uintptr_t>(dtb_range.base),
