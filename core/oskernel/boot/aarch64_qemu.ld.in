@@ -73,6 +73,47 @@ SECTIONS
         . = __cookie_data_end;
     } :data
 
+    /* The dynamic-linking machinery a -pie link produces, placed here rather
+     * than after .bss and kept rather than discarded.
+     *
+     * Placement is not cosmetic. These are loaded sections; .bss is NOLOAD, so
+     * anything after it would sit past the end of the image extent while still
+     * appearing in the raw binary - which is exactly the failure the first
+     * attempt produced, an image_size smaller than the image it describes.
+     *
+     * Discarding them is not an option either: discarding an output section the
+     * linker still holds references into fails the link with a message about
+     * the discard rather than about the cause, which is how an earlier attempt
+     * hid its own reason.
+     *
+     * .rela.dyn is the one that matters - _start walks it. It is deliberately
+     * not asserted empty: requiring zero relocations would make "no file-scope
+     * object may hold a pointer to another one" a standing constraint on every
+     * future line of kernel code. What the build asserts instead is the
+     * relocation *type*, in the workflow, because the loop implements exactly
+     * one and skipping an unimplemented type silently is the dangerous outcome.
+     *
+     * The GOT is writable data holding absolute addresses, so it is relocated
+     * like everything else. -fvisibility=hidden removes most of it; what
+     * remains is symbols defined in assembly that C++ only declares, which the
+     * compiler cannot know are local. */
+    .rela.dyn ALIGN(8) : {
+        __cookie_rela_start = .;
+        *(.rela .rela.*)
+        __cookie_rela_end = .;
+    } :data
+
+    .got ALIGN(8) : {
+        __cookie_got_start = .;
+        *(.got .got.plt)
+        __cookie_got_end = .;
+    } :data
+
+    .dynamic ALIGN(8) : { *(.dynamic) } :data
+    .dynsym  ALIGN(8) : { *(.dynsym) } :data
+    .dynstr  ALIGN(8) : { *(.dynstr) } :data
+    .hash    ALIGN(8) : { *(.hash) *(.gnu.hash) } :data
+
     /* NOLOAD, but still part of the writable segment: it is memory the kernel
      * writes and must never be memory the kernel executes. */
     .bss ALIGN(4096) (NOLOAD) : {
@@ -96,47 +137,6 @@ SECTIONS
 
     __cookie_image_end = .;
     __cookie_image_size = __cookie_image_end - __cookie_image_start;
-
-    /* Dynamic-linking machinery a -pie link produces and a freestanding image
-     * has no use for. Kept visible rather than silently discarded: .rela.dyn is
-     * the one that matters, and it is asserted empty rather than dropped,
-     * because dropping it would turn "this image needs no relocations" from a
-     * checked property into a hope. */
-    .rela.dyn ALIGN(8) : {
-        __cookie_rela_start = .;
-        *(.rela .rela.*)
-        __cookie_rela_end = .;
-    } :data
-    /* Not asserted empty. The first attempt required zero relocations, which
-     * would have made "no file-scope object may hold a pointer to another one"
-     * a standing constraint on every future line of kernel code. _start applies
-     * them instead; what the build asserts is the type, in the workflow, since
-     * the loop implements exactly one and skipping an unimplemented type
-     * silently is the dangerous outcome. */
-
-    /* Kept and asserted empty rather than discarded. A -pie link produces these
-     * whether or not anything uses them, and discarding an output section the
-     * linker still holds references into fails the link with a message about
-     * the discard rather than about the cause - which is how the first attempt
-     * at this hid its own reason.
-     *
-     * Asserting empty says the thing worth saying: every symbol reference in
-     * this image is PC-relative, so there is no table of absolute addresses to
-     * fix up at load time. -fvisibility=hidden is what makes that true. */
-    /* The GOT is writable data holding absolute addresses, so it is relocated
-     * like everything else rather than eliminated. -fvisibility=hidden removes
-     * most of it; what remains is symbols defined in assembly that C++ only
-     * declares, which the compiler cannot know are local. */
-    .got ALIGN(8) : {
-        __cookie_got_start = .;
-        *(.got .got.plt)
-        __cookie_got_end = .;
-    } :data
-
-    .dynamic ALIGN(8) : { *(.dynamic) } :data
-    .dynsym  ALIGN(8) : { *(.dynsym) } :data
-    .dynstr  ALIGN(8) : { *(.dynstr) } :data
-    .hash    ALIGN(8) : { *(.hash) *(.gnu.hash) } :data
 
     /DISCARD/ : {
         *(.comment)
