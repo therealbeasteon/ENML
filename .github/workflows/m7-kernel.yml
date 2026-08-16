@@ -271,3 +271,38 @@ jobs:
             echo 'fault report disclosed the faulting address' >&2
             exit 1
           fi
+      - name: Boot Cookie Kernel entered at EL2 and prove it drops to EL1 and runs identically
+        shell: bash
+        run: |
+          set -euo pipefail
+          elf=build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot
+          test -s "$elf"
+          # virtualization=on is the whole point: QEMU then enters the kernel at
+          # EL2, which is where a phone's bootloader commonly hands off. The run
+          # above enters at EL1 and cannot exercise the drop at all, so without
+          # this step the EL2 path would be boot assembly no gate executes.
+          set +e
+          timeout 12s qemu-system-aarch64             -machine virt,gic-version=3,virtualization=on             -cpu cortex-a72             -m 512M             -nographic             -monitor none             -no-reboot             -device loader,file="$elf",cpu-num=0 >cookie-qemu-el2.log 2>&1
+          status=$?
+          set -e
+          cat cookie-qemu-el2.log
+          if [[ $status -ne 0 && $status -ne 124 ]]; then
+            exit "$status"
+          fi
+          if grep -F 'COOKIE:PANIC:' cookie-qemu-el2.log; then
+            echo '--- kernel reported the stage above and halted after EL2 entry ---'
+            exit 1
+          fi
+          # The same milestones as the EL1 run rather than a reduced set. The
+          # claim is that entering at EL2 produces the same system, and a subset
+          # would let the drop silently cost a subsystem. GICV3 is the one the
+          # drop can break on its own: EL1's ICC_SRE_EL1 write traps to EL2
+          # unless ICC_SRE_EL2.Enable was set first, and the GIC code fails
+          # closed when it does.
+          for marker in             COOKIE:M7.5d:MMU             COOKIE:M7.5d:GUARDED             COOKIE:M7.5f:EL0_SVC_RETURN             COOKIE:M7.5g:GICV3             COOKIE:M7.5g:TIMER_IRQ             COOKIE:M7.5i:ISOLATED_A_B_A             COOKIE:M7.6:IPC_A_B_REPLY             COOKIE:M7.9:COMPLETED             COOKIE:M7.11:STALE_REFUSED             COOKIE:M7.11:EL0_GRANT_REUSED             COOKIE:M7.11:FAULT_RESUMED             COOKIE:M7.12:PROCESS_RAN ; do
+            if ! grep -F "$marker" cookie-qemu-el2.log >/dev/null; then
+              echo "EL2 entry did not reach: $marker" >&2
+              exit 1
+            fi
+          done
+          echo 'EL2 entry reached every milestone the EL1 entry does'

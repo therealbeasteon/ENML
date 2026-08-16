@@ -32,15 +32,90 @@ _start:
 // generated DTB at the start of RAM for bare-metal boot; real platform loaders
 // should continue to provide x0 explicitly.
 .Lcookie_entry:
-    mrs x1, CurrentEL
-    cmp x1, #0x4
-    b.ne .Lhalt
-
     // Interrupt delivery is an explicit Cookie state transition. Firmware/reset
     // DAIF state is not trusted; nothing asynchronous is admitted until GICv3,
     // vectors and the timer are fully established and EL0 ERET clears I.
+    //
+    // Masked before the exception level is even examined, because the EL2 drop
+    // below is a window in which an asynchronous exception would vector through
+    // whatever EL2 state firmware left behind.
     msr daifset, #0xf
     isb
+
+    mrs x1, CurrentEL
+    cmp x1, #0x4                               // EL1: already where Cookie runs
+    b.eq .Lcookie_at_el1
+    cmp x1, #0x8                               // EL2: drop, see below
+    b.eq .Lcookie_drop_from_el2
+    b .Lhalt                                   // EL3 or EL0: not Cookie's job
+
+// Cookie runs at EL1 and owns the machine. A phone's bootloader commonly hands
+// off at EL2 - it is where a hypervisor would go, and nothing is there - so a
+// kernel that only accepts EL1 does not start on the machines Cookie is for.
+// Dropping is the kernel's own responsibility and there is nobody else to do
+// it. EL3 is refused rather than dropped from: secure firmware owns that level
+// and a kernel that took it would be replacing the trust root, not booting.
+//
+// Every register written here is one whose reset value is not architecturally
+// guaranteed to be what Cookie needs, so each is set rather than assumed.
+.Lcookie_drop_from_el2:
+    // EL1 executes AArch64. Without RW the eret below delivers Cookie to
+    // AArch32 and the first instruction is nonsense.
+    mov x1, #(1 << 31)
+    msr hcr_el2, x1
+
+    // EL1's system control register starts from the architecturally required
+    // RES1 bits and nothing else: MMU off, caches off, little-endian,
+    // alignment checking off. Firmware may have left EL1 state configured for
+    // its own use, and the MMU bit in particular must be clear because Cookie
+    // enables translation itself, later, against tables that do not exist yet.
+    mov x1, #0x0800
+    movk x1, #0x30D0, lsl #16
+    msr sctlr_el1, x1
+
+    // The architected timer has to be usable from EL1. CNTHCTL_EL2 bits 0 and 1
+    // stop EL2 trapping EL1's counter and timer accesses, and CNTVOFF_EL2 must
+    // be zero or the virtual counter Cookie schedules against is offset from
+    // the physical one by whatever firmware left there.
+    mrs x1, cnthctl_el2
+    orr x1, x1, #3
+    msr cnthctl_el2, x1
+    msr cntvoff_el2, xzr
+
+    // No stage-2 translation, no coprocessor trapping. VTTBR_EL2 is zeroed
+    // because a non-zero VMID with stage 2 disabled still tags TLB entries.
+    msr vttbr_el2, xzr
+    msr hstr_el2, xzr
+    // RES1 pattern. TFP (bit 10) is deliberately clear in it: trapping FP to an
+    // EL2 that has no vectors installed would turn a future program's first
+    // FP instruction into a silent hang, where leaving it untrapped makes it an
+    // ordinary EL1 exception the kernel can report.
+    mov x1, #0x33FF
+    msr cptr_el2, x1
+
+    // GICv3 system-register access has to be permitted for EL1 before Cookie
+    // gets there. SRE enables the system-register interface at EL2; Enable is
+    // what stops EL1's own ICC_SRE_EL1 write from trapping here. Without this
+    // the GIC initialisation refuses - correctly, because it re-reads SRE and
+    // fails closed rather than assuming the write took - and the machine has no
+    // interrupt controller.
+    //
+    // This instruction only exists on a machine that implements the GICv3
+    // system registers, which Cookie already requires; see
+    // docs/M7_13_HARDWARE_NEUTRALITY.md for what that excludes.
+    mov x1, #0x9
+    msr S3_4_C12_C9_5, x1                      // ICC_SRE_EL2
+    isb
+
+    // EL1h with all four DAIF bits masked, so the state Cookie arrives in is
+    // the state it would have set for itself.
+    mov x1, #0x3C5
+    msr spsr_el2, x1
+    adr x1, .Lcookie_at_el1
+    msr elr_el2, x1
+    eret
+
+.Lcookie_at_el1:
 
     cbnz x0, .Ldtb_ready
     movz x0, #0x4000, lsl #16                  // QEMU virt RAM/DTB base 0x40000000
