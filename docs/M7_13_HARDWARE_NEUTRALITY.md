@@ -102,7 +102,7 @@ Measured. Each is a real constraint, not a preference.
 
 | Requirement | Where | Phones this excludes |
 | --- | --- | --- |
-| Entry at **EL1** | `aarch64_start.S` refuses any other `CurrentEL` | Any bootloader that hands off at EL2 — which is the common Android case. A kernel that intends to own the machine normally drops from EL2 to EL1 itself. **Cookie halts instead.** |
+| ~~Entry at **EL1**~~ | *Fixed.* `aarch64_start.S` now accepts EL2 and drops to EL1, gated by a second QEMU run with `virtualization=on`. EL3 is still refused, deliberately: secure firmware owns that level. | — |
 | **GICv3** | `initialize_gic_v3_primary_cpu`, `gic_v3_discovery` | Every GICv2 SoC. |
 | **PL011** UART | `find_pl011` | Almost all of them. Qualcomm (GENI), Exynos, MediaTek all use their own. No console means no bring-up. |
 | **Flattened device tree** | `FdtView`, `hardware_inventory` | None — phones are DT, not ACPI. This one is already right. |
@@ -150,8 +150,11 @@ Two things follow, and they are separable:
 
 In the order the dependencies fall, not the order of difficulty:
 
-1. **Accept entry at EL2 and drop to EL1.** Without this Cookie does not start
-   on the machines it is meant for. It is also the smallest item on this list.
+1. ~~**Accept entry at EL2 and drop to EL1.**~~ Done. The one thing worth
+   carrying forward from it: `ICC_SRE_EL2` has to be set before the `eret`, or
+   EL1's own `ICC_SRE_EL1` write traps to EL2 and the GIC initialisation fails
+   closed with no interrupt controller. That is the kind of dependency a drop
+   sequence copied from a reference would carry silently.
 2. ~~**Cache maintenance primitives.**~~ Finding 2, done — `aarch64_publish_instructions`.
 3. **A relocatable image.** Until then, "any phone" means "any phone whose RAM
    happens to start where Cookie was linked".

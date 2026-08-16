@@ -1162,8 +1162,26 @@ discovery_ceiling=1272
 # The thread is woken at the end of the M7.11 chain rather than at admission,
 # so a third runnable thread cannot perturb the deliberately uncontested
 # scheduling decisions the contention and pager proofs are built on.
-entry_ceiling=1741
-total_ceiling=10811
+#
+# Raised for the EL2 entry path: entry 1,741 -> 1,767, total 10,811 -> 10,837.
+#
+# aarch64_start.S accepted EL1 and halted on anything else. A phone's
+# bootloader commonly hands off at EL2 - it is where a hypervisor would go, and
+# nothing is there - so Cookie did not start on the machines it is for. The
+# drop is the kernel's own responsibility because there is nobody else to do
+# it; EL3 is still refused rather than dropped from, because secure firmware
+# owns that level and taking it would be replacing the trust root.
+#
+# Every register the drop writes is one whose reset value is not
+# architecturally guaranteed to be what Cookie needs, so each is set rather
+# than assumed - including ICC_SRE_EL2, without which EL1's own ICC_SRE_EL1
+# write traps to EL2 and the machine has no interrupt controller.
+#
+# Gated by a second QEMU run with virtualization=on, asserting the same
+# milestone set as the EL1 run rather than a subset. Untested boot assembly is
+# how the two defects in docs/M7_13_HARDWARE_NEUTRALITY.md survived.
+entry_ceiling=1767
+total_ceiling=10837
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
