@@ -246,13 +246,22 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
 // trapping them requires a handler that does not exist, and a trap with no
 // handler is a halt rather than a policy. Denying EL0 those instructions is
 // worth doing when something can answer them.
-[[nodiscard]] constexpr std::uint64_t cookie_sctlr_el1() noexcept {
-    // ARMv8.0 RES1 bits: 11, 20, 22, 23, 28, 29. Bit 23 is SPAN once FEAT_PAN
-    // exists, and clearing it would set PSTATE.PAN on every exception entry -
-    // which Cookie wants, and which needs an ID_AA64MMFR1_EL1.PAN check before
-    // it can be written, because on a core without the feature the bit is RES1
-    // and clearing it is CONSTRAINED UNPREDICTABLE. Left set here on purpose.
+// `privileged_access_never` must come from ID_AA64MMFR1_EL1, never from a
+// guess: bit 23 is SPAN only where FEAT_PAN exists and is RES1 everywhere else,
+// so clearing it on a core without the feature is CONSTRAINED UNPREDICTABLE.
+//
+// Clearing it is worth the check. SPAN=0 means PSTATE.PAN is set on every
+// exception entry to EL1, so an ordinary load or store from the kernel to any
+// page EL0 can reach *faults*. That turns a whole defect class - a kernel bug
+// that dereferences an address userspace chose - from a silent read of user
+// memory into an exception. Cookie can afford it outright because the hard half
+// is already built: every legitimate access to user memory goes through
+// cookie_aarch64_ldtrb_user_byte / sttrb, and unprivileged loads and stores are
+// exactly what PAN leaves working.
+[[nodiscard]] constexpr std::uint64_t cookie_sctlr_el1(bool privileged_access_never) noexcept {
+    // ARMv8.0 RES1 bits: 11, 20, 22, 23, 28, 29.
     constexpr std::uint64_t res1 = 0x30D0'0800ULL;
+    constexpr std::uint64_t span = 1ULL << 23U;
     constexpr std::uint64_t mmu_enable = 1ULL << 0U;
     constexpr std::uint64_t data_cache_enable = 1ULL << 2U;
     constexpr std::uint64_t stack_alignment_el1 = 1ULL << 3U;
@@ -261,9 +270,11 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
     constexpr std::uint64_t wfi_not_trapped = 1ULL << 16U;
     constexpr std::uint64_t wfe_not_trapped = 1ULL << 18U;
     constexpr std::uint64_t write_implies_execute_never = 1ULL << 19U;
-    return res1 | mmu_enable | data_cache_enable | stack_alignment_el1 |
-           stack_alignment_el0 | instruction_cache_enable | wfi_not_trapped |
-           wfe_not_trapped | write_implies_execute_never;
+    const std::uint64_t established =
+        res1 | mmu_enable | data_cache_enable | stack_alignment_el1 |
+        stack_alignment_el0 | instruction_cache_enable | wfi_not_trapped |
+        wfe_not_trapped | write_implies_execute_never;
+    return privileged_access_never ? (established & ~span) : established;
 }
 
 // Advanced SIMD, floating point, SVE and SME, all trapped at EL0 and EL1.
@@ -297,6 +308,13 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
     // omitted so a reader can see that the zero is a decision.
     return trap_trace_access;
 }
+
+// Whether this core implements FEAT_PAN, read from ID_AA64MMFR1_EL1.
+//
+// Exposed rather than kept private to activate_stage1_translation because the
+// boot proof reports which path it took. A hardening that is silently absent on
+// half the machines it runs on is one nobody notices the absence of.
+[[nodiscard]] bool privileged_access_never_available() noexcept;
 
 [[nodiscard]] os::core::Result<void>
 activate_stage1_translation(std::uint64_t level1_root_physical) noexcept;

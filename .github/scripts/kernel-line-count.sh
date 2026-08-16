@@ -1042,7 +1042,22 @@ core_ceiling=4461
 # cross-thread information leakage" - and nothing enforced it. FP, SVE and SME
 # are now trapped at EL0 and EL1, which is the honest state for a kernel with
 # no FP context-switch policy: refuse the registers rather than share them.
-machine_ceiling=3363
+#
+# Raised for PSTATE.PAN: machine 3,363 -> 3,374, entry 1,769 -> 1,772.
+#
+# docs/SECURITY_AUDIT_2026_08_16.md deferred this with a reason, and the reason
+# has been met. SCTLR_EL1.SPAN is now cleared when ID_AA64MMFR1_EL1 says the
+# core implements FEAT_PAN, so PSTATE.PAN is set on every exception entry and an
+# ordinary kernel load or store to any page EL0 can reach faults. The feature
+# check is not optional: on a core without FEAT_PAN that bit is RES1 and
+# clearing it is CONSTRAINED UNPREDICTABLE.
+#
+# Cookie can take this outright because the hard half was already built - every
+# legitimate access to user memory goes through ldtrb/sttrb, which is exactly
+# what PAN leaves working. The EL2 gate moved from cortex-a72 to -cpu max so
+# that one run actually executes with PAN set; cortex-a72 is ARMv8.0 and could
+# only ever prove the feature-absent path.
+machine_ceiling=3374
 discovery_ceiling=1272
 #
 # Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry
@@ -1198,8 +1213,8 @@ discovery_ceiling=1272
 # Gated by a second QEMU run with virtualization=on, asserting the same
 # milestone set as the EL1 run rather than a subset. Untested boot assembly is
 # how the two defects in docs/M7_13_HARDWARE_NEUTRALITY.md survived.
-entry_ceiling=1769
-total_ceiling=10865
+entry_ceiling=1772
+total_ceiling=10879
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

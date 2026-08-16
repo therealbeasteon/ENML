@@ -2690,6 +2690,16 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!os::kernel::aarch64::activate_stage1_translation(boot_root.value())) fail("ACTIVATE_MMU");
     uart_write("COOKIE:M7.5d:MMU\n");
 
+    // Which hardening this machine actually got. Reported rather than assumed,
+    // because a protection that is silently absent on half the machines it runs
+    // on is one nobody notices the absence of - and both answers are correct,
+    // so neither is a failure. On a core with FEAT_PAN an ordinary kernel load
+    // or store to any page EL0 can reach now faults; on one without it, SPAN is
+    // RES1 and the kernel says so instead of pretending.
+    uart_write(os::kernel::aarch64::privileged_access_never_available()
+                   ? "COOKIE:M7.13:PAN\n"
+                   : "COOKIE:M7.13:NO_PAN\n");
+
     auto gic = os::kernel::aarch64::initialize_gic_v3_primary_cpu(
         gic_topology.value(),
         timer.value().nonsecure_physical_intid,

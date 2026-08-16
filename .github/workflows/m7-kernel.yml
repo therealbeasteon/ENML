@@ -263,6 +263,11 @@ jobs:
           # entry halts with COOKIE:PANIC:M7_12_ENTRY rather than printing
           # this.
           grep -F 'COOKIE:M7.12:PROCESS_RAN' cookie-qemu.log
+          # cortex-a72 is ARMv8.0 and has no FEAT_PAN, so this run proves
+          # the feature-absent path: SPAN stays RES1 and the kernel says so
+          # rather than clearing a bit that is CONSTRAINED UNPREDICTABLE to
+          # clear. The -cpu max run below proves the other half.
+          grep -F 'COOKIE:M7.13:NO_PAN' cookie-qemu.log
           # The disclosure property itself, checked as an absence: the fault
           # report must name a region and must not name the faulting address.
           # A regression that started printing FAR would still emit the marker
@@ -281,8 +286,16 @@ jobs:
           # EL2, which is where a phone's bootloader commonly hands off. The run
           # above enters at EL1 and cannot exercise the drop at all, so without
           # this step the EL2 path would be boot assembly no gate executes.
+          #
+          # -cpu max rather than cortex-a72, and that is a second gate rather
+          # than a detail. cortex-a72 is ARMv8.0: it has no FEAT_PAN, so the
+          # run above can only ever prove the feature-absent path. `max`
+          # implements it, so this is the run that executes Cookie with
+          # PSTATE.PAN set on every exception entry - and therefore the run
+          # that fails if any kernel path still reaches user memory with an
+          # ordinary load or store instead of ldtr/sttr.
           set +e
-          timeout 12s qemu-system-aarch64             -machine virt,gic-version=3,virtualization=on             -cpu cortex-a72             -m 512M             -nographic             -monitor none             -no-reboot             -device loader,file="$elf",cpu-num=0 >cookie-qemu-el2.log 2>&1
+          timeout 12s qemu-system-aarch64             -machine virt,gic-version=3,virtualization=on             -cpu max             -m 512M             -nographic             -monitor none             -no-reboot             -device loader,file="$elf",cpu-num=0 >cookie-qemu-el2.log 2>&1
           status=$?
           set -e
           cat cookie-qemu-el2.log
@@ -299,10 +312,10 @@ jobs:
           # drop can break on its own: EL1's ICC_SRE_EL1 write traps to EL2
           # unless ICC_SRE_EL2.Enable was set first, and the GIC code fails
           # closed when it does.
-          for marker in             COOKIE:M7.5d:MMU             COOKIE:M7.5d:GUARDED             COOKIE:M7.5f:EL0_SVC_RETURN             COOKIE:M7.5g:GICV3             COOKIE:M7.5g:TIMER_IRQ             COOKIE:M7.5i:ISOLATED_A_B_A             COOKIE:M7.6:IPC_A_B_REPLY             COOKIE:M7.9:COMPLETED             COOKIE:M7.11:STALE_REFUSED             COOKIE:M7.11:EL0_GRANT_REUSED             COOKIE:M7.11:FAULT_RESUMED             COOKIE:M7.12:PROCESS_RAN ; do
+          for marker in             COOKIE:M7.5d:MMU             COOKIE:M7.5d:GUARDED             COOKIE:M7.5f:EL0_SVC_RETURN             COOKIE:M7.5g:GICV3             COOKIE:M7.5g:TIMER_IRQ             COOKIE:M7.5i:ISOLATED_A_B_A             COOKIE:M7.6:IPC_A_B_REPLY             COOKIE:M7.9:COMPLETED             COOKIE:M7.11:STALE_REFUSED             COOKIE:M7.11:EL0_GRANT_REUSED             COOKIE:M7.11:FAULT_RESUMED             COOKIE:M7.12:PROCESS_RAN             COOKIE:M7.13:PAN ; do
             if ! grep -F "$marker" cookie-qemu-el2.log >/dev/null; then
               echo "EL2 entry did not reach: $marker" >&2
               exit 1
             fi
           done
-          echo 'EL2 entry reached every milestone the EL1 entry does'
+          echo 'EL2 entry with PAN enabled reached every milestone the EL1 entry does'
