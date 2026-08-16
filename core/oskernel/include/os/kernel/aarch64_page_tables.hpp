@@ -15,7 +15,12 @@ namespace os::kernel::aarch64 {
 // has no dynamic allocator. A caller that needs more donates more as it maps;
 // running out is an ordinary `exhausted` a caller resolves by giving another
 // page, not a kernel failure it can do nothing about.
-inline constexpr std::size_t max_donated_table_pages = 32U;
+// Raised from 32 for M7.12: a space a thread runs in must replay the kernel
+// mapping manifest into its own root, which costs tens of tables on top of the
+// space's own mappings. A caller that needs more than this donates - and is
+// refused with `exhausted`, which is a caller error the caller can fix rather
+// than a kernel failure.
+inline constexpr std::size_t max_donated_table_pages = 64U;
 
 // Supplies the pages translation structures are built from.
 //

@@ -138,13 +138,36 @@ int main() {
                "the thread was bound to a different space")) return 1;
     if (!check(binding.value().authority().valid(), "the binding produced no authority")) return 1;
 
-    // Not runnable. The machine layer makes it runnable once it has admitted an
+    // Not runnable. The machine layer starts it once it has admitted an
     // exception frame; the reverse order leaves a window in which the scheduler
     // may select a thread whose architectural state was never written.
     auto runnable = kernel.runqueue().is_runnable(admitted_thread);
     if (!check(static_cast<bool>(runnable), "the admitted thread was not in the runqueue")) return 1;
     if (!check(!runnable.value(),
                "the admitted thread was runnable before it had a frame")) return 1;
+    if (!check(kernel.threads().state_of(admitted_thread).value() == ThreadState::admitted,
+               "the admitted thread was not in the admitted state")) return 1;
+
+    // And it stays not runnable across unrelated kernel activity. This is the
+    // regression hardware found: the first version only dequeued the thread,
+    // and synchronise_thread recomputes runnability from the rendezvous state
+    // on every IPC operation, so the next send anywhere in the system put a
+    // frameless thread back in the runqueue - ahead of everything else,
+    // because it had never run.
+    if (!check(static_cast<bool>(kernel.send(creator, stranger)),
+               "the unrelated send was refused")) return 1;
+    if (!check(!kernel.runqueue().is_runnable(admitted_thread).value(),
+               "an unrelated IPC operation made a frameless thread runnable")) return 1;
+
+    // thread_start is the one way out, and only from `admitted`.
+    if (!check(static_cast<bool>(kernel.thread_start(admitted_thread)),
+               "thread_start refused an admitted thread")) return 1;
+    if (!check(kernel.runqueue().is_runnable(admitted_thread).value(),
+               "a started thread was still not runnable")) return 1;
+    if (!check(!kernel.thread_start(admitted_thread),
+               "thread_start ran twice on the same thread")) return 1;
+    if (!check(!kernel.thread_start(creator),
+               "thread_start started a thread that was never admitted")) return 1;
     // The creator's priority, not a caller's choice.
     if (!check(kernel.threads().effective_priority_of(admitted_thread).value() == 7U,
                "the admitted thread did not inherit its creator's priority")) return 1;

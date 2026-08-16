@@ -24,11 +24,11 @@ so that lines cannot be moved between categories to get under a ceiling:
 
 | Category | Lines | Ceiling | What it is |
 | --- | --- | --- | --- |
-| core | 4,415 | 4,415 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, begin_service delivery to the woken driver, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), context-bound IPC endpoint authorization and generation-checked reply collection, deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the fault-supply call that completes the pager handshake, the generation-bound address-space capability encoding and its create/destroy decoders, the capability-checked address-space create and two-phase destroy, authority over physical memory and the capability encoding that names it, the fault-disclosure region table and the pager handshake it feeds, the ABI, and the entry-bound thread admission that decides where a thread may begin |
+| core | 4,461 | 4,461 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, begin_service delivery to the woken driver, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), context-bound IPC endpoint authorization and generation-checked reply collection, deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the fault-supply call that completes the pager handshake, the generation-bound address-space capability encoding and its create/destroy decoders, the capability-checked address-space create and two-phase destroy, authority over physical memory and the capability encoding that names it, the fault-disclosure region table and the pager handshake it feeds, the ABI, and the entry-bound thread admission that decides where a thread may begin, and the admitted thread state that keeps a thread with no architectural state out of every scheduling decision |
 | machine | 3,297 | 3,297 | The AArch64 port and the `machine.hpp` contract it satisfies, including GICv3 device-PPI mask/unmask, interrupt-delivery completion on resume, synchronous-fault classification (abort class, fault status, translation level), and the physical ledger's reservation table — which ranges hold kernel state, of which kind, and who may map them, and reclamation zeroing a destroyed space’s ranges before releasing them, and the narrow sealed-space backing path demand paging requires, and the sealer binding a program entry into the root it mints |
 | discovery | 1,272 | 1,272 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, architected timer discovery (physical and virtual PPIs), boot memory planning |
-| entry | 1,599 | 1,599 | Reset vector, freestanding memory primitives, the boot routine (including the minimal pre-discovery identity map that closes "the pre-MMU window," below, and the declaration of the page-table arena, the kernel's writable image and its stack as kernel state), syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the decoded fault reporter, the M7.9 end-to-end driver proof, the M7.11 address-space create/destroy proof, its EL0 syscall dispatch, and the paired non-zero-then-zero reclamation check, and the EL0 fault path that asks a pager and resumes the faulting thread, terminating it only when nobody can answer |
-| **total** | **10,583** | **10,583** | |
+| entry | 1,731 | 1,731 | Reset vector, freestanding memory primitives, the boot routine (including the minimal pre-discovery identity map that closes "the pre-MMU window," below, and the declaration of the page-table arena, the kernel's writable image and its stack as kernel state), syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the decoded fault reporter, the M7.9 end-to-end driver proof, the M7.11 address-space create/destroy proof, its EL0 syscall dispatch, and the paired non-zero-then-zero reclamation check, and the EL0 fault path that asks a pager and resumes the faulting thread, terminating it only when nobody can answer, and the M7.12 proof that admits a thread into a space created after boot and runs it there |
+| **total** | **10,761** | **10,761** | |
 
 `core` is the number the QNX comparison is about. The others are trusted but are
 not what that figure described. Since 2026-08-15 the figure it is held against
@@ -82,13 +82,13 @@ to permit it are one reviewable diff instead of a drift nobody voted for.
 The script prints this on every run, pass or fail, so the distance stays visible
 rather than becoming something the project stopped mentioning:
 
-- `core` is **0.4x its comparable target** — **1,990 semicolons against 4,529**
-  (QNX's microkernel *plus* `Proc`), with **2,539 to spare**.
-- Against the microkernel alone it is **1,990 against 605** — printed too,
+- `core` is **0.4x its comparable target** — **2,015 semicolons against 4,529**
+  (QNX's microkernel *plus* `Proc`), with **2,514 to spare**.
+- Against the microkernel alone it is **2,015 against 605** — printed too,
   because hiding the unflattering number would be the wrong kind of honesty.
   But that half does no memory management and Cookie's does; see below.
-- In this gate's own metric `core` is **4,415 lines**, and the whole trusted
-  image is **10,583 lines / 4,714 semicolons**.
+- In this gate's own metric `core` is **4,461 lines**, and the whole trusted
+  image is **10,761 lines / 4,817 semicolons**.
 - QNX for scale, all semicolons: microkernel **605** *(no memory management)*,
   `Proc` **3,924**, whole OS **15,930**.
 
@@ -150,7 +150,7 @@ What it did not change:
   target` the day it does, rather than the day someone recomputes it by hand.
 
 What remains uncomfortable, and should: a kernel that cannot mount anything and
-has no drivers is spending 1,990 semicolons where a shipped 1992 system spent
+has no drivers is spending 2,015 semicolons where a shipped 1992 system spent
 4,529 on the same responsibilities *plus* a filesystem-grade resource manager.
 Being under the target is not the same as being small.
 
