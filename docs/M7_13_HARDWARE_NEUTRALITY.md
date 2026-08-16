@@ -107,7 +107,7 @@ Measured. Each is a real constraint, not a preference.
 | **PL011** UART | `find_pl011` | Almost all of them. Qualcomm (GENI), Exynos, MediaTek all use their own. No console means no bring-up. |
 | **Flattened device tree** | `FdtView`, `hardware_inventory` | None — phones are DT, not ACPI. This one is already right. |
 | **4 KiB granule, 39-bit VA** | `stage1_va_bits = 39`, `architectural_page_size` | Nothing in practice, but it is *assumed* rather than checked: `TCR_EL1.TG0` is left at its `0b00` default and `ID_AA64MMFR0_EL1.TGran4` is never read. |
-| **Loaded at exactly its link address** | `-no-pie`, absolute `SECTIONS` in `aarch64_qemu.ld.in` | All of them. The header now *tells the truth* about which address that is, and a gate checks it — but telling the truth about a single address is not the same as being loadable anywhere. See below. |
+| ~~**Loaded at exactly its link address**~~ | *Fixed.* Built `-fpie`, linked `-pie`; `_start` applies the image's own `R_AARCH64_RELATIVE` relocations, the header claims placeable-anywhere, and a gate boots the raw `.bin` 4 MiB above the link address. | — |
 | **One CPU** | one runqueue, `initialize_gic_v3_primary_cpu`, no locks anywhere | None, but every phone would run on one core. |
 
 Already portable, and worth saying because the inventory is otherwise a list of
@@ -152,11 +152,26 @@ field a gate exercises.
 
 The second is not:
 
-- **Being loadable only at one address is not phone-neutrality.** A phone's
-  bootloader chooses where the image goes. Fixing this properly means
-  position-independent early boot — build PIE and apply `R_AARCH64_RELATIVE`
-  relocations before anything absolute is touched, which is what Linux's arm64
-  `head.S` does and why it does it. That is a milestone, not a patch.
+- ~~**Being loadable only at one address is not phone-neutrality.**~~ Done, and
+  smaller than expected. The image is built `-fpie` and linked `-pie`, and
+  `_start` applies its own `R_AARCH64_RELATIVE` relocations before anything
+  reads a global — sixteen of them, **measured rather than assumed**: two
+  file-scope objects constructed with pointers to other file-scope objects, and
+  a GOT for symbols defined in assembly that C++ only declares.
+
+  Requiring *zero* relocations was tried first and rejected. It would have made
+  "no file-scope object may hold a pointer to another one" a standing constraint
+  on every future line of kernel code, enforced by a link failure far from
+  whatever introduced it. Twenty instructions in `_start` cost once and
+  constrain nothing.
+
+  What the build asserts is the relocation **type**, not the count: the loop
+  implements `R_AARCH64_RELATIVE` and skips anything else, and skipping silently
+  would leave one pointer unrelocated while everything else worked. The header's
+  flags word now sets bit 3 — the base may be anywhere in physical memory — and
+  a gate boots the raw `.bin` 4 MiB above the link address and asserts the same
+  milestones, because every other run loads the ELF where it was linked and
+  therefore cannot test the claim.
 
 ## What "works on any phone" would actually require
 
@@ -168,8 +183,7 @@ In the order the dependencies fall, not the order of difficulty:
    closed with no interrupt controller. That is the kind of dependency a drop
    sequence copied from a reference would carry silently.
 2. ~~**Cache maintenance primitives.**~~ Finding 2, done — `aarch64_publish_instructions`.
-3. **A relocatable image.** Until then, "any phone" means "any phone whose RAM
-   happens to start where Cookie was linked".
+3. ~~**A relocatable image.**~~ Done — see above.
 4. **A second interrupt controller.** GICv2, behind the same discovery seam
    GICv3 already sits behind — the seam exists, which is why this is a driver
    and not a redesign.
