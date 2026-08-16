@@ -2567,8 +2567,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         // same lesson EL0_CREATE_REFUSED already carries.
         uart_write("COOKIE:PANIC:M7_12_REPLAY code=");
         uart_write_hex(static_cast<std::uint64_t>(c_replayed.error().code));
-        uart_write("
-");
+        uart_write("\n");
         halt();
     }
 
