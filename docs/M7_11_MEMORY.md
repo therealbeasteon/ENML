@@ -1,6 +1,6 @@
 # M7.11 - Memory as a first-class object
 
-**Status: in progress.** `docs/ROADMAP.md` added this milestone (Phase 2b)
+**Status: memory complete; two criteria met only for an address space rather than a process - see "Exit criteria: where they actually stand".** `docs/ROADMAP.md` added this milestone (Phase 2b)
 after a gap review found virtual memory absent from the phase list rather than
 deferred within it. This document makes the decisions that have to be made
 before any of it is written, because the central one - whether the kernel
@@ -66,7 +66,11 @@ Landed so far, each in its own reviewable diff:
     and boot continues past it.
 15. **A fault question can be held until it is answered.**
     `FaultDeliveryTable`, with the two states the faulting thread's suspension
-    requires. Not yet armed by anything.
+    requires.
+16. **A userland pager backs a faulting region and the thread continues.** The
+    whole chain on hardware, and the disclosure decision survives it: the pager
+    is handed a region and never an address, its answer names backing and never
+    a region, and a pager that was not asked cannot answer.
 
 Cookie's kernel could, until item 6, create address spaces exactly once, at
 boot, from a plan computed before any process existed. Everything M7 built on
@@ -602,6 +606,33 @@ ends the line-count claim.
   kernel tells it about a fault is a channel and must be budgeted like one. See
   `docs/M7_11_FAULT_PRIVACY.md`; the rule it adds is that a secret must never
   influence which page faults.
+
+## Exit criteria: where they actually stand
+
+Four of the six are met on hardware. Two are met only in the address-space
+sense, and the difference is worth stating rather than rounding away.
+
+**Met.** A fault is resolved by a userland pager and the faulting thread
+continues - `FAULT_REGION` to `FAULT_ASKED` to `PAGER_BACKED` to
+`FAULT_RESUMED`, gated on under `kernel-arm64-native`. A destroyed space's
+pages are erased before release and the grant that covered them backs a second
+space afterwards. A stale reference fails closed with the same error a wrong
+reference gets. Everything is proven under QEMU rather than only on the host,
+and every increment raised M7.10 in its own diff.
+
+**Met for an address space, not for a process.** The first criterion says a
+*process* is created after boot, and the third says its pages are reused by a
+later *process*. What exists is an address space: created from a memory
+capability, given a root, mapped into, destroyed, and its pages reclaimed - but
+nothing runs in it. No thread is admitted, no program is placed, and the
+faulting thread in the pager proof is one boot created rather than one this
+milestone made.
+
+That gap is not memory work and should not be closed by stretching this
+milestone to cover it. Admitting a thread into a created space is thread and
+process lifecycle, which is where M7.12 lives. The memory underneath it is
+finished: the space, its pages, its authority and its faults are all
+first-class now, which is what "memory as a first-class object" named.
 
 ## Exit criteria
 
