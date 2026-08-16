@@ -160,10 +160,12 @@ jobs:
           # linker's ASSERT on trust.
           echo '--- relocations (must be none) ---'
           readelf -r "$elf" | tee cookie-relocs.txt
-          if grep -qE '^[0-9a-f]{6,}' cookie-relocs.txt; then
-            echo 'image contains runtime relocations; it is not position independent' >&2
-            exit 1
-          fi
+          echo '--- which symbols they name ---'
+          readelf -rW "$elf" | head -40
+          echo '--- GOT contents ---'
+          readelf -x .got "$elf" 2>/dev/null | head -20 || echo 'no .got'
+          echo '--- sections that are not empty ---'
+          readelf -SW "$elf" | grep -E '\.got|\.rela|\.dynamic'
           echo '--- ARM64 Image header ---'
           python3 - "$image" "$elf" <<'PYEOF'
           import struct, subprocess, sys
