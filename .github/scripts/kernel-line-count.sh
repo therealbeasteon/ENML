@@ -1001,7 +1001,16 @@ core_ceiling=4461
 # still passes the W^X ledger check, the reservation rules, the guard-page rule
 # and the table budget. A backing path that skipped those would be a hole
 # shaped like a feature.
-machine_ceiling=3297
+#
+# One line, and it is the single most consequential line in this file's history
+# so far: descriptor::not_global. Every leaf Cookie installed was a *global* TLB
+# entry, matching whatever ASID was in TTBR0_EL1 - while
+# install_process_translation deliberately switches roots without flushing,
+# because ASIDs are supposed to make that safe. Every process maps code and
+# stack at the same virtual addresses, so on silicon the incoming process would
+# have reached the outgoing one's memory. QEMU flushes its software TLB on a
+# TTBR write and hid it completely. See docs/M7_13_HARDWARE_NEUTRALITY.md.
+machine_ceiling=3298
 discovery_ceiling=1272
 #
 # Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry
@@ -1140,7 +1149,7 @@ discovery_ceiling=1272
 # so a third runnable thread cannot perturb the deliberately uncontested
 # scheduling decisions the contention and pager proofs are built on.
 entry_ceiling=1731
-total_ceiling=10761
+total_ceiling=10762
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

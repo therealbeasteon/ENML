@@ -95,6 +95,11 @@ int main() {
     require((leaf & (3ULL << 6U)) == descriptor::ap_el1_ro_el0_none);
     require((leaf & descriptor::privileged_execute_never) == 0ULL);
     require((leaf & descriptor::unprivileged_execute_never) != 0ULL);
+    // Checked on the leaf the builder actually installed, not only on what the
+    // descriptor helper returns: a global entry is one the ASID-tagged switch
+    // cannot separate from another address space, and this is the value the
+    // walker will read.
+    require((leaf & descriptor::not_global) != 0ULL);
 
     const auto user_l2_pa = l1[level1_index(user_va)] & page_address_mask;
     auto* user_l2 = reinterpret_cast<std::uint64_t*>(static_cast<std::uintptr_t>(user_l2_pa));
@@ -105,6 +110,7 @@ int main() {
     require((user_leaf & (3ULL << 6U)) == descriptor::ap_el1_ro_el0_ro);
     require((user_leaf & descriptor::privileged_execute_never) != 0ULL);
     require((user_leaf & descriptor::unprivileged_execute_never) == 0ULL);
+    require((user_leaf & descriptor::not_global) != 0ULL);
 
     // A process translation root becomes immutable before it is executable.
     require(static_cast<bool>(builder.seal()));
@@ -172,6 +178,7 @@ int main() {
     const auto kernel_leaf = kernel_l3[level3_index(kernel_va)];
     require((kernel_leaf & page_address_mask) == kernel_pa);
     require((kernel_leaf & (3ULL << 6U)) == descriptor::ap_el1_ro_el0_none);
+    require((kernel_leaf & descriptor::not_global) != 0ULL);
 
     // Teardown is an explicit lifecycle transition. Only after begin_retire()
     // can leaf mappings be destructively removed.
