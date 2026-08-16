@@ -63,6 +63,30 @@ os::core::Result<void> Rendezvous::create_thread(ThreadId thread, Priority prior
     return rendezvous_error(rendezvous_errors::thread_limit);
 }
 
+os::core::Result<void> Rendezvous::create_admitted_thread(
+    ThreadId thread, Priority priority) noexcept {
+    if (thread == invalid_thread) return rendezvous_error(rendezvous_errors::invalid_thread_id);
+    if (find(thread) != nullptr) return rendezvous_error(rendezvous_errors::thread_exists);
+    for (auto& slot : slots_) {
+        if (slot.occupied) continue;
+        slot = Slot{
+            thread, ThreadState::admitted, invalid_thread, WakeReason::none, priority, true};
+        ++occupied_;
+        return {};
+    }
+    return rendezvous_error(rendezvous_errors::thread_limit);
+}
+
+os::core::Result<void> Rendezvous::start_thread(ThreadId thread) noexcept {
+    Slot* slot = find(thread);
+    if (slot == nullptr) return rendezvous_error(rendezvous_errors::unknown_thread);
+    if (slot->state != ThreadState::admitted) {
+        return rendezvous_error(rendezvous_errors::not_runnable);
+    }
+    slot->state = ThreadState::ready;
+    return {};
+}
+
 os::core::Result<std::size_t> Rendezvous::exit_thread(ThreadId thread) noexcept {
     Slot* slot = find(thread);
     if (slot == nullptr) return rendezvous_error(rendezvous_errors::unknown_thread);

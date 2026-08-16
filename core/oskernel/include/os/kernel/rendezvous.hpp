@@ -32,6 +32,18 @@ enum class ThreadState : std::uint8_t {
     reply_blocked = 3U,
     receive_blocked = 4U,
     exited = 5U,
+    // Created and bound to an address space, but with no architectural state
+    // yet. Not runnable, and it has to be a *state* rather than a dequeue.
+    //
+    // The first version dequeued it instead - thread_admit created the thread
+    // and then told the scheduler it was not runnable - and that was wrong in
+    // a way only hardware showed. synchronise_thread recomputes runnability
+    // from this enum on every IPC operation, so the first send anywhere in the
+    // system put the thread back in the runqueue and the scheduler picked it,
+    // frameless, ahead of everything else because it had never run. Saying
+    // "not runnable" to one of the two structures that decide it is not saying
+    // it at all.
+    admitted = 6U,
 };
 
 enum class WakeReason : std::uint8_t {
@@ -57,6 +69,19 @@ public:
     [[nodiscard]] os::core::Result<void> create_thread(
         ThreadId thread,
         Priority priority = default_priority) noexcept;
+
+    // Creates a thread in ThreadState::admitted - see above. Separate from
+    // create_thread rather than a bool on it, because a caller that gets the
+    // flag the wrong way round produces a frameless runnable thread, and that
+    // is not a mistake worth making expressible.
+    [[nodiscard]] os::core::Result<void> create_admitted_thread(
+        ThreadId thread,
+        Priority priority = default_priority) noexcept;
+
+    // admitted -> ready, once the machine layer has architectural state for
+    // this thread. Refuses any other state: it is a start, not a wakeup, and a
+    // thread that is send_blocked has already started.
+    [[nodiscard]] os::core::Result<void> start_thread(ThreadId thread) noexcept;
     os::core::Result<std::size_t> exit_thread(ThreadId thread) noexcept;
 
     // Generic thread-addressed wrappers retained for the base rendezvous API.

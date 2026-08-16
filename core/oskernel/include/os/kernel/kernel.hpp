@@ -63,6 +63,13 @@ public:
         ThreadId thread,
         Priority priority = default_priority) noexcept;
     os::core::Result<Teardown> destroy_thread(ThreadId thread) noexcept;
+    // create_thread's counterpart for a thread that does not yet have
+    // architectural state - see ThreadState::admitted. thread_start is the one
+    // way out of it, and the machine layer calls it after admitting a frame.
+    [[nodiscard]] os::core::Result<void> create_admitted_thread(
+        ThreadId thread,
+        Priority priority = default_priority) noexcept;
+    [[nodiscard]] os::core::Result<void> thread_start(ThreadId thread) noexcept;
 
     [[nodiscard]] os::core::Result<void> send(ThreadId from, ThreadId to) noexcept;
     [[nodiscard]] os::core::Result<ThreadId> receive(ThreadId self) noexcept;
@@ -221,10 +228,12 @@ public:
     // address_space_create draws: the kernel owns which lifetimes exist and who
     // may name them, the machine layer owns the tables.
     //
-    // The admitted thread is left *not runnable*. It becomes runnable when the
-    // machine layer has admitted an exception frame built from the returned
-    // entry and stack, because a thread the scheduler can select before its
-    // architectural state exists is one it can select and fail to resume.
+    // The admitted thread is left in ThreadState::admitted, which is *not
+    // runnable* and stays that way: thread_start is the only transition out of
+    // it. That is what the machine layer calls once it has admitted an
+    // exception frame built from the returned entry and stack. A thread the
+    // scheduler can select before its architectural state exists is one it can
+    // select and fail to resume.
     [[nodiscard]] os::core::Result<ThreadAdmission> thread_admit(
         ThreadId creator,
         CapabilityId space,

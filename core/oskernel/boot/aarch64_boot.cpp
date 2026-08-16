@@ -1569,7 +1569,12 @@ extern "C" void cookie_kernel_syscall_entry(
         // records: making a thread runnable changes nothing observable until
         // something reschedules, and there may be no timer armed.
         if (c_thread != os::kernel::invalid_thread && !c_ran) {
-            if (!boot_kernel.runqueue().update(c_thread, true, process_priority)) {
+            // thread_start, not a runqueue poke. C has been sitting in
+            // ThreadState::admitted since it was admitted, which is what kept
+            // it out of every scheduling decision above - a runqueue entry
+            // alone would have been undone by the first synchronise() any IPC
+            // path performed, and was.
+            if (!boot_kernel.thread_start(c_thread)) {
                 uart_write("COOKIE:PANIC:M7_12_WAKE\n");
                 halt();
             }
@@ -1714,9 +1719,16 @@ extern "C" void cookie_aarch64_irq_dispatch(
     }
 
     const auto running = boot_preemption.running();
+    // C joins the two hand-made threads here rather than being excused from
+    // the check. Its universe marker is as load-bearing as theirs - more so,
+    // because it is the value that says C entered where its space's sealed
+    // root declared - and "the scheduler resumed something this proof never
+    // admitted" would be a false statement about a thread that was admitted.
+    const bool admitted_c = c_thread != os::kernel::invalid_thread && running == c_thread;
     if ((running == process_a_thread && frame->x[19] != process_a_marker) ||
         (running == process_b_thread && frame->x[19] != process_b_marker) ||
-        (running != process_a_thread && running != process_b_thread)) {
+        (admitted_c && frame->x[19] != c_marker) ||
+        (running != process_a_thread && running != process_b_thread && !admitted_c)) {
         // Say which of the three ways this failed, and with what values. The
         // first occurrence of this panic reported the name and nothing else,
         // and identifying it as a first-instruction race in B cost a reading
@@ -1725,8 +1737,11 @@ extern "C" void cookie_aarch64_irq_dispatch(
         // survive a switch, and an unexpected thread means the scheduler
         // resumed something this proof never admitted.
         uart_write("COOKIE:PANIC:UNIVERSE_MARKER");
-        if (running != process_a_thread && running != process_b_thread) {
+        if (running != process_a_thread && running != process_b_thread && !admitted_c) {
             uart_write(":UNEXPECTED_THREAD");
+        } else if (admitted_c) {
+            uart_write(":C want=");
+            uart_write_hex(c_marker);
         } else {
             uart_write(running == process_a_thread ? ":A" : ":B");
             uart_write(" want=");
@@ -2618,9 +2633,10 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     initial_c.spsr_el1 = 0x340ULL;
     if (!boot_preemption.admit_frame(c_thread, initial_c)) fail("M7_12_ADMIT_FRAME");
 
-    // Left not runnable, which thread_admit already made it. It is woken at
-    // the end of the M7.11 chain rather than here, so a third runnable thread
-    // cannot perturb the scheduling every proof above it depends on.
+    // Left in ThreadState::admitted, which thread_admit already made it, and
+    // which nothing but thread_start can undo. It is started at the end of the
+    // M7.11 chain rather than here, so a third runnable thread cannot perturb
+    // the scheduling every proof above it depends on.
     uart_write("COOKIE:M7.12:THREAD_ADMITTED\n");
 
     boot_uart = reinterpret_cast<volatile std::uint32_t*>(

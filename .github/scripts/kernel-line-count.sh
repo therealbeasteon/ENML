@@ -912,7 +912,22 @@ not_kernel=(
 #
 # The eight machine lines are the entry travelling through the sealer and the
 # sealed root that carries it.
-core_ceiling=4415
+#
+# Raised again in M7.12's boot proof, and by a defect hardware found rather
+# than by new capability: core 4,415 -> 4,461.
+#
+# thread_admit's first version created the thread and then told the *scheduler*
+# it was not runnable. synchronise_thread recomputes runnability from the
+# rendezvous state on every IPC operation, so the next send anywhere in the
+# system put the frameless thread straight back into the runqueue - and ahead
+# of everything else, because it had never run. The boot proof duly ran it
+# before any of the milestone it was waiting on had happened.
+#
+# ThreadState::admitted is the fix: not runnable in the structure that decides
+# runnability, with Kernel::thread_start the one transition out, called by the
+# machine layer once a frame exists. Saying "not runnable" to one of the two
+# structures that decide it was not saying it at all.
+core_ceiling=4461
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -1104,7 +1119,7 @@ discovery_ceiling=1272
 # never left, so there is nothing to hand back; what ends at destroy is the
 # space's use of the page, not the holder's claim on it.
 #
-# Raised by M7.12's boot proof: entry 1,599 -> 1,726, total 10,583 -> 10,710.
+# Raised by M7.12's boot proof: entry 1,599 -> 1,731, total 10,583 -> 10,761.
 #
 # What the lines buy is the claim M7.11's own document said it had not earned.
 # That milestone created an address space after boot, mapped it, destroyed it
@@ -1124,8 +1139,8 @@ discovery_ceiling=1272
 # The thread is woken at the end of the M7.11 chain rather than at admission,
 # so a third runnable thread cannot perturb the deliberately uncontested
 # scheduling decisions the contention and pager proofs are built on.
-entry_ceiling=1726
-total_ceiling=10710
+entry_ceiling=1731
+total_ceiling=10761
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

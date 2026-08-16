@@ -639,7 +639,15 @@ os::core::Result<ThreadAdmission> Kernel::thread_admit(
         return os::core::Result<ThreadAdmission>{creator_priority.error()};
     }
 
-    auto created = create_thread(issued.value(), creator_priority.value());
+    // Created in ThreadState::admitted, so it is not runnable until
+    // thread_start - and not runnable in the structure that *decides*
+    // runnability, rather than merely absent from the runqueue.
+    // synchronise_thread recomputes the runqueue from the rendezvous state on
+    // every IPC operation, so a thread parked only in the scheduler is put back
+    // by the next send anywhere in the system. That is not a hypothetical: it
+    // is what the first version did, and hardware caught it by running the new
+    // thread with no frame ahead of everything else.
+    auto created = create_admitted_thread(issued.value(), creator_priority.value());
     if (!created) return os::core::Result<ThreadAdmission>{created.error()};
 
     auto bound = translations.bind(issued.value(), epoch.value(), root, epochs);
@@ -650,23 +658,38 @@ os::core::Result<ThreadAdmission> Kernel::thread_admit(
         return os::core::Result<ThreadAdmission>{bound.error()};
     }
 
-    // Not runnable until the machine layer has given it architectural state.
-    // The opposite order leaves a window in which the scheduler may select a
-    // thread whose frame was never written, and under preemption the width of
-    // that window is whatever the timer decides.
-    auto parked = scheduler_.update(issued.value(), false, creator_priority.value());
-    if (!parked) {
-        (void)translations.retire(issued.value(), epoch.value());
-        (void)destroy_thread(issued.value());
-        return os::core::Result<ThreadAdmission>{
-            address_space_error(thread_admission_errors::creation_incomplete)};
-    }
-
     return ThreadAdmission{
         .thread = issued.value(),
         .entry = root.entry(),
         .stack = stack,
     };
+}
+
+os::core::Result<void> Kernel::create_admitted_thread(
+    ThreadId thread, Priority priority) noexcept {
+    auto created = threads_.create_admitted_thread(thread, priority);
+    if (!created) return created;
+    auto admitted = scheduler_.admit(thread, priority);
+    if (!admitted) {
+        (void)threads_.exit_thread(thread);
+        return os::core::Result<void>{
+            os::core::make_error(os::core::ErrorDomain::kernel,
+                                 kernel_errors::creation_incomplete)};
+    }
+    live_[live_count_] = thread;
+    ++live_count_;
+    // Reconciles the runqueue with the rendezvous, which now says `admitted`
+    // and therefore not runnable. Scheduler::admit defaults to runnable, so
+    // without this the two disagree from the first instant.
+    synchronise_thread(thread);
+    return {};
+}
+
+os::core::Result<void> Kernel::thread_start(ThreadId thread) noexcept {
+    auto started = threads_.start_thread(thread);
+    if (!started) return started;
+    synchronise_thread(thread);
+    return {};
 }
 
 os::core::Result<Dispatch> Kernel::dispatch_interrupt(InterruptSource source) noexcept {
