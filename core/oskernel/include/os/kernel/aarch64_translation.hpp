@@ -37,6 +37,28 @@ inline constexpr std::uint64_t ap_el1_ro_el0_ro = 3ULL << 6U;
 inline constexpr std::uint64_t share_outer = 2ULL << 8U;
 inline constexpr std::uint64_t share_inner = 3ULL << 8U;
 inline constexpr std::uint64_t access_flag = 1ULL << 10U;
+// nG. The bit that makes a TLB entry belong to one address space.
+//
+// Every leaf Cookie installs sets this, and the reason is not performance. An
+// entry filled with nG clear is *global*: it matches regardless of the ASID in
+// TTBR0_EL1, so it keeps satisfying translations after the root is switched.
+// install_process_translation switches roots without flushing - deliberately,
+// that is what ASIDs are for - and every Cookie process maps its code and stack
+// at the same virtual addresses. A global entry therefore lets the incoming
+// process reach the outgoing one's memory at the same address, which is the
+// isolation the whole address-space model exists to provide.
+//
+// It is also what makes retire_process_asid mean anything. `tlbi aside1is`
+// invalidates entries *tagged with an ASID*; global entries carry no tag and
+// survive it, so a destroyed space's translations would outlive the space.
+//
+// Set on kernel leaves too, not only user ones, and that is deliberate while
+// Cookie translates through TTBR0 only: kernel mappings live inside each
+// process root, so a global kernel entry is one an ASID retirement cannot
+// reach either. When M7.7's TTBR1 split lands, upper-region kernel entries can
+// legitimately be global - they are the same in every space by construction -
+// and that is the point at which to revisit this, not before.
+inline constexpr std::uint64_t not_global = 1ULL << 11U;
 inline constexpr std::uint64_t privileged_execute_never = 1ULL << 53U;
 inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
 } // namespace descriptor
@@ -94,7 +116,7 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
 
     std::uint64_t value = (physical_address & page_address_mask) |
                           descriptor::valid | descriptor::table_or_page |
-                          descriptor::access_flag |
+                          descriptor::access_flag | descriptor::not_global |
                           descriptor::unprivileged_execute_never;
 
     if (kind == MachineMemoryKind::normal) {
@@ -133,7 +155,7 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
 
     std::uint64_t value = (physical_address & page_address_mask) |
                           descriptor::valid | descriptor::table_or_page |
-                          descriptor::access_flag |
+                          descriptor::access_flag | descriptor::not_global |
                           (static_cast<std::uint64_t>(mair_normal_index) << descriptor::attr_index_shift) |
                           descriptor::share_inner |
                           descriptor::privileged_execute_never;

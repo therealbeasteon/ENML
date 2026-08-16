@@ -34,6 +34,45 @@ int main() {
     require(!kernel_stage1_virtual_address(kernel_virtual_base - 1ULL));
     require(!kernel_stage1_virtual_address(0ULL));
 
+    // Every leaf Cookie installs is nG, and this is asserted for each
+    // permission and memory kind rather than once, because the descriptor
+    // builders assemble their value along several branches and a bit dropped
+    // on one of them is a global entry only that branch produces.
+    //
+    // Global entries are not a performance question. install_process_translation
+    // switches TTBR0 without flushing - which is what ASIDs are for - and a
+    // global entry matches whatever ASID is installed. Every Cookie process
+    // maps code and stack at the same virtual addresses, so one global user
+    // leaf lets the incoming process reach the outgoing one's memory at the
+    // same address. `tlbi aside1is` at ASID retirement would not clear it
+    // either: global entries carry no ASID to match.
+    constexpr std::uint64_t page = 0x0000'0000'8000'0000ULL;
+    require((user_page_descriptor(page, MachinePermissions::read) &
+             descriptor::not_global) != 0ULL);
+    require((user_page_descriptor(page, MachinePermissions::read_write) &
+             descriptor::not_global) != 0ULL);
+    require((user_page_descriptor(page, MachinePermissions::read_execute) &
+             descriptor::not_global) != 0ULL);
+    require((page_descriptor(page, MachinePermissions::read,
+                             MachineMemoryKind::normal) &
+             descriptor::not_global) != 0ULL);
+    require((page_descriptor(page, MachinePermissions::read_write,
+                             MachineMemoryKind::normal) &
+             descriptor::not_global) != 0ULL);
+    require((page_descriptor(page, MachinePermissions::read_execute,
+                             MachineMemoryKind::normal) &
+             descriptor::not_global) != 0ULL);
+    // Device mappings too. A driver's registers mapped globally would stay
+    // reachable at that address after the driver's space is gone.
+    require((page_descriptor(page, MachinePermissions::read_write,
+                             MachineMemoryKind::device) &
+             descriptor::not_global) != 0ULL);
+    // nG is bit 11, and a table descriptor must not carry it - the bit means
+    // something else at a table level and setting it there would be a
+    // different instruction to the walker.
+    require(descriptor::not_global == (1ULL << 11U));
+    require((table_descriptor(page) & descriptor::not_global) == 0ULL);
+
     // The future TTBR1 map is projected from the one reviewed physical manifest,
     // preserving attributes while replacing temporary low aliases with a
     // deterministic upper-canonical alias.
