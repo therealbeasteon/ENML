@@ -263,5 +263,61 @@ int main() {
                    "two regions sharing virtual addresses were accepted")) return 1;
     }
 
+    // The writer. It has no idea of validity of its own: it encodes, parses
+    // what it encoded, and fails with whatever the parser says. So the property
+    // under test is not "the writer is correct" but "the two halves cannot
+    // disagree" - which is the failure every format with a reader and a writer
+    // eventually has.
+    {
+        auto parsed = parse_ckx(well_formed());
+        if (!check(static_cast<bool>(parsed), "setup parse failed")) return 1;
+
+        std::array<std::byte, max_ckx_encoded_bytes> out{};
+        auto written = build_ckx(parsed.value(), out);
+        if (!check(static_cast<bool>(written), "build refused a parsed image")) return 1;
+        if (!check(written.value() == ckx_encoded_bytes(2U), "wrong encoded size")) return 1;
+
+        // Round trip: what comes back is what went in, field for field.
+        auto again = parse_ckx(std::span<const std::byte>{out.data(), written.value()});
+        if (!check(static_cast<bool>(again), "an image this writer produced was refused")) return 1;
+        if (!check(again.value().region_count == parsed.value().region_count &&
+                   again.value().entry == parsed.value().entry &&
+                   again.value().authority_ceiling == parsed.value().authority_ceiling,
+                   "the header did not survive a round trip")) return 1;
+        for (std::size_t i = 0U; i < parsed.value().region_count; ++i) {
+            if (!check(again.value().regions[i] == parsed.value().regions[i],
+                       "a region did not survive a round trip")) return 1;
+        }
+        // Byte-for-byte, not merely equivalent. Two encodings of one plan would
+        // give a package two digests for the same program.
+        auto rewritten = build_ckx(again.value(), out);
+        if (!check(static_cast<bool>(rewritten) && rewritten.value() == written.value(),
+                   "re-encoding changed the size")) return 1;
+    }
+    // A buffer too small is refused rather than truncated.
+    {
+        auto parsed = parse_ckx(well_formed());
+        std::array<std::byte, ckx_header_bytes> small{};
+        if (!check(refused(build_ckx(parsed.value(), small), ckx_errors::truncated),
+                   "build wrote into a buffer that could not hold the image")) return 1;
+    }
+    // And the writer cannot be talked into emitting something the parser would
+    // reject: a plan assembled by hand with an anonymous executable region is
+    // refused at build time, by the parser, without the writer knowing the rule.
+    {
+        CkxImage bad{};
+        bad.region_count = 1U;
+        bad.entry = code_virtual;
+        bad.authority_ceiling = ckx_authority::unprivileged;
+        bad.regions[0].virtual_address = code_virtual;
+        bad.regions[0].length = ckx_page_bytes;
+        bad.regions[0].permissions = CkxPermissions::read_execute;
+        bad.regions[0].disclosure = CkxDisclosure::paged;
+        bad.regions[0].content = CkxContent::anonymous;
+        std::array<std::byte, max_ckx_encoded_bytes> out{};
+        if (!check(refused(build_ckx(bad, out), ckx_errors::anonymous_executable),
+                   "build emitted an image its own parser refuses")) return 1;
+    }
+
     return 0;
 }

@@ -190,6 +190,23 @@ self-description beyond the table. A parser is a bounds check and a loop.
 The parser never dereferences the image's virtual addresses. Constructing the
 space is the loader's job; mapping it is the kernel's.
 
+## The writer has no opinion of its own
+
+`build_ckx` encodes a plan, then **parses what it encoded and fails with
+whatever the parser says**. It carries no validity rules of its own.
+
+That is deliberate and it is the answer to the failure every format with both
+halves eventually has: the day the reader and the writer disagree. A producer
+that judged validity for itself can emit an image its own parser rejects — or
+worse, one that *it* accepts and a second build does not, which would give one
+program two digests and therefore two identities.
+
+Because the check is a re-parse, every rule added to the parser binds the writer
+on the same commit, with nobody having to remember to mirror it. The round trip
+is asserted in the unit test and fuzzed differentially: for every image the
+parser accepts, the writer must reproduce it field for field, and re-encoding
+must be byte-stable.
+
 ## What the kernel does with a `.ckx`
 
 Nothing. It never sees one. The parser is in `core/osimage`, outside

@@ -221,4 +221,29 @@ struct CkxConstructionCost final {
 [[nodiscard]] os::core::Result<CkxImage> parse_ckx(
     std::span<const std::byte> bytes) noexcept;
 
+// How many bytes `image` serialises to. Always header plus table: a `.ckx`
+// carries no content, only the plan and the digests naming it.
+[[nodiscard]] constexpr std::size_t ckx_encoded_bytes(std::size_t region_count) noexcept {
+    return ckx_header_bytes + region_count * ckx_region_bytes;
+}
+
+inline constexpr std::size_t max_ckx_encoded_bytes =
+    ckx_header_bytes + max_ckx_regions * ckx_region_bytes;
+
+// Serialises a plan. The inverse of parse_ckx, and deliberately written as one
+// rather than as a separate description of the same layout.
+//
+// It does not have its own idea of what is valid: it encodes, then parses what
+// it encoded, and fails with whatever the parser says. A writer that judged
+// validity for itself would be a second opinion about the format, and the
+// interesting failure of every format with a reader and a writer is the day
+// they disagree - a producer emitting something its own parser rejects, or
+// worse, something it accepts and another build does not.
+//
+// So this cannot emit an image parse_ckx would refuse. That is a property, not
+// a convention, and the round-trip test is what holds it.
+[[nodiscard]] os::core::Result<std::size_t> build_ckx(
+    const CkxImage& image,
+    std::span<std::byte> out) noexcept;
+
 } // namespace os::image
