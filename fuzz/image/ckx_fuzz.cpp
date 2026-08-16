@@ -1,3 +1,4 @@
+#include <array>
 #include <cstddef>
 #include <cstdint>
 #include <span>
@@ -46,5 +47,34 @@ extern "C" int LLVMFuzzerTestOneInput(const std::uint8_t* data, std::size_t size
     // over attacker-influenced lengths and addresses and is exactly the shape
     // that overflows quietly. The sanitizers are the assertion.
     (void)os::image::aarch64_construction_cost(value);
+
+    // Differential: every image the parser accepts must survive a round trip
+    // through the writer unchanged, and re-encoding must be byte-stable.
+    //
+    // This is the property worth fuzzing rather than either half alone. A
+    // reader and a writer that disagree is how a producer emits something its
+    // own parser rejects - or worse, something it accepts and a second build
+    // does not, which would give one program two digests. Random inputs reach
+    // combinations no hand-written case does.
+    std::array<std::byte, os::image::max_ckx_encoded_bytes> first{};
+    auto written = os::image::build_ckx(value, first);
+    if (!written) __builtin_trap();
+
+    auto again = os::image::parse_ckx(
+        std::span<const std::byte>{first.data(), written.value()});
+    if (!again) __builtin_trap();
+    if (again.value().region_count != value.region_count) __builtin_trap();
+    if (again.value().entry != value.entry) __builtin_trap();
+    if (again.value().authority_ceiling != value.authority_ceiling) __builtin_trap();
+    for (std::size_t i = 0U; i < value.region_count; ++i) {
+        if (!(again.value().regions[i] == value.regions[i])) __builtin_trap();
+    }
+
+    std::array<std::byte, os::image::max_ckx_encoded_bytes> second{};
+    auto rewritten = os::image::build_ckx(again.value(), second);
+    if (!rewritten || rewritten.value() != written.value()) __builtin_trap();
+    for (std::size_t i = 0U; i < written.value(); ++i) {
+        if (first[i] != second[i]) __builtin_trap();
+    }
     return 0;
 }

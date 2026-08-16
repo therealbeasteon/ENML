@@ -31,6 +31,17 @@ namespace {
     return value;
 }
 
+void write_u16(std::span<std::byte> out, std::size_t offset, std::uint16_t value) noexcept {
+    out[offset] = static_cast<std::byte>(value & 0xFFU);
+    out[offset + 1U] = static_cast<std::byte>((value >> 8U) & 0xFFU);
+}
+
+void write_u64(std::span<std::byte> out, std::size_t offset, std::uint64_t value) noexcept {
+    for (std::size_t i = 0U; i < 8U; ++i) {
+        out[offset + i] = static_cast<std::byte>((value >> (8U * i)) & 0xFFULL);
+    }
+}
+
 [[nodiscard]] bool zero_range(
     std::span<const std::byte> bytes, std::size_t offset, std::size_t length) noexcept {
     for (std::size_t i = 0U; i < length; ++i) {
@@ -253,6 +264,52 @@ os::core::Result<CkxImage> parse_ckx(std::span<const std::byte> bytes) noexcept 
     }
 
     return image;
+}
+
+os::core::Result<std::size_t> build_ckx(
+    const CkxImage& image, std::span<std::byte> out) noexcept {
+    if (image.region_count == 0U || image.region_count > max_ckx_regions) {
+        return os::core::Result<std::size_t>{ckx_error(ckx_errors::region_count)};
+    }
+    const std::size_t needed = ckx_encoded_bytes(image.region_count);
+    if (out.size() < needed) {
+        return os::core::Result<std::size_t>{ckx_error(ckx_errors::truncated)};
+    }
+
+    for (std::size_t i = 0U; i < needed; ++i) out[i] = std::byte{0};
+    for (std::size_t i = 0U; i < ckx_magic_bytes; ++i) out[i] = ckx_magic[i];
+    // The version this build implements, never the one the caller happens to
+    // have in the struct: a writer that echoed an input version could emit an
+    // image describing a layout it did not write.
+    write_u16(out, 4U, ckx_format_version_1);
+    write_u16(out, 6U, static_cast<std::uint16_t>(image.region_count));
+    write_u64(out, 8U, image.entry);
+    write_u64(out, 16U, image.authority_ceiling);
+
+    for (std::size_t index = 0U; index < image.region_count; ++index) {
+        const auto& region = image.regions[index];
+        const std::size_t base = ckx_header_bytes + index * ckx_region_bytes;
+        write_u64(out, base + 0U, region.virtual_address);
+        write_u64(out, base + 8U, region.length);
+        out[base + 16U] = static_cast<std::byte>(region.permissions);
+        out[base + 17U] = static_cast<std::byte>(region.disclosure);
+        out[base + 18U] = static_cast<std::byte>(region.content);
+        for (std::size_t i = 0U; i < ckx_digest_bytes; ++i) {
+            out[base + 24U + i] = region.digest[i];
+        }
+    }
+
+    // Parse what was just written, and fail with whatever the parser says.
+    //
+    // This is the whole design of the writer. It has no opinion about validity
+    // of its own, so it cannot emit an image its own reader would refuse - and
+    // the interesting failure of every format with both halves is the day they
+    // disagree. Checking by re-reading also means every rule added to the
+    // parser binds the writer on the same commit, with nobody having to
+    // remember to mirror it.
+    auto verified = parse_ckx(out.subspan(0U, needed));
+    if (!verified) return os::core::Result<std::size_t>{verified.error()};
+    return needed;
 }
 
 } // namespace os::image
