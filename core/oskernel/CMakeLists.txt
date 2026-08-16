@@ -183,8 +183,18 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         # count is zero, which is what turns that from an observation into a
         # property: the day something introduces an absolute pointer in static
         # data, the build says so instead of the phone doing.
+        #
+        # -fvisibility=hidden is load-bearing rather than tidiness. With default
+        # visibility, -fpie makes the compiler assume any global might be
+        # interposed by another object at run time, so it reaches symbols
+        # through a global offset table - and a GOT entry is exactly the
+        # absolute pointer in static data this is trying not to have, one
+        # relocation each. Hidden visibility says nothing outside this image can
+        # interpose, which is true because there is no dynamic linker here for
+        # interposition to come from, and the compiler then emits PC-relative
+        # adrp/add instead.
         target_compile_options(cookie_kernel_aarch64_boot PRIVATE
-            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fpie -mstrict-align -mgeneral-regs-only>
+            $<$<COMPILE_LANGUAGE:CXX>:-ffreestanding -fno-builtin -fno-exceptions -fno-rtti -fno-threadsafe-statics -fno-stack-protector -fpie -fvisibility=hidden -mstrict-align -mgeneral-regs-only>
             $<$<COMPILE_LANGUAGE:ASM>:-ffreestanding -fpie>)
         target_link_options(cookie_kernel_aarch64_boot PRIVATE
             -nostdlib
