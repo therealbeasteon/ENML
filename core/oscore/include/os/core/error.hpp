@@ -16,6 +16,11 @@ enum class ErrorDomain : std::uint16_t {
     ui = 9,
     shell = 10,
     kernel = 11,
+    // Program images. Distinct from `package` on purpose: a .cookie package
+    // carries identity and signature, a .ckx image carries layout, and
+    // docs/M7_12_CKX_FORMAT.md keeps them apart because an image that could
+    // certify itself would be a second answer to "what is this program".
+    image = 12,
 };
 
 struct Error final {

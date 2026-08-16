@@ -74,6 +74,8 @@ jobs:
             dictionary: ''
           - target: kernel_syscall_surface_fuzz
             dictionary: ''
+          - target: image_ckx_fuzz
+            dictionary: ''
     steps:
       - uses: actions/checkout@v4
 

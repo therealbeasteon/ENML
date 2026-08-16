@@ -32,6 +32,23 @@ replaced, it is about EMNL. If it depends on how a call is dispatched or how an
 address space is switched, it is about Cookie Kernel. If it is about what
 someone holding the phone experiences, it is about Cookie.
 
+## File extensions
+
+| Extension | What it is |
+| --- | --- |
+| **`.ckx`** | A Cookie executable image. One program, described as *a plan for an address space to construct* rather than as bytes to load — Cookie has no load operation. |
+| **`.cookie`** | An application package. What a user installs, and what `ApplicationIdentity` names. Contains one or more `.ckx` plus the manifest. |
+
+The split matches the table above rather than cutting across it. A `.cookie` is
+a **Cookie** thing — what someone holding the phone installs and sees. A `.ckx`
+is closer to the **Cookie Kernel** boundary: regions, permissions, disclosure
+classes and an entry, described in exactly the terms the kernel's own address
+spaces use, because that is what it is a plan for.
+
+The rule that follows: **a `.ckx` on its own is untrusted bytes.** It carries no
+signature and cannot certify itself; trust comes from the `.cookie` containing
+it. `docs/M7_12_CKX_FORMAT.md` has the format and the reasoning.
+
 ## Identifiers
 
 Source identifiers have not been renamed and are not scheduled to be renamed
