@@ -122,13 +122,17 @@ over the whole 16-bit space rather than only values a caller "should" send.
 
 ## Deferred, with reasons
 
-- **`PSTATE.PAN`.** Clearing `SCTLR_EL1.SPAN` would set PAN on every exception
-  entry, so an ordinary EL1 load or store to user memory faults and only
-  `ldtr`/`sttr` succeed. Cookie's user-copy path already uses exactly those, so
-  the hard half is done. Not taken here because on a core without `FEAT_PAN`
-  that bit is RES1 and clearing it is CONSTRAINED UNPREDICTABLE — it needs an
-  `ID_AA64MMFR1_EL1.PAN` check, and a CI CPU that has the feature (`cortex-a72`
-  does not).
+- ~~**`PSTATE.PAN`.**~~ **Taken.** `SCTLR_EL1.SPAN` is now cleared when
+  `ID_AA64MMFR1_EL1` says the core implements `FEAT_PAN`, so PAN is set on every
+  exception entry and an ordinary EL1 load or store to any page EL0 can reach
+  faults; only `ldtr`/`sttr` succeed, which is exactly what Cookie's user-copy
+  path already used. The feature check is not optional — on a core without
+  `FEAT_PAN` that bit is RES1 and clearing it is CONSTRAINED UNPREDICTABLE.
+  Both halves are gated: the `cortex-a72` run proves the feature-absent path
+  (`COOKIE:M7.13:NO_PAN`) and the EL2 run moved to `-cpu max` so one run
+  actually executes with PAN set (`COOKIE:M7.13:PAN`). That second run is the
+  one that fails if any kernel path still reaches user memory with an ordinary
+  access.
 - **A relocatable image, GICv2, a second UART, SMP.** All in
   `docs/M7_13_HARDWARE_NEUTRALITY.md`, all work rather than defects.
 

@@ -23,6 +23,15 @@ namespace {
 
 } // namespace
 
+bool privileged_access_never_available() noexcept {
+    std::uint64_t mmfr1 = 0ULL;
+    asm volatile("mrs %0, id_aa64mmfr1_el1" : "=r"(mmfr1));
+    // PAN is ID_AA64MMFR1_EL1[23:20]. Zero means not implemented; every
+    // non-zero encoding implements at least the SPAN behaviour Cookie uses, so
+    // this is a "greater than zero" question rather than a version comparison.
+    return ((mmfr1 >> 20U) & 0xFULL) != 0ULL;
+}
+
 os::core::Result<void>
 activate_stage1_translation(std::uint64_t level1_root_physical) noexcept {
     if (!stage1_physical_address(level1_root_physical)) {
@@ -57,7 +66,9 @@ activate_stage1_translation(std::uint64_t level1_root_physical) noexcept {
     // inherited every other one from firmware - including EL0 endianness, stack
     // alignment checking, hardware W^X, and whether EL0 could execute cache
     // maintenance. See cookie_sctlr_el1 for what each of those decides.
-    asm volatile("msr sctlr_el1, %0" :: "r"(cookie_sctlr_el1()) : "memory");
+    asm volatile("msr sctlr_el1, %0"
+                 :: "r"(cookie_sctlr_el1(privileged_access_never_available()))
+                 : "memory");
     asm volatile("isb" ::: "memory");
 
     return {};

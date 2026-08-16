@@ -77,7 +77,7 @@ int main() {
     // bit by bit rather than against one magic number, because the number is
     // not the claim - each bit is a separate decision and a reader has to be
     // able to see which one changed.
-    constexpr auto sctlr = cookie_sctlr_el1();
+    constexpr auto sctlr = cookie_sctlr_el1(false);
     require((sctlr & (1ULL << 0U)) != 0ULL);   // M, translation enabled
     require((sctlr & (1ULL << 2U)) != 0ULL);   // C, data cache
     require((sctlr & (1ULL << 12U)) != 0ULL);  // I, instruction cache
@@ -98,6 +98,19 @@ int main() {
     for (const std::uint64_t res1 : {11U, 20U, 22U, 23U, 28U, 29U}) {
         require((sctlr & (1ULL << res1)) != 0ULL);
     }
+
+    // SPAN. On a core without FEAT_PAN it is RES1 and must stay set; on one
+    // with it, clearing it sets PSTATE.PAN on every exception entry so an
+    // ordinary kernel load or store to any page EL0 can reach faults. Both
+    // values are asserted because the whole point of the parameter is that the
+    // two machines get different answers, and a function that returned the same
+    // one either way would look correct at every call site.
+    require((sctlr & (1ULL << 23U)) != 0ULL);
+    constexpr auto sctlr_pan = cookie_sctlr_el1(true);
+    require((sctlr_pan & (1ULL << 23U)) == 0ULL);
+    // And nothing else moves with it. A parameter that changed a second bit
+    // would be a second decision hiding inside this one.
+    require((sctlr_pan | (1ULL << 23U)) == sctlr);
 
     // Advanced SIMD, FP, SVE and SME trapped at EL0 and EL1. Nothing in Cookie
     // saves or restores V0-V31 across a context switch, so leaving them
