@@ -1213,8 +1213,23 @@ discovery_ceiling=1272
 # Gated by a second QEMU run with virtualization=on, asserting the same
 # milestone set as the EL1 run rather than a subset. Untested boot assembly is
 # how the two defects in docs/M7_13_HARDWARE_NEUTRALITY.md survived.
-entry_ceiling=1772
-total_ceiling=10879
+#
+# Raised for position independence: entry 1,772 -> 1,802.
+#
+# The image is built -fpie and linked -pie, so a phone's bootloader can place it
+# anywhere - the largest remaining item in
+# docs/M7_13_HARDWARE_NEUTRALITY.md. The lines are _start's loop applying the
+# image's own R_AARCH64_RELATIVE relocations before anything reads a global.
+#
+# Fifteen entries, measured rather than assumed: two file-scope objects
+# constructed with pointers to other file-scope objects, and a GOT for symbols
+# defined in assembly that C++ only declares. Eliminating those sources was the
+# alternative and was rejected - it would make "no file-scope object may hold a
+# pointer to another one" a standing constraint on every future line of kernel
+# code, enforced by a link failure far from whatever introduced it. Twenty
+# instructions cost once and constrain nothing.
+entry_ceiling=1802
+total_ceiling=10909
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
