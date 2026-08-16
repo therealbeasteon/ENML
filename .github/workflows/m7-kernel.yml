@@ -160,12 +160,17 @@ jobs:
           # linker's ASSERT on trust.
           echo '--- relocations (must be none) ---'
           readelf -r "$elf" | tee cookie-relocs.txt
-          echo '--- which symbols they name ---'
-          readelf -rW "$elf" | head -40
-          echo '--- GOT contents ---'
-          readelf -x .got "$elf" 2>/dev/null | head -20 || echo 'no .got'
-          echo '--- sections that are not empty ---'
-          readelf -SW "$elf" | grep -E '\.got|\.rela|\.dynamic'
+          # Every relocation must be R_AARCH64_RELATIVE, because that is the only
+          # type _start's loop implements. A type it does not implement is
+          # skipped silently, which leaves one pointer unrelocated while
+          # everything else works - the worst of the available outcomes, and the
+          # reason this is a build gate rather than a comment.
+          if grep -E '^[0-9a-f]{8,}' cookie-relocs.txt | grep -vqE 'R_AARCH64_RELATIV|R_AARCH64_NONE'; then
+            echo 'image contains a relocation type the boot loop does not apply' >&2
+            grep -E '^[0-9a-f]{8,}' cookie-relocs.txt | grep -vE 'R_AARCH64_RELATIV|R_AARCH64_NONE' >&2
+            exit 1
+          fi
+          echo "relocations: $(grep -cE 'R_AARCH64_RELATIV' cookie-relocs.txt) relative, all applied at _start"
           echo '--- ARM64 Image header ---'
           python3 - "$image" "$elf" <<'PYEOF'
           import struct, subprocess, sys

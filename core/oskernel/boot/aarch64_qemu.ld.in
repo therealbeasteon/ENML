@@ -107,8 +107,12 @@ SECTIONS
         *(.rela .rela.*)
         __cookie_rela_end = .;
     } :data
-    /* DIAGNOSTIC ROUND: assertion relaxed so the link completes and CI can
-     * report which relocations exist. Restored in the next commit. */
+    /* Not asserted empty. The first attempt required zero relocations, which
+     * would have made "no file-scope object may hold a pointer to another one"
+     * a standing constraint on every future line of kernel code. _start applies
+     * them instead; what the build asserts is the type, in the workflow, since
+     * the loop implements exactly one and skipping an unimplemented type
+     * silently is the dangerous outcome. */
 
     /* Kept and asserted empty rather than discarded. A -pie link produces these
      * whether or not anything uses them, and discarding an output section the
@@ -119,12 +123,15 @@ SECTIONS
      * Asserting empty says the thing worth saying: every symbol reference in
      * this image is PC-relative, so there is no table of absolute addresses to
      * fix up at load time. -fvisibility=hidden is what makes that true. */
+    /* The GOT is writable data holding absolute addresses, so it is relocated
+     * like everything else rather than eliminated. -fvisibility=hidden removes
+     * most of it; what remains is symbols defined in assembly that C++ only
+     * declares, which the compiler cannot know are local. */
     .got ALIGN(8) : {
         __cookie_got_start = .;
         *(.got .got.plt)
         __cookie_got_end = .;
     } :data
-    /* DIAGNOSTIC ROUND: see above. */
 
     .dynamic ALIGN(8) : { *(.dynamic) } :data
     .dynsym  ALIGN(8) : { *(.dynsym) } :data
