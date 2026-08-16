@@ -175,6 +175,59 @@ os::core::Result<void> aarch64_donate_table_page(
     return arena.donate(static_cast<std::uint64_t>(physical));
 }
 
+os::core::Result<void> aarch64_publish_instructions(
+    std::uintptr_t base,
+    std::size_t length) noexcept {
+    if (length == 0U) return machine_error(machine_errors::invalid_range);
+    const auto start = static_cast<std::uint64_t>(base);
+    const auto span = static_cast<std::uint64_t>(length);
+    if (start > std::numeric_limits<std::uint64_t>::max() - (span - 1ULL)) {
+        return machine_error(machine_errors::invalid_range);
+    }
+    const std::uint64_t end = start + span;
+
+    std::uint64_t ctr = 0ULL;
+    asm volatile("mrs %0, ctr_el0" : "=r"(ctr));
+    // Both fields are log2 of the line size in *words*, so the byte stride is
+    // 4 << field. Encodings that would produce a zero stride cannot happen, but
+    // a zero stride is an infinite loop rather than a wrong answer, so it is
+    // refused rather than trusted.
+    const std::uint64_t data_line = 4ULL << ((ctr >> 16U) & 0xFULL);
+    const std::uint64_t instruction_line = 4ULL << (ctr & 0xFULL);
+    if (data_line == 0ULL || instruction_line == 0ULL) {
+        return machine_error(machine_errors::unsupported);
+    }
+    // IDC: data cache clean to the point of unification is not required for
+    // instruction-to-data coherence. DIC: instruction cache invalidation is
+    // not. Honoured rather than ignored, because on a core that sets them this
+    // whole function collapses to the barriers below - and doing the
+    // maintenance anyway on such a core is pure cost on the path that places
+    // every program.
+    const bool clean_required = ((ctr >> 28U) & 1ULL) == 0ULL;
+    const bool invalidate_required = ((ctr >> 29U) & 1ULL) == 0ULL;
+
+    if (clean_required) {
+        for (std::uint64_t line = start & ~(data_line - 1ULL); line < end;
+             line += data_line) {
+            asm volatile("dc cvau, %0" :: "r"(line) : "memory");
+        }
+        asm volatile("dsb ish" ::: "memory");
+    }
+    if (invalidate_required) {
+        for (std::uint64_t line = start & ~(instruction_line - 1ULL); line < end;
+             line += instruction_line) {
+            asm volatile("ic ivau, %0" :: "r"(line) : "memory");
+        }
+    }
+    // Unconditional, and both of them. The invalidation has to complete before
+    // anything fetches from the range, and the fetch has to be resynchronised
+    // even when neither loop ran - a core with coherent caches still needs the
+    // pipeline to stop using instructions it prefetched from the old contents.
+    asm volatile("dsb ish" ::: "memory");
+    asm volatile("isb" ::: "memory");
+    return {};
+}
+
 os::core::Result<void> aarch64_back_user_page(
     MachineAddressSpace& space,
     std::uintptr_t virtual_base,

@@ -59,7 +59,7 @@ retirement can reach. Asserted per permission and per memory kind in
 a mechanism that is present is not a mechanism that is engaged.** The ASID
 machinery was complete, tested, and documented, and it was tagging nothing.
 
-### Finding 2: instructions are written through a data mapping and never made visible to the instruction fetch
+### Finding 2: instructions were written through a data mapping and never made visible to the instruction fetch (fixed here)
 
 `install_process_a_program`, `..._b_program` and `..._c_program` write A64
 instruction words into a page through a normal writable mapping, and then that
@@ -82,8 +82,19 @@ loader will do — but it is *already* the boot proof's problem, and a loader
 written on top of a kernel with no cache-maintenance primitive will inherit the
 bug rather than introduce it.
 
-Not fixed here: it needs a machine-layer primitive rather than an inline asm
-block in the boot file, and that is one claim per diff.
+Fixed by `aarch64_publish_instructions`, a machine-layer primitive rather than
+an inline asm block in the boot file — because M7.12's loader needs exactly this
+call, and a loader built on a kernel without one inherits the bug rather than
+introducing it.
+
+Two details in it are the interesting part. **Line sizes come from `CTR_EL0`,
+not from 64.** Sixty-four bytes is the common answer and not the architectural
+one, and a stride *larger* than the implementation's line silently skips lines —
+the same defect as omitting the maintenance, but harder to see because it looks
+like it ran. **`CTR_EL0.IDC` and `DIC` are honoured**, so on a core whose caches
+are already coherent for this purpose the function collapses to its barriers
+instead of paying for maintenance nobody needs on the path that places every
+program.
 
 ## What Cookie requires of a machine today
 
@@ -141,7 +152,7 @@ In the order the dependencies fall, not the order of difficulty:
 
 1. **Accept entry at EL2 and drop to EL1.** Without this Cookie does not start
    on the machines it is meant for. It is also the smallest item on this list.
-2. **Cache maintenance primitives.** Finding 2. Needed before any loader.
+2. ~~**Cache maintenance primitives.**~~ Finding 2, done — `aarch64_publish_instructions`.
 3. **A relocatable image.** Until then, "any phone" means "any phone whose RAM
    happens to start where Cookie was linked".
 4. **A second interrupt controller.** GICv2, behind the same discovery seam

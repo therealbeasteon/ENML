@@ -1010,7 +1010,21 @@ core_ceiling=4461
 # stack at the same virtual addresses, so on silicon the incoming process would
 # have reached the outgoing one's memory. QEMU flushes its software TLB on a
 # TTBR write and hid it completely. See docs/M7_13_HARDWARE_NEUTRALITY.md.
-machine_ceiling=3298
+#
+# Raised again for the second defect docs/M7_13_HARDWARE_NEUTRALITY.md named
+# and did not fix: machine 3,298 -> 3,337, entry 1,731 -> 1,741.
+#
+# There was no cache-maintenance instruction anywhere in the kernel, while boot
+# writes A64 words through a writable mapping and then executes them. On a core
+# with split instruction and data caches - every phone - the fetch is free to
+# read whatever was in those lines before. aarch64_publish_instructions is the
+# machine-layer primitive that closes it, and it reads CTR_EL0 for the line
+# sizes rather than assuming 64 bytes, because a stride larger than the
+# implementation's line silently skips lines and looks like it worked.
+#
+# Same shape as the nG defect above: QEMU has no separate instruction cache, so
+# the omission was invisible to every gate Cookie has.
+machine_ceiling=3337
 discovery_ceiling=1272
 #
 # Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry
@@ -1148,8 +1162,8 @@ discovery_ceiling=1272
 # The thread is woken at the end of the M7.11 chain rather than at admission,
 # so a third runnable thread cannot perturb the deliberately uncontested
 # scheduling decisions the contention and pager proofs are built on.
-entry_ceiling=1731
-total_ceiling=10762
+entry_ceiling=1741
+total_ceiling=10811
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

@@ -129,6 +129,35 @@ struct MachineAddressSpace final {
     std::uintptr_t physical_base,
     std::size_t length) noexcept;
 
+// Makes instruction words that were written as data visible to instruction
+// fetch, over a range of currently-translated addresses.
+//
+// Required, not an optimisation. A64 words written through a writable mapping
+// land in the data cache; on a core with separate instruction and data caches -
+// which is every phone - the instruction fetch may read whatever was in that
+// physical line before, and the process executes something nobody wrote. ARMv8
+// puts the obligation on the writer: clean to the point of unification,
+// invalidate the instruction cache for the range, and synchronise.
+//
+// QEMU has no separate instruction cache and invalidates translation blocks on
+// writes, so a kernel that omits this executes correctly under emulation and
+// wrongly on silicon. See docs/M7_13_HARDWARE_NEUTRALITY.md.
+//
+// Line sizes come from CTR_EL0 rather than a constant. 64 bytes is the common
+// answer and it is not the architectural one; a hardcoded stride that is larger
+// than the implementation's line silently skips lines, which is the same defect
+// as not calling this at all but harder to see. CTR_EL0's IDC and DIC bits also
+// say when each half is unnecessary, and are honoured - on a core with coherent
+// caches this becomes a barrier and nothing else.
+//
+// Takes the address as currently translated, because `dc cvau` and `ic ivau`
+// operate on virtual addresses. Boot calls it under the early identity map,
+// where that is the physical address; a loader will call it through whatever
+// mapping it wrote the program with.
+[[nodiscard]] os::core::Result<void> aarch64_publish_instructions(
+    std::uintptr_t base,
+    std::size_t length) noexcept;
+
 [[nodiscard]] os::core::Result<void> aarch64_validate_user_context(
     MachineAddressSpace& space,
     std::uintptr_t entry,
