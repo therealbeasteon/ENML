@@ -214,7 +214,98 @@ inline constexpr std::uint64_t unprivileged_execute_never = 1ULL << 54U;
            (static_cast<std::uint64_t>(ips) << 32U);
 }
 
+// The EL1 control state Cookie runs under, constructed rather than inherited.
+//
+// SCTLR_EL1 used to be read-modify-written: three bits set, every other bit
+// left at whatever firmware or a bootloader happened to leave. That is not a
+// small thing to inherit. Endianness for EL0 (E0E), hardware write-implies-XN
+// (WXN), stack-alignment checking (SA, SA0), whether EL0 may execute cache
+// maintenance (UCI) or read cache geometry (UCT) or zero a line (DZE), and
+// whether EL0 may touch DAIF (UMA) all live here. A kernel whose isolation
+// depends on those has to set them.
+//
+// Three of the choices are security decisions rather than configuration:
+//
+//   * WXN makes "writable implies not executable" an architectural property of
+//     the translation regime rather than a rule the mapping code enforces.
+//     docs/M7_4_KERNEL_HARDENING.md's W^X requirement is checked in software on
+//     every map; this is the same rule stated where it cannot be forgotten.
+//
+//   * UCI, UCT and DZE are cleared, which denies EL0 the cache-maintenance
+//     instructions, the cache geometry to aim them with, and DC ZVA. Those are
+//     the standard Flush+Reload construction kit -
+//     docs/REFERENCE_NOTES_2026_08_16_CACHE_CHANNELS.md describes the attack
+//     they enable on ARM. Cookie has no userland that needs them, so the cost
+//     of withholding them is zero today and the cost of granting them by
+//     inheritance was a side channel nobody chose.
+//
+//   * UMA is cleared, so EL0 cannot read or write DAIF and cannot mask
+//     interrupts to extend its own turn.
+//
+// nTWI and nTWE are set - WFI and WFE from EL0 are *not* trapped - because
+// trapping them requires a handler that does not exist, and a trap with no
+// handler is a halt rather than a policy. Denying EL0 those instructions is
+// worth doing when something can answer them.
+[[nodiscard]] constexpr std::uint64_t cookie_sctlr_el1() noexcept {
+    // ARMv8.0 RES1 bits: 11, 20, 22, 23, 28, 29. Bit 23 is SPAN once FEAT_PAN
+    // exists, and clearing it would set PSTATE.PAN on every exception entry -
+    // which Cookie wants, and which needs an ID_AA64MMFR1_EL1.PAN check before
+    // it can be written, because on a core without the feature the bit is RES1
+    // and clearing it is CONSTRAINED UNPREDICTABLE. Left set here on purpose.
+    constexpr std::uint64_t res1 = 0x30D0'0800ULL;
+    constexpr std::uint64_t mmu_enable = 1ULL << 0U;
+    constexpr std::uint64_t data_cache_enable = 1ULL << 2U;
+    constexpr std::uint64_t stack_alignment_el1 = 1ULL << 3U;
+    constexpr std::uint64_t stack_alignment_el0 = 1ULL << 4U;
+    constexpr std::uint64_t instruction_cache_enable = 1ULL << 12U;
+    constexpr std::uint64_t wfi_not_trapped = 1ULL << 16U;
+    constexpr std::uint64_t wfe_not_trapped = 1ULL << 18U;
+    constexpr std::uint64_t write_implies_execute_never = 1ULL << 19U;
+    return res1 | mmu_enable | data_cache_enable | stack_alignment_el1 |
+           stack_alignment_el0 | instruction_cache_enable | wfi_not_trapped |
+           wfe_not_trapped | write_implies_execute_never;
+}
+
+// Advanced SIMD, floating point, SVE and SME, all trapped at EL0 and EL1.
+//
+// This is a privacy decision and it closes a hole that was described in a
+// comment and enforced nowhere. aarch64_exception.hpp already says of the
+// exception frame: "Silently letting userspace touch V0-V31 without preserving
+// them would create cross-thread information leakage." That is exactly right,
+// and Cookie never wrote CPACR_EL1 - whose FPEN field resets to an
+// architecturally UNKNOWN value and is routinely left enabled by firmware that
+// used floating point itself. A process could have written secrets into V0-V31
+// and the next process could have read them, because nothing saves or restores
+// those registers across a switch and nothing stopped anyone using them.
+//
+// Trapped rather than saved, because trapping is the honest state: Cookie has
+// no FP context-switch policy, and the choice is between refusing the registers
+// and sharing them. An EL0 program that uses FP now takes an exception the
+// kernel reports instead of silently joining a shared register file.
+//
+// Trapped at EL1 as well. The kernel builds with -mgeneral-regs-only and CI
+// rejects any FP register in the image, so this cannot fire today - which is
+// the point: if a future compiler emits one anyway, it stops the kernel loudly
+// rather than corrupting a register file nothing is preserving.
+//
+// TTA traps trace-register access. Cookie uses no trace, and a debug facility
+// EL0 can reach is one it can measure the kernel with.
+[[nodiscard]] constexpr std::uint64_t cookie_cpacr_el1() noexcept {
+    constexpr std::uint64_t trap_trace_access = 1ULL << 28U;
+    // FPEN (21:20), ZEN (17:16) and SMEN (25:24) are all left zero, which is
+    // "trapped at EL0 and EL1" for each. They are named here rather than
+    // omitted so a reader can see that the zero is a decision.
+    return trap_trace_access;
+}
+
 [[nodiscard]] os::core::Result<void>
 activate_stage1_translation(std::uint64_t level1_root_physical) noexcept;
+
+// Writes the execution controls above and verifies they took.
+//
+// Read back rather than assumed, the same way the GICv3 code re-reads SRE: a
+// field that silently refused a write would leave the kernel believing it had
+// denied something it had not, which is worse than never having tried.
+[[nodiscard]] os::core::Result<void> establish_execution_controls() noexcept;
 
 } // namespace os::kernel::aarch64

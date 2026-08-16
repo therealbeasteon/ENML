@@ -1024,7 +1024,25 @@ core_ceiling=4461
 #
 # Same shape as the nG defect above: QEMU has no separate instruction cache, so
 # the omission was invisible to every gate Cookie has.
-machine_ceiling=3337
+#
+# Raised for the EL1 control state Cookie now establishes instead of
+# inheriting: machine 3,337 -> 3,363, entry 1,767 -> 1,768.
+#
+# SCTLR_EL1 was read-modify-written - three bits set, every other bit left at
+# whatever firmware happened to leave. Inherited that way: EL0 endianness,
+# stack-alignment checking, hardware write-implies-XN, whether EL0 may execute
+# cache maintenance (UCI), read cache geometry (UCT) or zero a line (DZE), and
+# whether EL0 may touch DAIF (UMA). The last four are a Flush+Reload
+# construction kit handed to userland by accident - see
+# docs/REFERENCE_NOTES_2026_08_16_CACHE_CHANNELS.md.
+#
+# CPACR_EL1 was never written at all, and its FPEN field resets to an
+# architecturally UNKNOWN value. aarch64_exception.hpp already said that
+# letting userspace touch V0-V31 without preserving them "would create
+# cross-thread information leakage" - and nothing enforced it. FP, SVE and SME
+# are now trapped at EL0 and EL1, which is the honest state for a kernel with
+# no FP context-switch policy: refuse the registers rather than share them.
+machine_ceiling=3363
 discovery_ceiling=1272
 #
 # Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry
@@ -1180,8 +1198,8 @@ discovery_ceiling=1272
 # Gated by a second QEMU run with virtualization=on, asserting the same
 # milestone set as the EL1 run rather than a subset. Untested boot assembly is
 # how the two defects in docs/M7_13_HARDWARE_NEUTRALITY.md survived.
-entry_ceiling=1767
-total_ceiling=10837
+entry_ceiling=1768
+total_ceiling=10864
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
