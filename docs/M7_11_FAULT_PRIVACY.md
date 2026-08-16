@@ -141,11 +141,25 @@ claim.
   does not answer. `docs/M6_2_TIME_PROTECTION.md` owns that axis.
 - **Nothing here defends against a malicious *kernel*.** That is not Cookie's
   threat model; the kernel is the thing being kept small enough to audit.
+- **Microarchitectural channels are untouched, and `sealed` does not reach
+  them.** A Prime+Probe cache attack observes access patterns at cache-line
+  resolution through timing: it uses no page fault, needs no pager, and is
+  unaffected by every decision in this document. This is not hypothetical on
+  Cookie's own target - Li and Jiang demonstrate AES key recovery on Android
+  phones, and cite cross-core ARM attacks that need no root. See
+  `docs/REFERENCE_NOTES_2026_08_16_CACHE_CHANNELS.md`.
 
 The honest summary is a **capacity reduction, not a closure**: from an unbounded
 trace at 4 KiB resolution, to at most two events per region for the region's
-entire lifetime, at a granularity the process chooses. `sealed` takes it to zero
-for the memory that cannot afford even that.
+entire lifetime, at a granularity the process chooses. `sealed` takes *this
+channel* to zero for the memory that cannot afford even two events.
+
+**Read that as narrowly as it is written.** `sealed` means no pager is ever
+asked, so nothing is learned *through the fault path*. It does not mean sealed
+memory is unobservable, and it must not be read that way when deciding where to
+put a key: the cache attack above runs entirely underneath this mechanism and is
+untouched by it. The claim here is about one channel, closed completely, out of
+several that exist.
 
 ## Cost, paid knowingly
 
