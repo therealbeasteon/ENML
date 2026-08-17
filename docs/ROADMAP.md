@@ -29,7 +29,7 @@ and is worth reading before the table:
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
 | Cookie Kernel (M7) | Through M7.13 partially merged; **boots on QEMU virt (at EL1 or EL2, position-independently), schedules isolated EL0 processes across native IPC and timer preemption, creates and destroys address spaces after boot, resolves faults through a userland pager, and runs a thread in a space created after boot** |
 | Program image format (M7.12) | `.ckx` specified, parsed, written and fuzzed — **and nothing loads one** |
-| Syscall ABI (M7.14, M7.15a/b) | Complete on both sides: `core/osabi` encodes 8 of 16 calls, and the kernel answers every call it serves — **and the dispatcher is still a proof scaffold that admits three named threads** |
+| Syscall ABI (M7.14, M7.15a–c) | Complete on both sides: `core/osabi` encodes 8 of 16 calls, the kernel answers every call it serves, and a malformed call is refused rather than halting the machine — **and the dispatcher still admits authority by class rather than by capability** |
 
 Zero `TODO`/`FIXME`/`HACK` markers in the tree. Thirteen CI workflows — twelve
 on every push and pull request, plus nightly fuzzing on a schedule — all green
@@ -874,7 +874,23 @@ emptied whichever path ran second, and the order was safe only by accident.
 Narrowed to x0–x1, which covers every register a result can occupy since
 nothing in the surface returns more than two values.
 
-**M7.15c — authority from capabilities, dispatch from the table.** `cookie_kernel_syscall_
+**M7.15c — a malformed call is refused, not fatal *(the security half
+complete, PR #155)*.** Every malformed system call halted the machine: an
+unknown call number, an authority class this image does not admit, a call with
+no dispatch, a decode failure. `mov x8, #999; svc #0` stopped the whole kernel
+— two instructions, available to the least-privileged code in the system, which
+is exactly the code the capability model exists to confine. Nothing had noticed
+because every EL0 program in the tree is hand-written by the boot proof and
+none issues a bad call; the defect was in what the kernel *would* do the first
+time it ran a program it did not write, which is M7.16. They are refusals now,
+which is what the return convention was built for. One check stays fatal and
+moved first: a thread the image never admitted is the scheduler resuming
+something nothing created, a kernel invariant violation rather than a mistake
+a caller made.
+
+**M7.15d — authority from capabilities, dispatch from the table.** What is left
+of the original M7.15, and it is a cleanup rather than a fix now that the
+security half has landed. `cookie_kernel_syscall_
 entry` moves out of the boot proof and becomes what the ABI table already
 describes: authority checked against the caller's held capabilities rather than
 against a list of three thread ids, and dispatch driven by `describe_call`
