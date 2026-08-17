@@ -29,7 +29,7 @@ and is worth reading before the table:
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
 | Cookie Kernel (M7) | Through M7.13 partially merged; **boots on QEMU virt (at EL1 or EL2, position-independently), schedules isolated EL0 processes across native IPC and timer preemption, creates and destroys address spaces after boot, resolves faults through a userland pager, and runs a thread in a space created after boot** |
 | Program image format (M7.12) | `.ckx` specified, parsed, written and fuzzed — **and nothing loads one** |
-| Syscall ABI, user half (M7.14) | Complete: `core/osabi` encodes 8 of 16 calls and reads a typed answer — **and no dispatcher implements the convention yet** |
+| Syscall ABI (M7.14, M7.15a/b) | Complete on both sides: `core/osabi` encodes 8 of 16 calls, and the kernel answers every call it serves — **and the dispatcher is still a proof scaffold that admits three named threads** |
 
 Zero `TODO`/`FIXME`/`HACK` markers in the tree. Thirteen CI workflows — twelve
 on every push and pull request, plus nightly fuzzing on a schedule — all green
@@ -40,10 +40,12 @@ spend it.
 Cookie can now build an address space for a program, and cannot yet run one.**
 Every mechanism a process needs exists and is CI-proven — spaces, epochs,
 capabilities, IPC, interrupts, faults, entry binding. As of M7.14 compiled code
-can also *express* a kernel call: `core/osabi` encodes eight of the sixteen and
-reads a typed answer back. What is still missing is both ends of the path
-between them — nothing in the kernel dispatches those calls for an arbitrary
-caller (M7.15), and nothing places a program into a space to make them (M7.16).
+can also *express* a kernel call and the kernel can answer one: `core/osabi`
+encodes eight of the sixteen, and as of M7.15b every call the kernel serves
+writes a typed outcome the caller can tell apart from silence. What is still
+missing is the two ends — the dispatcher admits three named threads rather than
+any caller holding the right capability (M7.15c), and nothing places a program
+into a space to make the calls in the first place (M7.16).
 Everything that has ever executed at EL0 on Cookie is still `uint32_t`
 instruction words written into a page by `aarch64_boot.cpp`. That gap is the
 critical path for the entire product, and Phase 2c below exists to name it.
@@ -57,7 +59,9 @@ caller only if that caller is one of the three specific threads the boot proof
 created. This is the right shape for a proof — it fails loudly rather than
 falling through to a wrong answer, which is why the refusals are written out
 one by one — and it is the wrong shape for a system that runs programs it did
-not hard-code. Turning it into a table-driven dispatcher is M7.15.
+not hard-code. Turning it into a table-driven dispatcher is M7.15c — M7.15a
+and M7.15b have since given it a return convention to dispatch *with*, which is
+the half that had to be decided before the half that can be refactored.
 
 Three statements that must stay attached to any claim about Cookie:
 
@@ -854,11 +858,30 @@ declared and never engaged:
   dispatched from the table first, every bounded receive would silently have
   become unbounded.
 
-**M7.15 — a dispatcher rather than a proof scaffold.** `cookie_kernel_syscall_
+**M7.15a/b — the kernel answers *(complete, PRs #152 and #153)*.** The return
+convention M7.14 defined now has a producer. `os::kernel::aarch64::answer`/
+`refuse` are the only place the outcome register is written, and every result
+site is converted: five in the IPC path, ten in the boot proof, and nine
+redirects that had to learn to forget the previous call's answer. Proven under
+`kernel-arm64-native`, not only on the host.
+
+Converting found a defect in the writer, which is what converting is for. It
+cleared x0–x3, on the reasoning that results occupy the registers arguments
+arrived in. **x2 and x3 are not result registers for any call** — they carry
+out-of-band delivery, a driver's interrupt service and a pager's region, riding
+back on a wakeup so that being told costs no syscall. Clearing them would have
+emptied whichever path ran second, and the order was safe only by accident.
+Narrowed to x0–x1, which covers every register a result can occupy since
+nothing in the surface returns more than two values.
+
+**M7.15c — authority from capabilities, dispatch from the table.** `cookie_kernel_syscall_
 entry` moves out of the boot proof and becomes what the ABI table already
 describes: authority checked against the caller's held capabilities rather than
-against a list of thread ids, and dispatch driven by `describe_call` rather than
-by a chain of `if`s. The M7.10 line count is the thing to watch here — this
+against a list of three thread ids, and dispatch driven by `describe_call`
+rather than by a chain of `if`s. The paths that still `halt()` on a malformed
+call — unknown call number, wrong authority, a failed decode — become refusals
+here; they are proof invariants about hand-written EL0 programs, which is right
+for a proof and wrong for a system that runs programs it did not write. The M7.10 line count is the thing to watch here — this
 moves lines from `entry` into `core`, and the categories are separately capped
 precisely so that cannot happen silently.
 
