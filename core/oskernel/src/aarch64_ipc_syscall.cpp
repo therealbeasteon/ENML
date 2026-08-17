@@ -1,5 +1,7 @@
 #include <os/kernel/aarch64_ipc_syscall.hpp>
 
+#include <os/kernel/syscall_outcome.hpp>
+
 #include <cstddef>
 #include <span>
 
@@ -172,8 +174,7 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
             translations,
             epochs);
         if (!wrote) return wrote.error();
-        frame.x[0] = received.value().reply.transaction;
-        frame.x[1] = received.value().request.size;
+        answer(frame, received.value().reply.transaction, received.value().request.size);
         return IpcSvcResult{.reschedule = false, .completed = true};
     }
 
@@ -192,7 +193,10 @@ os::core::Result<IpcSvcResult> dispatch_ipc_svc_current(
             decoded.value().transaction,
             response.value());
         if (!replied) return replied.error();
-        frame.x[0] = 0U;
+        // No value. The zero this used to write into x0 was a placeholder for
+        // "nothing to say" and was indistinguishable from a result of zero;
+        // answer() says it in the register that means it.
+        answer(frame);
         return IpcSvcResult{.reschedule = true, .completed = true};
     }
 
@@ -223,8 +227,7 @@ os::core::Result<bool> complete_ipc_current(
         // sender left empty - there was no sender, and inventing a
         // distinguishable encoding here would leak that the wait ended for a
         // reason other than a message.
-        frame.x[0] = 0U;
-        frame.x[1] = 0U;
+        answer(frame);
         return true;
     }
 
@@ -245,8 +248,7 @@ os::core::Result<bool> complete_ipc_current(
             translations,
             epochs);
         if (!wrote) return wrote.error();
-        frame.x[0] = received.value().reply.transaction;
-        frame.x[1] = received.value().request.size;
+        answer(frame, received.value().reply.transaction, received.value().request.size);
         return true;
     }
 
@@ -272,8 +274,7 @@ os::core::Result<bool> complete_ipc_current(
         epochs);
     if (!wrote) return wrote.error();
 
-    frame.x[0] = response.value().size;
-    frame.x[1] = 0U;
+    answer(frame, response.value().size);
     return true;
 }
 

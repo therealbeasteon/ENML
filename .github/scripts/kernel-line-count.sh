@@ -951,7 +951,26 @@ not_kernel=(
 # answer?" is checkable by reading one file instead of twenty call sites. The
 # call sites themselves are M7.15b and until they land the kernel still answers
 # nothing.
-core_ceiling=4526
+#
+# Raised by M7.15b, which converts the call sites M7.15a built the writer for:
+# core 4,526 -> 4,528, entry 1,802 -> 1,823, total 10,974 -> 10,994. `machine`
+# falls by 3 - the IPC completion paths write one call instead of two register
+# assignments in five places.
+#
+# The 21 entry lines are the boot proof's ten result writes becoming answers or
+# refusals, the nine `clear_outcome` calls on redirect (a frame the kernel
+# redirects never passes through the user stub that would zero x7, and an
+# inherited "answered" would make a path that fails to answer look like it
+# succeeded), and two boot-local refusal codes - `pool_full` and
+# `destroy_refused` had no Error to refuse with and were being reported as
+# x0 = 0, a value indistinguishable from a capability id of zero.
+#
+# The 2 core lines are `max_result_registers`. Converting found that the writer
+# was clearing too much: x2 and x3 are argument registers that no call uses for
+# results, and they carry out-of-band delivery - a driver's interrupt service, a
+# pager's region. Clearing them would have emptied whichever of the two ran
+# first, and the current order is only accidentally safe.
+core_ceiling=4528
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -1252,8 +1271,8 @@ discovery_ceiling=1272
 # pointer to another one" a standing constraint on every future line of kernel
 # code, enforced by a link failure far from whatever introduced it. Twenty
 # instructions cost once and constrain nothing.
-entry_ceiling=1802
-total_ceiling=10974
+entry_ceiling=1823
+total_ceiling=10994
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

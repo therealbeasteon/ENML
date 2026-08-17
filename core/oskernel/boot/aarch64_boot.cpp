@@ -11,6 +11,7 @@
 #include <os/kernel/aarch64_gic_v3.hpp>
 #include <os/kernel/aarch64_interrupt_syscall.hpp>
 #include <os/kernel/aarch64_ipc_syscall.hpp>
+#include <os/kernel/syscall_outcome.hpp>
 #include <os/kernel/aarch64_kernel_mapping_manifest.hpp>
 #include <os/kernel/aarch64_page_tables.hpp>
 #include <os/kernel/aarch64_preemption.hpp>
@@ -47,6 +48,21 @@ extern "C" char __cookie_data_start[];
 extern "C" char __bss_end[];
 
 namespace {
+
+// Refusals this boot harness issues on its own account, rather than passing on
+// one a kernel component produced.
+//
+// They exist because the return convention has no way to say "refused, reason
+// withheld": a refusal carries an Error and these two conditions had none, so
+// before M7.15b they were reported as x0 = 0 - a value indistinguishable from a
+// capability id of zero and from a result of zero. Numbered above the kernel's
+// own ranges so a caller reading a domain of `kernel` and one of these codes
+// can tell it came from the harness.
+namespace boot_syscall_errors {
+inline constexpr std::uint32_t pool_full = 900U;
+inline constexpr std::uint32_t destroy_refused = 901U;
+} // namespace boot_syscall_errors
+
 using os::kernel::HardwareRange;
 using os::kernel::MachineMemoryKind;
 using os::kernel::MachinePermissions;
@@ -807,6 +823,12 @@ void disarm_stand_in_device_source() noexcept {
         // bare svc does not set them itself.
         frame.elr_el1 = interrupt_complete_entry_virtual;
         frame.x[0] = boot_device_interrupt_cap;
+        // Redirected into a fresh call, so the outcome of the last one must
+        // not survive into it. The user stub zeroes x7 before its own svc;
+        // a frame the kernel redirects never passes through that, and an
+        // inherited "answered" would make a path that fails to answer look
+        // like it succeeded. See docs/M7_14_SYSCALL_ABI.md.
+        os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::interrupt_complete);
         uart_write("COOKIE:M7.9:SERVICED\n");
     } else if (next == process_a_thread && el0_yield_count == 4U &&
@@ -818,6 +840,7 @@ void disarm_stand_in_device_source() noexcept {
         device_driver_attach_started = true;
         frame.elr_el1 = interrupt_attach_entry_virtual;
         frame.x[0] = boot_device_interrupt_cap;
+        os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::interrupt_attach);
     } else if (next == process_a_thread && device_proof_complete && el0_space_stage == 0U) {
         // The device proof concluded. Send A to create an address space -
@@ -827,6 +850,7 @@ void disarm_stand_in_device_source() noexcept {
         frame.elr_el1 = address_space_create_entry_virtual;
         frame.x[0] = el0_space_authority;
         frame.x[1] = el0_space_root_grant;
+        os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_create);
     } else if (next == process_a_thread && el0_space_stage == 1U &&
                el0_space_capability != os::kernel::invalid_capability) {
@@ -837,6 +861,7 @@ void disarm_stand_in_device_source() noexcept {
         el0_space_stage = 2U;
         frame.elr_el1 = address_space_destroy_entry_virtual;
         frame.x[0] = el0_space_capability;
+        os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_destroy);
     } else if (next == process_a_thread && el0_space_stage == 2U) {
         // Create again, with the *same* memory capability A used the first
@@ -857,6 +882,7 @@ void disarm_stand_in_device_source() noexcept {
         frame.elr_el1 = address_space_create_entry_virtual;
         frame.x[0] = el0_space_authority;
         frame.x[1] = el0_space_root_grant;
+        os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_create);
     } else if (next == process_a_thread && el0_space_stage == 3U &&
                el0_space_capability != os::kernel::invalid_capability) {
@@ -865,6 +891,7 @@ void disarm_stand_in_device_source() noexcept {
         el0_space_stage = 4U;
         frame.elr_el1 = address_space_destroy_entry_virtual;
         frame.x[0] = el0_space_capability;
+        os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::address_space_destroy);
     } else if (next == boot_pager_thread && boot_fault_deliveries.armed(next) &&
                !pager_question_delivered) {
@@ -884,6 +911,7 @@ void disarm_stand_in_device_source() noexcept {
         // allowed to know; there is deliberately no register holding the
         // faulting address.
         frame.x[2] = static_cast<std::uint64_t>(question.value().region);
+        os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::fault_supply);
     } else if (next == process_a_thread && el0_space_stage == 4U && !fault_probe_armed) {
         // Last, because it ends the run: send A to touch an address inside a
@@ -1269,7 +1297,7 @@ extern "C" void cookie_kernel_syscall_entry(
         auto backing = boot_kernel.memory_for_capability(
             current, decoded.value().backing, os::kernel::memory_right_map, boot_grants);
         if (!backing) {
-            frame->x[0] = 0ULL;
+            os::kernel::aarch64::refuse(*frame, backing.error());
             uart_write("COOKIE:M7.11:SUPPLY_REFUSED\n");
             return;
         }
@@ -1279,7 +1307,7 @@ extern "C" void cookie_kernel_syscall_entry(
         // space unprompted.
         auto answered = boot_fault_deliveries.answer(current);
         if (!answered) {
-            frame->x[0] = 0ULL;
+            os::kernel::aarch64::refuse(*frame, answered.error());
             uart_write("COOKIE:M7.11:SUPPLY_UNASKED\n");
             return;
         }
@@ -1311,7 +1339,10 @@ extern "C" void cookie_kernel_syscall_entry(
             halt();
         }
         fault_backed = true;
-        frame->x[0] = 1ULL;
+        // The 1 this used to write was a stand-in for "it worked", which the
+        // outcome register now says. A pager learns nothing else - deliberately,
+        // since the address it backed is the disclosure this path withholds.
+        os::kernel::aarch64::answer(*frame);
         uart_write("COOKIE:M7.11:PAGER_BACKED\n");
 
         // Tell the scheduler now rather than waiting for a timer, because
@@ -1350,14 +1381,17 @@ extern "C" void cookie_kernel_syscall_entry(
         // answer the caller gets rather than a machine that stops.
         auto* slot = free_el0_address_space();
         if (slot == nullptr) {
-            frame->x[0] = 0ULL;
+            os::kernel::aarch64::refuse(
+                *frame,
+                os::core::make_error(
+                    os::core::ErrorDomain::kernel, boot_syscall_errors::pool_full));
             uart_write("COOKIE:M7.11:EL0_POOL_FULL\n");
             return;
         }
         auto created = create_el0_address_space(
             *slot, current, decoded.value().authority, decoded.value().root_grant);
         if (!created) {
-            frame->x[0] = 0ULL;
+            os::kernel::aarch64::refuse(*frame, created.error());
             // With the code, because "refused" alone cost a CI round trip to
             // turn into "attach_arena rejected an arena that is empty by
             // construction". A refusal a caller can act on is also one a
@@ -1368,7 +1402,7 @@ extern "C" void cookie_kernel_syscall_entry(
             return;
         }
         el0_space_capability = created.value();
-        frame->x[0] = created.value();
+        os::kernel::aarch64::answer(*frame, created.value());
         ++el0_space_creates;
         uart_write("COOKIE:M7.11:EL0_CREATED\n");
         // Announced separately because it is a different claim. The first
@@ -1386,11 +1420,15 @@ extern "C" void cookie_kernel_syscall_entry(
             halt();
         }
         if (!destroy_el0_address_space(current, decoded.value().space)) {
-            frame->x[0] = 0ULL;
+            os::kernel::aarch64::refuse(
+                *frame,
+                os::core::make_error(
+                    os::core::ErrorDomain::kernel,
+                    boot_syscall_errors::destroy_refused));
             uart_write("COOKIE:M7.11:EL0_DESTROY_REFUSED\n");
             return;
         }
-        frame->x[0] = 1ULL;
+        os::kernel::aarch64::answer(*frame);
         uart_write("COOKIE:M7.11:EL0_DESTROYED\n");
         return;
     }
@@ -1517,7 +1555,11 @@ extern "C" void cookie_kernel_syscall_entry(
             os::kernel::aarch64::gic_v3_set_ppi_masked(
                 boot_gic.redistributor, boot_gic.device_intid, false);
         }
-        frame->x[0] = completed.value() ? 1ULL : 0ULL;
+        // Whether the source needs another service pass is information the
+        // driver acts on, so it stays a result value rather than being folded
+        // into the outcome: "the call succeeded" and "the device is still
+        // asserting" are different facts and a driver needs both.
+        os::kernel::aarch64::answer(*frame, completed.value() ? 1ULL : 0ULL);
         uart_write("COOKIE:M7.9:COMPLETED\n");
         // Releases M7.11's redirect chain. It waits for this rather than
         // running alongside, so a failure in either proof cannot be mistaken
@@ -1609,7 +1651,9 @@ extern "C" void cookie_kernel_syscall_entry(
     }
 
     if (el0_yield_count == 0U) {
-        frame->x[0] = syscall_return_cookie;
+        // Read back at the next yield to prove register state survived a
+        // syscall round trip, so the cookie stays a result value.
+        os::kernel::aarch64::answer(*frame, syscall_return_cookie);
         el0_yield_count = 1U;
         return;
     }
@@ -1774,6 +1818,7 @@ extern "C" void cookie_aarch64_irq_dispatch(
         frame->x[0] = boot_client_ipc_cap;
         frame->x[1] = ipc_client_exchange;
         frame->x[2] = ipc_request_size;
+        os::kernel::aarch64::clear_outcome(*frame);
         frame->x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::send);
     }
 
@@ -1828,6 +1873,7 @@ extern "C" void cookie_aarch64_irq_dispatch(
         frame->x[0] = boot_server_ipc_cap;
         frame->x[1] = ipc_server_exchange;
         frame->x[2] = 0U;
+        os::kernel::aarch64::clear_outcome(*frame);
         frame->x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::receive);
         uart_write("COOKIE:M7.6:IPC_RECEIVER_FIRST\n");
     }
