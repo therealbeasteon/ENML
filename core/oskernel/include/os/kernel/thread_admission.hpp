@@ -13,6 +13,16 @@ inline constexpr std::uint32_t invalid_capability = 320U;
 inline constexpr std::uint32_t invalid_stack = 321U;
 inline constexpr std::uint32_t identifier_exhausted = 322U;
 inline constexpr std::uint32_t creation_incomplete = 323U;
+// The space has nothing executable in it, so there is nowhere for a thread to
+// begin. Under docs/M7_16_ENTRY_FROM_REGION.md an entry is not something a
+// caller supplies; it is the base of the space's executable region, and a space
+// without one is not yet runnable rather than malformed.
+inline constexpr std::uint32_t no_executable_region = 324U;
+// The sealed root's entry is not the base of the space's executable region.
+// Nothing legitimate produces this: the seal is supposed to transcribe the
+// derived entry, so a disagreement means something named an entry of its own -
+// which is exactly the move entry binding exists to refuse.
+inline constexpr std::uint32_t entry_not_region_base = 325U;
 } // namespace thread_admission_errors
 
 // Where kernel-issued thread identifiers start.

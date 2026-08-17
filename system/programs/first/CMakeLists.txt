@@ -25,10 +25,10 @@ endif()
 # the kernel boot image that maps the region and seals the entry. They are not
 # defaulted here, and the linker script no longer defaults them either: a build
 # that fails to supply one must fail, not link at a second opinion.
-if(NOT DEFINED COOKIE_FIRST_PROGRAM_BASE OR NOT DEFINED COOKIE_FIRST_ENTRY_OFFSET)
+if(NOT DEFINED COOKIE_FIRST_PROGRAM_BASE)
     message(FATAL_ERROR
-        "COOKIE_FIRST_PROGRAM_BASE and COOKIE_FIRST_ENTRY_OFFSET are declared by "
-        "the top-level CMakeLists.txt and are what keep this program's link "
+        "COOKIE_FIRST_PROGRAM_BASE is declared by "
+        "the top-level CMakeLists.txt and is what keeps this program's link "
         "address and the kernel's mapped region from being two statements of one "
         "address. Building this directory without them would produce a program "
         "linked somewhere the kernel does not map.")
@@ -100,7 +100,6 @@ target_link_options(cookie_first_program PRIVATE
     -Wl,--build-id=none
     -Wl,--gc-sections
     -Wl,--defsym,COOKIE_FIRST_PROGRAM_BASE=${COOKIE_FIRST_PROGRAM_BASE}
-    -Wl,--defsym,COOKIE_FIRST_ENTRY_OFFSET=${COOKIE_FIRST_ENTRY_OFFSET}
     -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/first_program.ld)
 set_target_properties(cookie_first_program PROPERTIES
     LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/first_program.ld)

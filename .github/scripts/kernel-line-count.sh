@@ -1035,7 +1035,26 @@ not_kernel=(
 #
 # ExecutableRegionTable is fixed-size like every other table here, so a caller
 # cannot grow it and a syscall cannot fail for want of kernel memory.
-core_ceiling=4764
+# Raised by the admission half of entry-from-region: core 4,764 -> 4,778, entry
+# 2,021 -> 2,023, total 11,428 -> 11,444.
+#
+# thread_admit no longer reads the entry out of the sealed root. It derives it
+# from the space's executable region and refuses two things it could not refuse
+# before: a space with nothing executable in it (a loader between creating a
+# space and mapping its text, which is a real intermediate state and must be
+# distinguishable from a capability it does not hold), and a sealed root whose
+# entry is not that region's base.
+#
+# The second is the enforcement, and it is worth being exact about which line
+# does the work. Sealing still happens before admission and still takes an
+# entry, so the sealed root carries a value somebody wrote. Under this design
+# that value is a *transcription* of the region base rather than an independent
+# choice - so the two agreeing is the invariant, and a disagreement means
+# something named an entry of its own. Removing that check is caught by test.
+# Returning the derived value rather than the seal's copy is defence in depth
+# and provably makes no difference while the check holds, which is what its
+# comment claims rather than more.
+core_ceiling=4778
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -1437,8 +1456,8 @@ discovery_ceiling=1272
 # inside the kernel, and one that completes - see the comment at the call site
 # for why TTBR0-only translation makes a target space's tables the caller's
 # problem.
-entry_ceiling=2021
-total_ceiling=11428
+entry_ceiling=2023
+total_ceiling=11444
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
