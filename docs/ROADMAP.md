@@ -30,7 +30,7 @@ and is worth reading before the table:
 | Cookie Kernel (M7) | Through M7.13 partially merged; **boots on QEMU virt (at EL1 or EL2, position-independently), schedules isolated EL0 processes across native IPC and timer preemption, creates and destroys address spaces after boot, resolves faults through a userland pager, and runs a thread in a space created after boot** |
 | First compiled program (M7.16a/b) | Written, built, embedded in the boot artefact, and **running at EL0**, proven by a witness it folds at run time |
 | Program image format (M7.12) | `.ckx` specified, parsed, written and fuzzed — **and nothing loads one** |
-| Syscall ABI (M7.14, M7.15a–c) | Complete on both sides: `core/osabi` encodes 9 of 16 calls, the kernel answers every call it serves, and a malformed call is refused rather than halting the machine — **and the dispatcher still admits authority by class rather than by capability** |
+| Syscall ABI (M7.14, M7.15a–c) | Complete on both sides: `core/osabi` encodes 10 of 16 calls, the kernel answers every call it serves, and a malformed call is refused rather than halting the machine — **and the dispatcher still admits authority by class rather than by capability** |
 
 Zero `TODO`/`FIXME`/`HACK` markers in the tree. Thirteen CI workflows — twelve
 on every push and pull request, plus nightly fuzzing on a schedule — all green
@@ -474,11 +474,11 @@ milestone document move in the same diff, or two of the three are wrong.
 
 | Category | Ceiling |
 | --- | --- |
-| core — privileged portable runtime | 4,778 |
+| core — privileged portable runtime | 4,852 |
 | machine — the AArch64 port, including the physical ledger's reservation table | 3,374 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
 | entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter, the first compiled program's placement and witness check, the EL0 map dispatch | 2,023 |
-| **total** | **11,444** |
+| **total** | **11,514** |
 
 `core` is the figure comparable to QNX's 605 — but only measured QNX's own way, by semicolons, and only for a kernel of the same scope. Both corrections landed 2026-08-14 (`docs/REFERENCE_NOTES_2026_08_14_QNX.md`): `core` is 1,607 semicolons, **2.7×** the 605, and QNX's microkernel excludes memory management entirely — it lives in `Proc`, a user-space resource manager of 3,924 semicolons. Neither correction moved a ceiling. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -1046,9 +1046,23 @@ region per address space.** Cookie had already accepted that without writing it
 down, because `docs/M7_12_FIRST_PROGRAM.md` refuses dynamic linking outright and
 a program carrying its own copy of all its code has one text region.
 
-*Also still to come:* `unmap`, deliberately not symmetric with `map` and needing
-its own decision about whether a caller may unmap a mapping it did not
-establish; and the loader itself.
+*Increment three, `unmap` (`docs/M7_16_UNMAP.md`):* the question `map` deferred,
+answered. It matters because **unmap followed by map is replace** - M7.16c made
+`map` unable to rewrite a live mapping, and that protection is worth exactly
+what `unmap` lets it be worth. Two decisions: unmapping requires the **backing**
+capability as well as the space, because a principal may undo only what it could
+have done, so holding a space is permission to give memory to it and never to
+take memory out of it - which is what stops a pager unmapping the process it
+services; and **the executable region is never unmappable**, by anyone, for the
+space's whole life, because a principal that could unmap it and map another at
+the same address would have chosen what runs at the entry of a program it did
+not write. Reclaiming it means destroying the space, which already zeroes what
+it releases.
+
+*Still to come:* the loader itself. Every call it needs now exists -
+`address_space_create`, `map`, `thread_create` with an entry it does not supply
+- and what remains is EL0 dispatch for the two that lack it, and the program
+that executes a `.ckx` plan against them.
 
 The startup contract was decided ahead of the code in
 `docs/M7_16_FIRST_PROGRAM_CONTRACT.md`, the same order M7.11 used for the

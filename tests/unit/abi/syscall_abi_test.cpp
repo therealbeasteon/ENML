@@ -279,6 +279,36 @@ int main() {
                    "map's permissions did not survive encode/decode")) return 1;
     }
 
+    // --- unmap. Three registers, and the third is a capability rather than a
+    // length. The trailing-zero assertion is again the interesting half: there
+    // is nowhere to put an extent, which is what makes the grant the only thing
+    // that can state one.
+    {
+        const os::kernel::UnmapSyscall original{
+            static_cast<os::kernel::CapabilityId>(marker_capability),
+            marker_address,
+            static_cast<os::kernel::CapabilityId>(marker_backing),
+        };
+        auto encoded = os::abi::encode_unmap(original);
+        if (!check(static_cast<bool>(encoded), "unmap refused encoding")) return 1;
+        if (!check(trailing_registers_zero(encoded.value(), 3U),
+                   "unmap carried a register beyond its three - a length would "
+                   "arrive exactly here")) return 1;
+
+        auto decoded = os::kernel::decode_unmap_syscall(
+            encoded.value().arguments[0],
+            encoded.value().arguments[1],
+            encoded.value().arguments[2]);
+        if (!check(static_cast<bool>(decoded),
+                   "the kernel rejected what the stub encoded for unmap")) return 1;
+        if (!check(decoded.value().space == original.space,
+                   "unmap's space did not survive encode/decode")) return 1;
+        if (!check(decoded.value().virtual_address == original.virtual_address,
+                   "unmap's virtual address did not survive encode/decode")) return 1;
+        if (!check(decoded.value().backing == original.backing,
+                   "unmap's backing did not survive encode/decode")) return 1;
+    }
+
     // --- yield takes nothing, and still writes the whole register set.
     // "Takes nothing" and "leaves whatever was there" are different statements.
     {

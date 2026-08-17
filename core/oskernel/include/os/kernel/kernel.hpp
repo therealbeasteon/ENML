@@ -224,6 +224,26 @@ public:
         const MemoryGrantAuthority& grants,
         const ExecutableRegionTable& executables) const noexcept;
 
+    // The `unmap` call's authority half, and the asymmetry with map_authorize
+    // is the design rather than an oversight.
+    //
+    // It requires the same two capabilities map does - the space and the
+    // backing - because **a principal may undo only what it could have done**.
+    // Holding a space is permission to give memory to it, never permission to
+    // take memory out of it, which is what keeps a pager from unmapping the
+    // process it pages for. See docs/M7_16_UNMAP.md.
+    //
+    // And it refuses the space's executable region outright, by anyone. unmap
+    // followed by map is replace, and for that one region replacement is
+    // substituting the code a program begins at - M7.12's attack arriving after
+    // the front door was closed. The way to reclaim it is to destroy the space.
+    [[nodiscard]] os::core::Result<UnmapAuthorization> unmap_authorize(
+        ThreadId caller,
+        const UnmapSyscall& request,
+        const AddressSpaceEpochAuthority& epochs,
+        const MemoryGrantAuthority& grants,
+        const ExecutableRegionTable& executables) const noexcept;
+
     // Two phases, because retirement genuinely has two. begin invalidates the
     // software epoch so nothing new can bind to the space, and only then may
     // the machine layer tear down translations and invalidate TLBs; complete

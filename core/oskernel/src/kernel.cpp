@@ -567,6 +567,55 @@ os::core::Result<MapAuthorization> Kernel::map_authorize(
     };
 }
 
+os::core::Result<UnmapAuthorization> Kernel::unmap_authorize(
+    ThreadId caller,
+    const UnmapSyscall& request,
+    const AddressSpaceEpochAuthority& epochs,
+    const MemoryGrantAuthority& grants,
+    const ExecutableRegionTable& executables) const noexcept {
+    // The same right map needs, and no new one. The split M7.12 drew was
+    // between furnishing memory and running code, and this is not within it.
+    auto identity = address_space_identity_for_capability(
+        caller, request.space, capabilities_, address_space_right_hold);
+    if (!identity) return identity.error();
+
+    auto epoch = epochs.resolve(identity.value());
+    if (!epoch) return epoch.error();
+
+    // The backing, and this is the half that makes unmapping a narrower
+    // authority than holding a space. A caller that holds the space and not the
+    // memory in it is refused - which is a pager, exactly.
+    auto backing = memory_for_capability(
+        caller, request.backing, memory_right_map, grants);
+    if (!backing) return backing.error();
+
+    // The executable region is never unmappable, by anyone, for the space's
+    // whole life. Checked after the capabilities rather than before, so that a
+    // caller which holds nothing learns that first and does not get to probe
+    // where a space's text is by the shape of the refusal.
+    auto region = executables.region_for(identity.value());
+    if (region && region.value().base == request.virtual_address) {
+        return os::core::Result<UnmapAuthorization>{
+            os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                map_syscall_errors::executable_region_immutable)};
+    }
+
+    const auto length = backing.value().length;
+    if (length > UINT64_MAX - request.virtual_address) {
+        return os::core::Result<UnmapAuthorization>{
+            os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                map_syscall_errors::range_overflows)};
+    }
+
+    return UnmapAuthorization{
+        .space = identity.value(),
+        .virtual_base = request.virtual_address,
+        .length = length,
+    };
+}
+
 os::core::Result<AddressSpaceCreation> Kernel::address_space_create(
     ThreadId creator,
     CapabilityId authority,

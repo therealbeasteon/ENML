@@ -1054,7 +1054,36 @@ not_kernel=(
 # Returning the derived value rather than the seal's copy is defence in depth
 # and provably makes no difference while the check holds, which is what its
 # comment claims rather than more.
-core_ceiling=4778
+# Raised by `unmap`: core 4,778 -> 4,852, total 11,444 -> 11,514. The last of
+# the declared-and-unbuilt memory calls, and the one docs/M7_16_MAP.md
+# deliberately deferred because it raises a question mapping does not.
+#
+# The question was whether a caller may unmap a mapping it did not establish,
+# and it matters because **unmap followed by map is replace**. M7.16c made `map`
+# unable to rewrite a live mapping - it fills absent translations only - and
+# that protection is worth exactly what unmap lets it be worth. Worse than
+# permissions: a principal that could unmap a space's executable region and map
+# another at the same address would have chosen what runs at the entry of a
+# program it did not write, which is M7.12's attack arriving after the front
+# door was closed.
+#
+# Two decisions, both here. **Unmapping requires the backing capability as well
+# as the space** - the same two mapping required, because a principal may undo
+# only what it could have done. Holding a space is permission to give memory to
+# it, never permission to take memory out of it, which is what stops a pager
+# unmapping the process it services. And **the executable region is never
+# unmappable**, by anyone, for the space's whole life; the way to reclaim it is
+# to destroy the space, which already zeroes what it releases.
+#
+# Both are mutation-tested rather than asserted: dropping the region refusal
+# produces "the executable region was unmapped", and dropping the backing
+# requirement produces "a holder of the space without the backing unmapped it".
+#
+# The declared argument_count of 3 turned out to be correct, checked rather than
+# assumed - the encoder consults describe_call, so a wrong count is a failing
+# test. That check exists because the last encoder written against this table
+# found the count wrong and wrong since before the kernel existed.
+core_ceiling=4852
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -1457,7 +1486,7 @@ discovery_ceiling=1272
 # for why TTBR0-only translation makes a target space's tables the caller's
 # problem.
 entry_ceiling=2023
-total_ceiling=11444
+total_ceiling=11514
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
