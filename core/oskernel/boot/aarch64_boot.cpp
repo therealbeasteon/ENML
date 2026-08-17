@@ -145,19 +145,23 @@ constexpr std::uint64_t c_code_virtual =
 constexpr std::uint64_t c_stack_virtual = c_code_virtual + 0x1'0000ULL;
 static_assert(c_code_virtual % page_size == 0ULL,
               "the code region is mapped a page at a time, so its base is a page base");
-// Where the space says execution begins - a fixed distance into the region,
-// not at its base. The bytes at the base are a decoy that carries a different
-// witness, so a kernel that entered at the start of the mapping rather than at
-// the sealed entry is caught by the check rather than passing silently. The
-// construction is M7.12's; what changed in M7.16 is that both halves are now
-// compiled functions rather than hand-assembled words, and they are told apart
-// by arithmetic instead of by a constant.
-constexpr std::uint64_t c_entry_virtual =
-    c_code_virtual + static_cast<std::uint64_t>(COOKIE_FIRST_ENTRY_OFFSET);
+// Where execution begins, and it is the base of the region.
+//
+// It used to be a fixed distance into the region, with a decoy at the base
+// carrying a different witness so that a kernel entering at the start of the
+// mapping rather than at the sealed entry was caught. That guarded against an
+// entry other than the one intended; docs/M7_16_ENTRY_FROM_REGION.md removes
+// the possibility instead. A thread begins at the base of its space's
+// executable region, derived by the kernel from its own record, so there is no
+// other address to enter at and nothing left for a decoy to catch.
+//
+// This is not a second definition of the base. It is a name for the same value,
+// kept because "where the code is" and "where execution starts" are different
+// questions that now happen to have one answer, and collapsing the names would
+// hide the day they stop having one.
+constexpr std::uint64_t c_entry_virtual = c_code_virtual;
 static_assert(c_entry_virtual % 4ULL == 0ULL,
               "an A64 instruction is four bytes, so an unaligned entry names a point inside one");
-static_assert(c_entry_virtual - c_code_virtual < page_size,
-              "the entry must be inside the one page the code region is");
 constexpr std::uint64_t runtime_stack_virtual = 0x0000'007F'FEF0'0000ULL;
 constexpr std::uint64_t user_code_virtual = 0x0000'0000'1000'0000ULL;
 constexpr std::uint64_t user_stack_virtual = 0x0000'0000'1001'0000ULL;
@@ -3155,6 +3159,16 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
                 c_pages.value().base + c_donated_pages * page_size),
             static_cast<std::size_t>(page_size),
             MachinePermissions::read_execute)) fail("M7_12_MAP_CODE");
+    // Recorded because this is what makes the space runnable: a thread admitted
+    // into it begins at the base of this region, and thread_admit derives that
+    // rather than being told. Boot maps C's code directly rather than through
+    // the `map` call, so it records the region itself - the same fact, reaching
+    // the same table by the other of the two paths that can create executable
+    // memory. See docs/M7_16_ENTRY_FROM_REGION.md.
+    if (!boot_executables.record(
+            c_created.value().epoch.identity(), c_code_virtual, page_size)) {
+        fail("M7_16_C_EXEC_RECORD");
+    }
     if (!os::kernel::aarch64_map_user_stack(
             c_space,
             static_cast<std::uintptr_t>(c_stack_virtual),
@@ -3179,7 +3193,8 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         c_stack_virtual + page_size,
         c_sealed.value(),
         boot_epochs,
-        boot_translations);
+        boot_translations,
+        boot_executables);
     if (!c_admitted || !c_admitted.value().valid()) fail("M7_12_ADMIT");
     if (c_admitted.value().entry != c_entry_virtual) fail("M7_12_ENTRY");
     c_thread = c_admitted.value().thread;

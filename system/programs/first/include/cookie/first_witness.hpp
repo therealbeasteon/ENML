@@ -56,16 +56,10 @@ static_assert(expected_witness != witness_seed,
               "the fold must transform its input, or the program could pass the "
               "seed straight through and prove nothing");
 
-// Distinct value for the decoy at the base of the code region.
-//
-// The decoy exists so that a kernel entering the mapping at its base rather than
-// at the entry the space's sealed root declares is caught instead of passing
-// silently - the construction M7.12's boot proof introduced and this program
-// keeps. It folds a different seed, so the two are told apart by the same
-// arithmetic rather than by a flag.
-inline constexpr std::uint64_t decoy_seed = 0xC00C'1E00'DEC0'0001ULL;
-inline constexpr std::uint64_t expected_decoy_witness = fold_witness(decoy_seed);
-
-static_assert(expected_decoy_witness != expected_witness);
+// The decoy's seed and witness are gone with the decoy itself. They existed so
+// that a kernel entering the region at its base instead of at the sealed entry
+// carried a value the kernel could tell apart - and under
+// docs/M7_16_ENTRY_FROM_REGION.md the base *is* the entry, so there is no wrong
+// address to arrive from and nothing to distinguish.
 
 } // namespace cookie::first

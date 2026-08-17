@@ -7,6 +7,7 @@
 #include <os/core/error.hpp>
 #include <os/kernel/aarch64_translation_root_sealer.hpp>
 #include <os/kernel/abi.hpp>
+#include <os/kernel/executable_region.hpp>
 #include <os/kernel/kernel.hpp>
 #include <os/kernel/thread_admission.hpp>
 
@@ -70,6 +71,7 @@ int main() {
     Kernel kernel{};
     AddressSpaceEpochAuthority epochs{};
     ProcessTranslationTable translations{};
+    ExecutableRegionTable executables{};
     if (!check(static_cast<bool>(kernel.create_thread(creator, 7U)),
                "the creator could not be created")) return 1;
     if (!check(static_cast<bool>(kernel.create_thread(stranger, 7U)),
@@ -91,7 +93,7 @@ int main() {
     // A stack of zero names nothing. It is the only thing this layer checks of
     // it - whether it is mapped is the fault path's question.
     if (!check(refused(kernel.thread_admit(creator, created.value().capability, 0ULL,
-                                           root.value(), epochs, translations),
+                                           root.value(), epochs, translations, executables),
                        thread_admission_errors::invalid_stack),
                "a thread was admitted with no stack")) return 1;
 
@@ -103,14 +105,56 @@ int main() {
         creator, created.value().capability, stranger, address_space_right_hold, false);
     if (!check(static_cast<bool>(held), "hold could not be derived")) return 1;
     if (!check(refused(kernel.thread_admit(stranger, held.value(), stack_top,
-                                           root.value(), epochs, translations),
+                                           root.value(), epochs, translations, executables),
                        address_space_syscall_errors::invalid_capability),
                "a holder without the admit right admitted a thread")) return 1;
+
+    // A space with nothing executable in it has nowhere for a thread to begin.
+    //
+    // Checked before the region is recorded, so this is exactly the state a
+    // loader is in between creating a space and mapping its text - a real
+    // intermediate state, which must refuse distinctly rather than look like a
+    // capability it does not hold. docs/M7_16_ENTRY_FROM_REGION.md.
+    if (!check(refused(kernel.thread_admit(creator, created.value().capability, stack_top,
+                                           root.value(), epochs, translations, executables),
+                       thread_admission_errors::no_executable_region),
+               "a thread was admitted into a space with nothing executable")) return 1;
+
+    // Now the space has text, and its base is where a thread begins. The caller
+    // does not name it and has no argument with which to.
+    if (!check(static_cast<bool>(executables.record(
+                   created.value().epoch.identity(), program_entry, 0x1000ULL)),
+               "recording the executable region was refused")) return 1;
+
+    // The seal must transcribe the region base, not name an address of its own.
+    //
+    // This is the case that distinguishes "derived from the region" from "read
+    // out of the seal". Everywhere else in this file the two agree, so nothing
+    // else here would notice if the entry quietly came from the seal again.
+    //
+    // A second space, because a region cannot be recorded twice and re-using
+    // the first would exercise the uniqueness rule instead of this one. The
+    // same sealed root is reused - it carries program_entry - while the second
+    // space's executable region is based a page higher. That disagreement is
+    // what naming an entry of one's own looks like from the kernel's side.
+    {
+        auto other = kernel.address_space_create(creator, authority.value(), epochs);
+        if (!check(static_cast<bool>(other), "second space refused")) return 1;
+        if (!check(static_cast<bool>(executables.record(
+                       other.value().epoch.identity(),
+                       program_entry + 0x1000ULL, 0x1000ULL)),
+                   "recording the second region was refused")) return 1;
+        if (!check(refused(kernel.thread_admit(creator, other.value().capability, stack_top,
+                                               root.value(), epochs, translations,
+                                               executables),
+                           thread_admission_errors::entry_not_region_base),
+                   "a sealed entry that was not the region base was accepted")) return 1;
+    }
 
     const auto threads_before = kernel.live_thread_count();
 
     auto admitted = kernel.thread_admit(
-        creator, created.value().capability, stack_top, root.value(), epochs, translations);
+        creator, created.value().capability, stack_top, root.value(), epochs, translations, executables);
     if (!check(static_cast<bool>(admitted), "admission refused")) return 1;
     if (!check(admitted.value().valid(), "admission returned nothing usable")) return 1;
 
@@ -176,7 +220,7 @@ int main() {
     // binding to the same epoch - and the refusal must not leak a thread.
     const auto after_first = kernel.live_thread_count();
     if (!check(!kernel.thread_admit(creator, created.value().capability, stack_top,
-                                    root.value(), epochs, translations),
+                                    root.value(), epochs, translations, executables),
                "a second thread was admitted to one space")) return 1;
     if (!check(kernel.live_thread_count() == after_first,
                "a refused admission left a thread behind")) return 1;
@@ -197,7 +241,7 @@ int main() {
         creator, created.value().capability, epochs);
     if (!check(static_cast<bool>(retiring), "begin_destroy refused")) return 1;
     if (!check(!kernel.thread_admit(creator, created.value().capability, stack_top,
-                                    root.value(), epochs, translations),
+                                    root.value(), epochs, translations, executables),
                "a thread was admitted into a retiring space")) return 1;
 
     // The decoder. Two arguments, and zero is the only value it can reject.

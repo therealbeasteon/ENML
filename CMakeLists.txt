@@ -93,12 +93,12 @@ endif()
 # region at. It is deliberately one no other space in the image maps, which is
 # what makes "this program ran in the space created for it" provable by the
 # address it executed from.
+# The program's entry is this address. Not "base plus an offset" - there is no
+# offset any more, because docs/M7_16_ENTRY_FROM_REGION.md derives a thread's
+# entry from the base of its space's executable region, so the base *is* the
+# entry and a second number would be a second statement of one address.
 set(COOKIE_FIRST_PROGRAM_BASE "0x21000000" CACHE STRING
-    "Virtual address the boot proof maps the first program's code region at")
-# Not tuned. It only has to be larger than the decoy compiles to, and the linker
-# script's own ASSERT is what enforces that rather than the number being trusted.
-set(COOKIE_FIRST_ENTRY_OFFSET "0x200" CACHE STRING
-    "Offset into the first program's region at which its real entry sits")
+    "Virtual address the boot proof maps the first program's code region at, which is also its entry")
 
 # Where the program's flat image lands, and the third thing both directories need
 # to agree about.

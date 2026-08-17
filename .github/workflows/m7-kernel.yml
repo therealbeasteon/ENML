@@ -421,36 +421,38 @@ jobs:
             exit 1
           fi
 
-          # The two entries must be where the linker script says, because the
-          # kernel's sealed entry is that address. The decoy must be at the base:
-          # its whole purpose is to be what a kernel entering at the base runs.
+          # The entry must be the base of the region, because that is where
+          # the kernel derives it from - docs/M7_16_ENTRY_FROM_REGION.md. There
+          # is no offset to check any more and no decoy to find at the base:
+          # both existed to catch a kernel entering somewhere other than the
+          # sealed entry, and the entry is now the base, so there is nowhere
+          # else to enter.
           #
-          # Both numbers are read out of the top-level CMakeLists.txt, which is
-          # their one definition - the same one the linker script is handed and
-          # the kernel image is compiled against. They used to be written here as
-          # literals, which made this gate a *fourth* statement of an address the
-          # whole design says must have one: it would have kept passing against
-          # its own copy on the day the build moved the program, and this check
-          # exists precisely to notice that.
+          # The base is read out of the top-level CMakeLists.txt, which is its
+          # one definition - the same one the linker script is handed and the
+          # kernel image is compiled against. Written here as a literal it would
+          # be a third statement of an address the design says must have one,
+          # and it would keep passing against its own copy on the day the build
+          # moved the program.
           cmakelists=CMakeLists.txt
           base=$(sed -n 's/^set(COOKIE_FIRST_PROGRAM_BASE "\([^"]*\)".*/\1/p' "$cmakelists")
-          offset=$(sed -n 's/^set(COOKIE_FIRST_ENTRY_OFFSET "\([^"]*\)".*/\1/p' "$cmakelists")
-          if [[ -z "$base" || -z "$offset" ]]; then
+          if [[ -z "$base" ]]; then
             echo "could not read the program's address out of $cmakelists" >&2
             echo "that is this gate failing to run, not the program failing" >&2
             exit 1
           fi
-          decoy=$(nm "$elf" | awk '$3 == "cookie_first_decoy" { print "0x"$1 }')
           entry=$(nm "$elf" | awk '$3 == "cookie_first_entry" { print "0x"$1 }')
-          test -n "$decoy"
           test -n "$entry"
-          echo "decoy=$decoy entry=$entry base=$base offset=$offset"
-          if [[ $((decoy)) -ne $((base)) ]]; then
-            echo "the decoy is not at the base of the region" >&2
+          echo "entry=$entry base=$base"
+          if [[ $((entry)) -ne $((base)) ]]; then
+            echo "the entry is not the base of the region the kernel maps" >&2
             exit 1
           fi
-          if [[ $((entry)) -ne $((base + offset)) ]]; then
-            echo "the real entry is not at the offset the kernel will seal" >&2
+
+          # The decoy is gone and must stay gone: a second entry point at the
+          # base would now be the address the kernel actually enters.
+          if nm "$elf" | grep -qw cookie_first_decoy; then
+            echo 'the decoy symbol is back; the kernel would enter it' >&2
             exit 1
           fi
 

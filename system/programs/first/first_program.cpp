@@ -75,28 +75,27 @@ namespace {
 
 } // namespace
 
-// Two entry points, and the linker script fixes where each one lands.
+// One entry point, and the linker script puts it at the base of the region.
 //
-// The decoy sits at the base of the code region so that a kernel entering the
-// mapping at its base rather than at the address the space's sealed root
-// declares is caught rather than passing silently. It is the same construction
-// M7.12's boot proof introduced with four decoy words, expressed in the same
-// language as the program it guards - and it carries a different witness, so the
-// two are told apart by arithmetic rather than by a flag.
-// Placed by section attribute rather than by link order. Link order is a
-// property of how the object files happen to be listed, and the decoy's position
-// is a security property: it has to be the thing at the base of the region.
+// There were two. A decoy sat at the region base carrying a different witness,
+// so that a kernel entering the mapping at its base rather than at the address
+// the space's sealed root declared was caught rather than passing silently.
+//
+// docs/M7_16_ENTRY_FROM_REGION.md removed the situation rather than the check:
+// a thread now begins at the base of its space's executable region, derived by
+// the kernel from its own record, so there is no second address to enter at.
+// The decoy was guarding against a wrong entry, and a wrong entry is no longer
+// something anything can name.
+//
+// Placed by section attribute rather than by link order, which stays true for
+// the same reason it was true before: link order is a property of how object
+// files happen to be listed, and this function's position is a property the
+// kernel depends on.
 //
 // Written as `[[gnu::section]]` after `extern "C"` rather than as a leading
-// `__attribute__`. GCC rejects the latter here - "attributes are not permitted in
-// this position" - because a GNU attribute may not precede a linkage
-// specification. The C++ attribute form goes exactly where `[[noreturn]]` already
-// goes, which is the position the compiler's own note points at.
-extern "C" [[noreturn, gnu::section(".text.decoy"), gnu::used]]
-void cookie_first_decoy() noexcept {
-    carry(cookie::first::decoy_seed);
-}
-
+// `__attribute__`. GCC rejects the latter here - "attributes are not permitted
+// in this position" - because a GNU attribute may not precede a linkage
+// specification.
 extern "C" [[noreturn, gnu::section(".text.entry"), gnu::used]]
 void cookie_first_entry() noexcept {
     carry(cookie::first::witness_seed);

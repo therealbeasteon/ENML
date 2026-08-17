@@ -24,11 +24,11 @@ so that lines cannot be moved between categories to get under a ceiling:
 
 | Category | Lines | Ceiling | What it is |
 | --- | --- | --- | --- |
-| core | 4,764 | 4,764 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, begin_service delivery to the woken driver, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), context-bound IPC endpoint authorization and generation-checked reply collection, deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the fault-supply call that completes the pager handshake, the generation-bound address-space capability encoding and its create/destroy decoders, the capability-checked address-space create and two-phase destroy, authority over physical memory and the capability encoding that names it, the fault-disclosure region table and the pager handshake it feeds, the ABI, and the entry-bound thread admission that decides where a thread may begin, and the admitted thread state that keeps a thread with no architectural state out of every scheduling decision |
+| core | 4,778 | 4,778 | The privileged portable runtime - address spaces and threads, the rendezvous, capability-checked interrupt attach/detach/complete over dispatch, begin_service delivery to the woken driver, capability transfer bound to execution authority (thread + address-space epoch, not thread alone), context-bound IPC endpoint authorization and generation-checked reply collection, deadline scheduling authority, generation-bound address-space epochs and process translation, native IPC endpoints/continuations/syscalls, the fault-supply call that completes the pager handshake, the generation-bound address-space capability encoding and its create/destroy decoders, the capability-checked address-space create and two-phase destroy, authority over physical memory and the capability encoding that names it, the fault-disclosure region table and the pager handshake it feeds, the ABI, and the entry-bound thread admission that decides where a thread may begin, and the admitted thread state that keeps a thread with no architectural state out of every scheduling decision |
 | machine | 3,371 | 3,374 | The AArch64 port and the `machine.hpp` contract it satisfies, including GICv3 device-PPI mask/unmask, interrupt-delivery completion on resume, synchronous-fault classification (abort class, fault status, translation level), and the physical ledger's reservation table — which ranges hold kernel state, of which kind, and who may map them, and reclamation zeroing a destroyed space’s ranges before releasing them, and the narrow sealed-space backing path demand paging requires, and the sealer binding a program entry into the root it mints, and the nG bit that makes every entry belong to one address space, and the cache maintenance that makes written instructions visible to instruction fetch, and the EL1 control state that is established rather than inherited, including PSTATE.PAN where the core implements it |
 | discovery | 1,272 | 1,272 | Boot-time hardware discovery: FDT parsing, hardware inventory, GICv3 topology, architected timer discovery (physical and virtual PPIs), boot memory planning |
-| entry | 2,021 | 2,021 | Reset vector (including the drop from EL2 to EL1 when firmware hands off there), freestanding memory primitives, the boot routine (including the minimal pre-discovery identity map that closes "the pre-MMU window," below, and the declaration of the page-table arena, the kernel's writable image and its stack as kernel state), syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the decoded fault reporter, the M7.9 end-to-end driver proof, the M7.11 address-space create/destroy proof, its EL0 syscall dispatch, and the paired non-zero-then-zero reclamation check, and the EL0 fault path that asks a pager and resumes the faulting thread, terminating it only when nobody can answer, and the M7.12 proof that admits a thread into a space created after boot and runs it there |
-| **total** | **11,428** | **11,428** | |
+| entry | 2,023 | 2,023 | Reset vector (including the drop from EL2 to EL1 when firmware hands off there), freestanding memory primitives, the boot routine (including the minimal pre-discovery identity map that closes "the pre-MMU window," below, and the declaration of the page-table arena, the kernel's writable image and its stack as kernel state), syscall-entry decode/dispatch of the three interrupt calls, GICv3 device-source IRQ routing, the decoded fault reporter, the M7.9 end-to-end driver proof, the M7.11 address-space create/destroy proof, its EL0 syscall dispatch, and the paired non-zero-then-zero reclamation check, and the EL0 fault path that asks a pager and resumes the faulting thread, terminating it only when nobody can answer, and the M7.12 proof that admits a thread into a space created after boot and runs it there |
+| **total** | **11,444** | **11,444** | |
 
 `core` is the number the QNX comparison is about. The others are trusted but are
 not what that figure described. Since 2026-08-15 the figure it is held against
@@ -82,13 +82,13 @@ to permit it are one reviewable diff instead of a drift nobody voted for.
 The script prints this on every run, pass or fail, so the distance stays visible
 rather than becoming something the project stopped mentioning:
 
-- `core` is **0.5x its comparable target** — **2,121 semicolons against 4,529**
-  (QNX's microkernel *plus* `Proc`), with **2,408 to spare**.
-- Against the microkernel alone it is **2,121 against 605** — printed too,
+- `core` is **0.5x its comparable target** — **2,127 semicolons against 4,529**
+  (QNX's microkernel *plus* `Proc`), with **2,402 to spare**.
+- Against the microkernel alone it is **2,127 against 605** — printed too,
   because hiding the unflattering number would be the wrong kind of honesty.
   But that half does no memory management and Cookie's does; see below.
-- In this gate's own metric `core` is **4,764 lines**, and the whole trusted
-  image is **11,428 lines / 5,081 semicolons**.
+- In this gate's own metric `core` is **4,778 lines**, and the whole trusted
+  image is **11,444 lines / 5,087 semicolons**.
 - QNX for scale, all semicolons: microkernel **605** *(no memory management)*,
   `Proc` **3,924**, whole OS **15,930**.
 

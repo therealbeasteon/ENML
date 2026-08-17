@@ -666,7 +666,8 @@ os::core::Result<ThreadAdmission> Kernel::thread_admit(
     std::uint64_t stack,
     SealedTranslationRoot root,
     AddressSpaceEpochAuthority& epochs,
-    ProcessTranslationTable& translations) noexcept {
+    ProcessTranslationTable& translations,
+    const ExecutableRegionTable& executables) noexcept {
     if (stack == 0ULL) {
         return os::core::Result<ThreadAdmission>{
             address_space_error(thread_admission_errors::invalid_stack)};
@@ -685,12 +686,43 @@ os::core::Result<ThreadAdmission> Kernel::thread_admit(
     auto epoch = epochs.resolve(identity.value());
     if (!epoch) return os::core::Result<ThreadAdmission>{epoch.error()};
 
-    // The entry is read here and never taken from the caller. `root` is the
-    // machine layer's own lookup of the space named above, so nothing an EL0
-    // caller controls reaches this value. See docs/M7_12_ENTRY_BINDING.md.
     if (!root.valid()) {
         return os::core::Result<ThreadAdmission>{
             address_space_error(thread_admission_errors::invalid_capability)};
+    }
+
+    // Where the thread begins, and it is *derived* rather than read.
+    //
+    // It used to be `root.entry` - the machine layer's own lookup of the space,
+    // which kept it out of a caller's hands but left it as a value somebody had
+    // named at seal time. docs/M7_16_ENTRY_FROM_REGION.md removes the naming
+    // entirely: a thread begins at the base of its space's executable region,
+    // which the kernel recorded when that region was made executable. Nothing
+    // supplies it, so nothing can supply a wrong one.
+    //
+    // A space with nothing executable in it is refused here rather than admitted
+    // to begin nowhere. That is a loader that has not mapped its text yet, and
+    // saying so distinctly is what lets it tell that apart from a capability it
+    // does not hold.
+    auto region = executables.region_for(identity.value());
+    if (!region) {
+        return os::core::Result<ThreadAdmission>{
+            address_space_error(thread_admission_errors::no_executable_region)};
+    }
+    const auto entry = region.value().base;
+
+    // And the seal must agree with the derivation.
+    //
+    // Sealing happens before admission and takes an entry, so the sealed root
+    // carries a value that was written by whoever sealed. Under this design that
+    // value is a *transcription* of the region base, not an independent choice -
+    // so the two agreeing is the invariant, and the two disagreeing means
+    // something named an entry of its own. That is the exact move entry binding
+    // exists to refuse, and it is refused here rather than trusted because a
+    // transcription nothing checks is a second source of truth.
+    if (root.entry() != entry) {
+        return os::core::Result<ThreadAdmission>{
+            address_space_error(thread_admission_errors::entry_not_region_base)};
     }
 
     // Issued rather than accepted. A caller that named its own identifier
@@ -731,7 +763,11 @@ os::core::Result<ThreadAdmission> Kernel::thread_admit(
 
     return ThreadAdmission{
         .thread = issued.value(),
-        .entry = root.entry(),
+        // The derived entry, not the sealed root's copy of it. They were just
+        // checked equal, so the values are the same - and returning the derived
+        // one keeps the region the single source, so that if the check above is
+        // ever loosened this does not quietly become the caller's value again.
+        .entry = entry,
         .stack = stack,
     };
 }

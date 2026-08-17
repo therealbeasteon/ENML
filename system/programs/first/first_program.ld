@@ -30,26 +30,19 @@ ENTRY(cookie_first_entry)
  */
 ASSERT(DEFINED(COOKIE_FIRST_PROGRAM_BASE),
        "COOKIE_FIRST_PROGRAM_BASE was not passed; the build must supply the one address the kernel also maps")
-ASSERT(DEFINED(COOKIE_FIRST_ENTRY_OFFSET),
-       "COOKIE_FIRST_ENTRY_OFFSET was not passed; the build must supply the one offset the kernel also seals")
 
 SECTIONS
 {
     . = COOKIE_FIRST_PROGRAM_BASE;
 
-    /* KEEP, because --gc-sections would otherwise collect the decoy: it is not
-     * reachable from ENTRY and nothing calls it, which is precisely what makes
-     * it a decoy. `[[gnu::used]]` stops the *compiler* discarding it and says
-     * nothing to the linker. The ASSERT at the foot of this file would catch
-     * its absence, but catching it here means the build never gets that far. */
-    .text.decoy : {
-        __cookie_first_decoy_start = .;
-        KEEP(*(.text.decoy))
-        __cookie_first_decoy_end = .;
-    }
-
-    . = COOKIE_FIRST_PROGRAM_BASE + COOKIE_FIRST_ENTRY_OFFSET;
-
+    /* The entry is the base of the region, and there is nothing before it.
+     *
+     * A decoy used to sit here - four words that carried the wrong witness -
+     * so that a kernel entering the mapping at its base rather than at the
+     * sealed entry was caught. docs/M7_16_ENTRY_FROM_REGION.md deletes the
+     * situation it guarded against: the entry *is* the base now, derived by the
+     * kernel from this region rather than named by anyone, so there is no other
+     * address to enter at and nothing for a decoy to catch. */
     .text : {
         __cookie_first_entry_start = .;
         KEEP(*(.text.entry))
@@ -68,11 +61,9 @@ SECTIONS
     }
 }
 
-ASSERT(__cookie_first_decoy_end <= COOKIE_FIRST_PROGRAM_BASE + COOKIE_FIRST_ENTRY_OFFSET,
-       "the decoy overruns the real entry; raise COOKIE_FIRST_ENTRY_OFFSET")
+ASSERT(__cookie_first_entry_start == COOKIE_FIRST_PROGRAM_BASE,
+       "the entry is not the base of the region, which is where the kernel will derive it from")
 
 ASSERT(__cookie_first_program_end - COOKIE_FIRST_PROGRAM_BASE <= 0x1000,
        "the first program no longer fits in one page, which the boot proof's code region is")
 
-ASSERT(DEFINED(cookie_first_decoy),
-       "the decoy entry was discarded; a kernel entering at the base would then run whatever is there")

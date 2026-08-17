@@ -156,9 +156,10 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
             # it. Nothing else of the program's is visible from here.
             ${PROJECT_SOURCE_DIR}/system/programs/first/include)
 
-        # The three facts the boot image needs about the program it carries: its
-        # bytes, where they are mapped, and where its real entry sits. All three
-        # come from the top-level CMakeLists.txt, which is their only definition.
+        # The two facts the boot image needs about the program it carries: its
+        # bytes, and where they are mapped - which is also where its entry is,
+        # because the entry is derived from the region's base. Both come from the
+        # top-level CMakeLists.txt, which is their only definition.
         # The program's linker script is handed the same two addresses and
         # carries no default of its own, so an image that maps the region
         # somewhere the program was not linked cannot be built.
@@ -172,8 +173,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         # declared in system/programs/first, where both targets exist.
         target_compile_definitions(cookie_kernel_aarch64_boot PRIVATE
             COOKIE_FIRST_PROGRAM_IMAGE="${COOKIE_FIRST_PROGRAM_BIN}"
-            COOKIE_FIRST_PROGRAM_BASE=${COOKIE_FIRST_PROGRAM_BASE}
-            COOKIE_FIRST_ENTRY_OFFSET=${COOKIE_FIRST_ENTRY_OFFSET})
+            COOKIE_FIRST_PROGRAM_BASE=${COOKIE_FIRST_PROGRAM_BASE})
         target_compile_features(cookie_kernel_aarch64_boot PRIVATE cxx_std_20)
         # -mstrict-align is required, not a hardening preference.
         #

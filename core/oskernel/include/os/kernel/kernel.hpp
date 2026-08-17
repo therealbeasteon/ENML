@@ -265,7 +265,8 @@ public:
         std::uint64_t stack,
         SealedTranslationRoot root,
         AddressSpaceEpochAuthority& epochs,
-        ProcessTranslationTable& translations) noexcept;
+        ProcessTranslationTable& translations,
+        const ExecutableRegionTable& executables) noexcept;
 
     os::core::Result<Dispatch> dispatch_interrupt(InterruptSource source) noexcept;
     // What begin_service collected the instant this driver was last woken, if
