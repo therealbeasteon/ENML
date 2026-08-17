@@ -14,7 +14,9 @@ only the *order*, the *exit criteria*, and the *honest position* at each phase.
 
 ## Where the project actually is
 
-Measured on `main` at `ed26bf6`, not claimed:
+Measured on `main` at `8d2fa84`, not claimed. The table below was last
+re-measured on 2026-08-17; the paragraph after it is the part that changed most
+and is worth reading before the table:
 
 | Layer | State |
 | --- | --- |
@@ -25,13 +27,34 @@ Measured on `main` at `ed26bf6`, not claimed:
 | Trusted phone shell and product security (M4) | Through M4.15 merged; **exit criteria not all verified** |
 | Verified boot evidence (M5) | Designed and tested; nothing produces the evidence |
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
-| Cookie Kernel (M7) | Through M7.9 merged; **boots on QEMU virt and schedules two isolated EL0 processes across native IPC and timer preemption, and a real driver process attaches to, is woken by, services and completes a device interrupt** |
+| Cookie Kernel (M7) | Through M7.13 partially merged; **boots on QEMU virt (at EL1 or EL2, position-independently), schedules isolated EL0 processes across native IPC and timer preemption, creates and destroys address spaces after boot, resolves faults through a userland pager, and runs a thread in a space created after boot** |
+| Program image format (M7.12) | `.ckx` specified, parsed, written and fuzzed — **and nothing loads one** |
 
-Roughly 49,000 lines of implementation against 29,000 lines of test, both grown
-by the backlog rather than by new work. Zero `TODO`/`FIXME`/`HACK` markers in
-the tree. Thirteen CI workflows — twelve on every push and pull request, plus
-nightly fuzzing on a schedule — all green on `main`. The discipline is real and
-the roadmap should not spend it.
+Zero `TODO`/`FIXME`/`HACK` markers in the tree. Thirteen CI workflows — twelve
+on every push and pull request, plus nightly fuzzing on a schedule — all green
+on `main` (30/30 checks). The discipline is real and the roadmap should not
+spend it.
+
+**The one sentence that describes the position better than the table does:
+Cookie can now build an address space for a program, and cannot yet run one.**
+Every mechanism a process needs exists and is CI-proven — spaces, epochs,
+capabilities, IPC, interrupts, faults, entry binding — and there is still no
+path by which compiled code reaches any of them. Nothing outside
+`core/oskernel` references `KernelCall`; nothing outside it emits `svc`.
+Everything that has ever executed at EL0 on Cookie is `uint32_t` instruction
+words written into a page by `aarch64_boot.cpp`. That gap is now the critical
+path for the entire product, and Phase 2c below exists to name it.
+
+A second finding from the same review, recorded because it is easy to mistake
+for progress: **`cookie_kernel_syscall_entry` is a proof scaffold, not a
+dispatcher.** It lives in `core/oskernel/boot/aarch64_boot.cpp` rather than in
+the kernel proper, it admits four of the ABI's five authority classes and then
+refuses by name every call inside them it has no dispatch for, and it accepts a
+caller only if that caller is one of the three specific threads the boot proof
+created. This is the right shape for a proof — it fails loudly rather than
+falling through to a wrong answer, which is why the refusals are written out
+one by one — and it is the wrong shape for a system that runs programs it did
+not hard-code. Turning it into a table-driven dispatcher is M7.15.
 
 Three statements that must stay attached to any claim about Cookie:
 
@@ -517,16 +540,12 @@ thread alone — so a recycled ASID with a fresh generation is a different
 holder even at the same `ThreadId`. The migration is deliberately
 fail-closed: bound capabilities are unusable through the legacy
 `ThreadId`-only IPC path rather than silently losing their generation
-binding, until M7.8.2 adds the explicit `ExecutionAuthority` IPC path — the
-finer-grained M7.8.1–M7.8.4 breakdown this number comes from is
-`docs/ROADMAP_TO_COMPLETION.md`, superseded by this document but kept as a
-historical record of that breakdown; its own M7.8.3 (trusted syscall
-identity) looks likely already satisfied by the shipped
-`cookie_kernel_syscall_entry`, which resolves the caller from
-`PreemptionCoordinator::running()` rather than a user register, but that is
-unconfirmed by a dedicated test and stated there rather than claimed here.
-Do not read anything else in that file as current — its own "M7.9" names a
-different milestone than this document's. An
+binding, until M7.8.2 adds the explicit `ExecutionAuthority` IPC path. That
+number comes from a four-part breakdown of M7.8 which used to live in
+`docs/ROADMAP_TO_COMPLETION.md`; that file was deleted on 2026-08-17 after its
+last unabsorbed content was carried into this one, and the two parts of the
+breakdown that are still open are now tracked by name in Phase 2c rather than
+in a superseded document. An
 eleventh raise, by M7.9's first increment, closes a gap M6.0 and M7.1 both
 named and deferred: core 3,052 → 3,117, total 7,896 → 7,961.
 `interrupt_attach`, `interrupt_detach` and `interrupt_complete` are now
@@ -784,6 +803,96 @@ imposed once drivers exist.
 
 ---
 
+## Phase 2c — A userland exists (M7.12 toolchain half, M7.14, M7.15) *(active)*
+
+The phase this roadmap did not have, added 2026-08-17 because the review above
+found the work between Phase 2b and Phase 3 was real, sequential, and named
+nowhere. Phase 3 is "move the service layer onto the Cookie Kernel"; it cannot
+start while no program of any kind can run on the Cookie Kernel.
+
+`docs/M7_2_NO_DESTINATION.md` made this point once already and it has narrowed
+rather than gone away. Then it was "there is nowhere to move to". Now there is
+somewhere — spaces can be created, threads admitted, entries bound — and there
+is still no *way* to move, because nothing compiled can reach a kernel call.
+
+The sequence, in dependency order. Each is one reviewable diff and each is
+proven before the next starts:
+
+**M7.14 — the syscall ABI and its stub library.** The EL0 side of `KernelCall`:
+how a compiled program encodes a call into registers, and how it reads what
+comes back. The register encoding for arguments already exists as the kernel's
+decoders; what does not exist anywhere is a *return* convention — the boot proof
+writes `frame->x[0] = 1` or `0` per call site, which is a convention only in the
+sense that one file agrees with itself. Design document
+`docs/M7_14_SYSCALL_ABI.md`. Host-testable in full, which matters: it is the
+last piece of this phase that can be proven without a boot.
+
+**M7.15 — a dispatcher rather than a proof scaffold.** `cookie_kernel_syscall_
+entry` moves out of the boot proof and becomes what the ABI table already
+describes: authority checked against the caller's held capabilities rather than
+against a list of thread ids, and dispatch driven by `describe_call` rather than
+by a chain of `if`s. The M7.10 line count is the thing to watch here — this
+moves lines from `entry` into `core`, and the categories are separately capped
+precisely so that cannot happen silently.
+
+**M7.16 — the loader, and the first compiled program.** A `.ckx` is a plan for
+an address space; the loader is the userland program that executes that plan
+against the calls M7.14 exposes, and then admits a thread. Boot places exactly
+one image, identity-bound per `docs/M7_12_FIRST_PROGRAM.md`. This closes
+M7.12's remaining exit criteria.
+
+**Exit criteria:** a C++ program compiled by this repository, packaged as a
+`.ckx`, placed by boot, loaded into an address space created after boot, makes a
+system call and gets a typed answer back — proven under `kernel-arm64-native`,
+with the M7.10 count reported and every raise justified in the diff that caused
+it. No hand-assembled instruction words anywhere in the path.
+
+**Also open in this phase, from `docs/M7_13_HARDWARE_NEUTRALITY.md`,** and
+sequenced after the above rather than before it because none of it blocks a
+program running: GICv2 (the tree implements GICv3 only), a second UART driver
+(PL011 only — no phone has one), and SMP with PSCI. The last is the largest and
+is called out separately below.
+
+**Two pieces of M7.8 are still open** and are recorded here because the document
+that named them has been deleted and they would otherwise be tracked nowhere:
+
+- **M7.8.2 — context-bound IPC.** Endpoint authorization, pending calls,
+  completed replies and reply seals should consume and record
+  `ExecutionAuthority` wherever identity matters, not `ThreadId`. The migration
+  is currently fail-closed rather than complete: bound capabilities are
+  unusable through the legacy `ThreadId`-only IPC path. *Gate:* a stale
+  generation cannot send, receive, collect a reply, or reuse a transaction or
+  reply relationship after `ThreadId`/ASID recycling.
+- **M7.8.4 — teardown and recycle torture.** Thread, continuation, endpoint,
+  capability, interrupt, scheduler, translation-root and epoch retirement have
+  each been ordered correctly on their own; nothing yet asserts they are
+  ordered correctly *together*, under repetition. *Gate:* no authority survives
+  teardown and reuse, and no ASID is reused before architectural retirement
+  completes.
+
+M7.8.3 (the caller's identity comes from the kernel's own state, never from a
+user register) appears to be satisfied already — `cookie_kernel_syscall_entry`
+resolves the caller from `PreemptionCoordinator::running()` — but no test
+asserts it adversarially, so it is *unconfirmed rather than met*, and M7.15
+should close that in the diff that rewrites the dispatcher, since that is the
+one diff where the property could quietly stop holding.
+
+**SMP is a milestone, not a detail.** Cookie is single-CPU today, has no locks,
+and every "single-CPU for now" comment in the kernel is load-bearing. What that
+defers is not scheduling on more cores; it is per-CPU state, cross-core
+scheduling rules, and a TLB/ASID shootdown protocol — the last of which is a
+correctness requirement for translation retirement, which M7.5e and M7.11 both
+already depend on. This was named in the now-deleted `ROADMAP_TO_COMPLETION.md`
+and had no home in this document; it has one now. It belongs before Phase 4,
+because a board with one core enabled is a board being brought up twice.
+
+**Honest position:** this phase is small in lines and large in consequence.
+Nothing after it is reachable, and it is the first phase where a mistake becomes
+permanent by being depended upon — a syscall return convention and a loader
+contract are both things every later program inherits.
+
+---
+
 ## Phase 3 — Substrate cutover (M8)
 
 Move the service layer off Linux and onto the Cookie Kernel. This is the phase
@@ -895,6 +1004,38 @@ without any platform-private header.
 - Certification, if a target is chosen. `PROJECT_VISION.md` correctly separates
   historical FIPS/NIST references from present-day compliance claims.
 - Long-term maintenance and update policy.
+- **Release engineering**: reproducible builds, signed artefacts, update and
+  recovery images, the manufacturing and provisioning flow, the release-key
+  procedure, and an SBOM with a dependency audit. Carried in from the
+  superseded `ROADMAP_TO_COMPLETION.md`, which was the only document that had
+  it. Reproducibility is not housekeeping here: M5.0's verified-boot evidence
+  and M1.0's content digests both assert that a given input produces a given
+  image, and a build that cannot reproduce its own output cannot support that
+  claim against anyone who did not run it.
+
+---
+
+## What "complete" means
+
+Stated once, because a roadmap with eight phases and no completion definition
+invites each phase to redefine it. Carried in from the superseded
+the now-deleted `ROADMAP_TO_COMPLETION.md`, and left deliberately in one paragraph:
+
+> Cookie is complete for its first production-capable release when a
+> reproducible, signed image boots on the chosen ARM64 target with no Linux
+> kernel underneath it; brings up the Cookie Kernel and its native service
+> graph; provides encrypted persistent storage and the key, package, update and
+> recovery flows above it; reaches the native lock screen and shell; runs
+> sandboxed third-party applications through capability-brokered interfaces
+> only; drives the device hardware a phone requires; passes the adversarial
+> security, fault and recovery, multi-core, performance, power and
+> long-duration reliability gates; and has a documented, repeatable build,
+> flash, update, recovery and release process.
+
+Two things that sentence deliberately does not say. It does not say *feature
+parity* with any other phone operating system — that is not a goal and pursuing
+it would cost the properties that justify the project. And it does not name a
+date, for the reason the estimation note below gives.
 
 ---
 
