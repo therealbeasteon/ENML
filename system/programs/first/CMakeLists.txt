@@ -118,10 +118,29 @@ if(NOT CMAKE_OBJCOPY)
         "bytes a loader places. A silent skip here would leave the verification "
         "step checking a file that was never produced.")
 endif()
+# The path the top-level CMakeLists.txt told the kernel image to embed has to be
+# the path this target actually writes. It assumes CMake's default layout - a
+# target's file lands in its own directory's binary dir - and that assumption is
+# checked here rather than left to be discovered as a build embedding nothing.
+if(NOT COOKIE_FIRST_PROGRAM_BIN STREQUAL
+   "${CMAKE_CURRENT_BINARY_DIR}/cookie_first_program.bin")
+    message(FATAL_ERROR
+        "the boot image is told to embed ${COOKIE_FIRST_PROGRAM_BIN}, and this "
+        "directory writes ${CMAKE_CURRENT_BINARY_DIR}/cookie_first_program.bin")
+endif()
+
 add_custom_command(TARGET cookie_first_program POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O binary
         $<TARGET_FILE:cookie_first_program>
-        $<TARGET_FILE:cookie_first_program>.bin
+        ${COOKIE_FIRST_PROGRAM_BIN}
+    # Declarable now, and it was not before. The earlier note here was right that
+    # BYPRODUCTS cannot name $<TARGET_FILE:x> of the target it decorates - "No
+    # target x" at generate time - but that was an argument against the
+    # *generator expression*, not against declaring the byproduct. With a plain
+    # path there is no such problem, and the declaration is what lets the build
+    # graph know this file has a producer: without it, the boot image's
+    # dependency on these bytes is a file ninja has no rule to make.
+    BYPRODUCTS ${COOKIE_FIRST_PROGRAM_BIN}
     COMMENT "Flattening the first program to the bytes a loader would place")
 
 # The boot image carries those bytes: core/oskernel/boot/first_program_image.S
@@ -155,4 +174,4 @@ add_dependencies(cookie_kernel_aarch64_boot cookie_first_program)
 set_property(
     SOURCE ${PROJECT_SOURCE_DIR}/core/oskernel/boot/first_program_image.S
     DIRECTORY ${PROJECT_SOURCE_DIR}/core/oskernel
-    APPEND PROPERTY OBJECT_DEPENDS $<TARGET_FILE:cookie_first_program>.bin)
+    APPEND PROPERTY OBJECT_DEPENDS ${COOKIE_FIRST_PROGRAM_BIN})

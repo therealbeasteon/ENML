@@ -100,6 +100,22 @@ set(COOKIE_FIRST_PROGRAM_BASE "0x21000000" CACHE STRING
 set(COOKIE_FIRST_ENTRY_OFFSET "0x200" CACHE STRING
     "Offset into the first program's region at which its real entry sits")
 
+# Where the program's flat image lands, and the third thing both directories need
+# to agree about.
+#
+# A plain path rather than $<TARGET_FILE:cookie_first_program>.bin, which is what
+# this was first written as and what broke the build: `OBJECT_DEPENDS` does not
+# expand generator expressions, so ninja was handed the literal string and
+# reported it as a missing file with no rule to make it. `target_compile_
+# definitions` *does* expand them, so the two spellings of one path disagreed
+# about what a path even was - which is the same defect as two spellings of one
+# address, in a different notation.
+#
+# system/programs/first asserts this matches its own binary directory, so the
+# layout assumed here is checked rather than hoped for.
+set(COOKIE_FIRST_PROGRAM_BIN
+    "${PROJECT_BINARY_DIR}/system/programs/first/cookie_first_program.bin")
+
 add_subdirectory(core/oscore)
 add_subdirectory(core/osipc)
 add_subdirectory(core/osservice)
