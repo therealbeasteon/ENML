@@ -188,6 +188,13 @@ struct Refusal final {
 [[nodiscard]] os::core::Result<SyscallRequest> encode_map(
     const os::kernel::MapSyscall& request) noexcept;
 
+// The other half, and note that it takes the *backing* rather than a length -
+// see docs/M7_16_UNMAP.md. That is the authority half of the call, not a way of
+// finding the extent: a caller that holds a space and not the memory in it may
+// not take that memory away.
+[[nodiscard]] os::core::Result<SyscallRequest> encode_unmap(
+    const os::kernel::UnmapSyscall& request) noexcept;
+
 // --- What is deliberately absent.
 //
 // These calls are in the ABI table and have no decoder in the kernel, so their
@@ -199,9 +206,8 @@ struct Refusal final {
 // the table: a call may be implemented or listed here, never both and never
 // neither. Adding a seventeenth call to the ABI without deciding fails that
 // test rather than being discovered at EL0.
-inline constexpr std::array<os::kernel::KernelCall, 7U> calls_without_stubs{
+inline constexpr std::array<os::kernel::KernelCall, 6U> calls_without_stubs{
     os::kernel::KernelCall::thread_exit,
-    os::kernel::KernelCall::unmap,
     os::kernel::KernelCall::interrupt_attach,
     os::kernel::KernelCall::interrupt_detach,
     os::kernel::KernelCall::interrupt_complete,

@@ -33,6 +33,11 @@ inline constexpr std::uint32_t invalid_permissions = 3U;
 // mappable at the address asked for - the sum would leave the address space.
 // Distinct from invalid_address because the address alone was fine.
 inline constexpr std::uint32_t range_overflows = 4U;
+// The caller named the space's executable region. It is never unmappable, by
+// anyone, for the space's whole life - see docs/M7_16_UNMAP.md. Its own code
+// because it is not a permissions failure and a caller can act on the
+// difference: nothing it can acquire will make this call succeed.
+inline constexpr std::uint32_t executable_region_immutable = 5U;
 } // namespace map_syscall_errors
 
 // The same three the machine layer has, and the same three `.ckx` mirrors.
@@ -89,6 +94,27 @@ struct MapSyscall final {
     std::uint64_t x2_backing,
     std::uint64_t x3_permissions) noexcept;
 
+// The `unmap` call. Three arguments, and the third is the authority half.
+//
+// docs/M7_16_UNMAP.md: mapping required holding both the space and the backing,
+// so unmapping requires the same two. **A principal may undo only what it could
+// have done.** A pager holds every space it services and holds none of their
+// backing, so it cannot take memory away from a process it can give memory to -
+// holding a space is permission to give, never permission to take.
+//
+// The extent comes from the grant, exactly as map's does, because machine_unmap
+// needs a length and the alternative is the reconciling check map deleted.
+struct UnmapSyscall final {
+    CapabilityId space {invalid_capability};
+    std::uint64_t virtual_address {0ULL};
+    CapabilityId backing {invalid_capability};
+};
+
+[[nodiscard]] os::core::Result<UnmapSyscall> decode_unmap_syscall(
+    std::uint64_t x0_space,
+    std::uint64_t x1_virtual_address,
+    std::uint64_t x2_backing) noexcept;
+
 // What the kernel resolved, and what the machine layer is to perform.
 //
 // It carries the resolved physical base rather than the capability that named
@@ -102,6 +128,19 @@ struct MapAuthorization final {
     // From the grant, never from the caller. See docs/M7_16_MAP.md.
     std::uint64_t length {0ULL};
     MapPermissions permissions {MapPermissions::read};
+
+    [[nodiscard]] constexpr bool valid() const noexcept {
+        return space.valid() && virtual_base != 0ULL && length != 0ULL;
+    }
+};
+
+// What an authorized unmap resolved to. Deliberately the same shape as a
+// mapping minus the permissions: there is no permission to remove a translation
+// with, and a field carrying one would be a value nothing reads.
+struct UnmapAuthorization final {
+    AddressSpaceIdentity space {};
+    std::uint64_t virtual_base {0ULL};
+    std::uint64_t length {0ULL};
 
     [[nodiscard]] constexpr bool valid() const noexcept {
         return space.valid() && virtual_base != 0ULL && length != 0ULL;

@@ -3,9 +3,9 @@
 namespace os::abi {
 namespace {
 
-// The nine calls this module encodes. Kept beside calls_without_stubs, which
+// The ten calls this module encodes. Kept beside calls_without_stubs, which
 // the test holds against the ABI table so the two partition it exactly.
-constexpr std::array<os::kernel::KernelCall, 9U> calls_with_stubs{
+constexpr std::array<os::kernel::KernelCall, 10U> calls_with_stubs{
     os::kernel::KernelCall::send,
     os::kernel::KernelCall::receive,
     os::kernel::KernelCall::reply,
@@ -15,6 +15,7 @@ constexpr std::array<os::kernel::KernelCall, 9U> calls_with_stubs{
     os::kernel::KernelCall::address_space_destroy,
     os::kernel::KernelCall::fault_supply,
     os::kernel::KernelCall::map,
+    os::kernel::KernelCall::unmap,
 };
 
 static_assert(
@@ -196,6 +197,20 @@ os::core::Result<SyscallRequest> encode_map(
          static_cast<std::uint64_t>(request.backing),
          static_cast<std::uint64_t>(request.permissions)},
         4U);
+}
+
+os::core::Result<SyscallRequest> encode_unmap(
+    const os::kernel::UnmapSyscall& request) noexcept {
+    // Three, and the third is a capability rather than a length. The extent
+    // comes from the grant the backing names, the same way map's does, so there
+    // is no length here for a caller to disagree with the authority about.
+    return encode_call(
+        os::kernel::KernelCall::unmap,
+        {static_cast<std::uint64_t>(request.space),
+         request.virtual_address,
+         static_cast<std::uint64_t>(request.backing),
+         0ULL},
+        3U);
 }
 
 } // namespace os::abi

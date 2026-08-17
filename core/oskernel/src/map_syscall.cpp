@@ -63,4 +63,25 @@ os::core::Result<MapSyscall> decode_map_syscall(
     };
 }
 
+os::core::Result<UnmapSyscall> decode_unmap_syscall(
+    std::uint64_t x0_space,
+    std::uint64_t x1_virtual_address,
+    std::uint64_t x2_backing) noexcept {
+    // Both capabilities, and the backing is not optional. Requiring it is the
+    // authority decision rather than a convenience for finding the length: a
+    // caller that holds a space and not the memory in it may not take that
+    // memory away. See docs/M7_16_UNMAP.md.
+    if (x0_space == 0ULL || x2_backing == 0ULL) {
+        return map_syscall_error(map_syscall_errors::invalid_capability);
+    }
+    if (x1_virtual_address == 0ULL) {
+        return map_syscall_error(map_syscall_errors::invalid_address);
+    }
+    return UnmapSyscall{
+        .space = static_cast<CapabilityId>(x0_space),
+        .virtual_address = x1_virtual_address,
+        .backing = static_cast<CapabilityId>(x2_backing),
+    };
+}
+
 } // namespace os::kernel
