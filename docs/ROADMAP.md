@@ -901,11 +901,30 @@ for a proof and wrong for a system that runs programs it did not write. The M7.1
 moves lines from `entry` into `core`, and the categories are separately capped
 precisely so that cannot happen silently.
 
-**M7.16 — the loader, and the first compiled program.** A `.ckx` is a plan for
-an address space; the loader is the userland program that executes that plan
-against the calls M7.14 exposes, and then admits a thread. Boot places exactly
-one image, identity-bound per `docs/M7_12_FIRST_PROGRAM.md`. This closes
-M7.12's remaining exit criteria.
+**M7.16 — the first compiled program, then the loader.** Boot places exactly
+one image, identity-bound per `docs/M7_12_FIRST_PROGRAM.md`, so the first
+program is not loaded by a loader — it *is* the loader, or the thing that
+starts one. That splits the milestone cleanly, and the first half is the one
+that ends "everything at EL0 is hand-assembled words".
+
+The startup contract is decided ahead of the code in
+`docs/M7_16_FIRST_PROGRAM_CONTRACT.md`, the same order M7.11 used for the
+allocator and M7.12 for entry binding: **a program is handed one capability in
+x0 and nothing else.** No argument vector (a string parser at the least-tested
+moment of a program’s life), no environment (ambient authority made of
+strings), no auxiliary vector (a second description of an address space the
+`.ckx` already declares). Its link address and its plan’s region address are
+derived from one definition, because two statements of one address with only
+one load-bearing is the defect PR #145 already found once.
+
+That document also surfaces something that changes how this is proven: **the
+first program has no UART capability and must never have one**, so the proof
+it ran cannot be a print. It has to be a syscall effect the kernel observes —
+which is the stronger proof anyway, provided the arguments are something a
+constant could not have produced.
+
+The loader — executing a `.ckx` plan against the syscall surface — is the
+second half, and closes M7.12’s remaining exit criteria.
 
 **Exit criteria:** a C++ program compiled by this repository, packaged as a
 `.ckx`, placed by boot, loaded into an address space created after boot, makes a
