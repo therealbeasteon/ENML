@@ -230,6 +230,11 @@ constexpr std::uint64_t pager_supply_entry_virtual =
 // call number placed by complete_after_switch. A never learns it is mapping.
 constexpr std::uint64_t map_entry_virtual =
     user_code_virtual + 24U * sizeof(std::uint32_t);
+// And unmap's, the same bare svc and branch-to-self. A separate entry rather
+// than reusing map's, so a redirect that sets the wrong call number lands
+// somewhere the proof can tell apart rather than issuing the other call.
+constexpr std::uint64_t unmap_entry_virtual =
+    user_code_virtual + 26U * sizeof(std::uint32_t);
 
 // Where A maps, and it is inside *C's* address space rather than its own.
 //
@@ -740,6 +745,8 @@ void install_process_a_program(std::uint64_t physical_page) noexcept {
     // one does.
     words[24] = svc_zero;
     words[25] = branch_self;
+    words[26] = svc_zero;
+    words[27] = branch_self;
 }
 
 void install_process_b_program(std::uint64_t physical_page) noexcept {
@@ -1078,7 +1085,61 @@ void disarm_stand_in_device_source() noexcept {
             os::kernel::MapPermissions::read_write);
         os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::map);
-    } else if (next == process_a_thread && el0_map_stage == 2U &&
+    } else if (next == process_a_thread && el0_map_stage == 2U) {
+        // A second *executable* region in a space that already has one, and it
+        // must be refused.
+        //
+        // C's code is C's executable region, so this asks for a second. The
+        // uniqueness rule is what makes an entry point unnecessary - a thread
+        // begins at the base of the space's executable region, and a space with
+        // two has more than one answer to "where does this begin". Until now
+        // that rule was only ever exercised on the host.
+        //
+        // The address differs from the mapping above, so the refusal is about
+        // the space already being executable rather than about that address
+        // already being mapped. Two different rules, and a proof that cannot
+        // tell them apart proves neither.
+        el0_map_stage = 3U;
+        frame.elr_el1 = map_entry_virtual;
+        frame.x[0] = el0_map_space_cap;
+        frame.x[1] = c_map_proof_virtual + page_size;
+        frame.x[2] = el0_map_backing_cap;
+        frame.x[3] = static_cast<std::uint64_t>(
+            os::kernel::MapPermissions::read_execute);
+        os::kernel::aarch64::clear_outcome(frame);
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::map);
+    } else if (next == process_a_thread && el0_map_stage == 3U) {
+        // Now take the data mapping back. A holds both capabilities the call
+        // needs - the space and the backing - which is the whole authority
+        // question docs/M7_16_UNMAP.md answered: a principal may undo only what
+        // it could have done.
+        el0_map_stage = 4U;
+        frame.elr_el1 = unmap_entry_virtual;
+        frame.x[0] = el0_map_space_cap;
+        frame.x[1] = c_map_proof_virtual;
+        frame.x[2] = el0_map_backing_cap;
+        os::kernel::aarch64::clear_outcome(frame);
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::unmap);
+    } else if (next == process_a_thread && el0_map_stage == 4U) {
+        // And map it again at the same address, which must now *succeed*.
+        //
+        // This is the stage that proves the unmap did something. A call that
+        // returns success and removes no translation is indistinguishable from
+        // one that worked, right up until something depends on the difference -
+        // and `map` fills absent translations only, so a second success here is
+        // only possible if the translation really became absent. The identical
+        // arguments to stage 1, which was refused, are what make the two
+        // outcomes attributable to the unmap between them.
+        el0_map_stage = 5U;
+        frame.elr_el1 = map_entry_virtual;
+        frame.x[0] = el0_map_space_cap;
+        frame.x[1] = c_map_proof_virtual;
+        frame.x[2] = el0_map_backing_cap;
+        frame.x[3] = static_cast<std::uint64_t>(
+            os::kernel::MapPermissions::read_write);
+        os::kernel::aarch64::clear_outcome(frame);
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::map);
+    } else if (next == process_a_thread && el0_map_stage == 5U &&
                !fault_probe_armed) {
         // Last, because it ends the run: send A to touch an address inside a
         // declared region that has no backing. Everything above has already
@@ -1518,14 +1579,18 @@ extern "C" void cookie_kernel_syscall_entry(
     // refusing it would let a caller fall through to the yield tail and get a
     // wrong answer rather than a refusal.
     //
-    // `map` left this list in M7.16c and is dispatched below. `unmap` did not,
-    // and that is a decision rather than a backlog: unmapping raises a question
-    // mapping does not - whether a caller may unmap a mapping it did not
-    // establish - and answering it by whichever way `map` happened to be
-    // written is exactly what naming it here prevents.
+    // `map` and `unmap` have both left this list now. The question unmap
+    // raised - whether a caller may unmap a mapping it did not establish - was
+    // answered in docs/M7_16_UNMAP.md before the dispatch was written, which is
+    // why naming it here rather than admitting the class wholesale mattered.
+    //
+    // Every remaining memory_control call still has no dispatch and is refused
+    // by name, so a caller naming one gets a refusal rather than falling
+    // through to the yield tail and being told something untrue.
     if (call.value().authority == os::kernel::CallAuthority::memory_control &&
         call.value().call != os::kernel::KernelCall::fault_supply &&
-        call.value().call != os::kernel::KernelCall::map) {
+        call.value().call != os::kernel::KernelCall::map &&
+        call.value().call != os::kernel::KernelCall::unmap) {
         refuse_call(
             *frame, boot_syscall_errors::call_not_dispatched, "MEMORY_CONTROL");
         return;
@@ -1710,6 +1775,52 @@ extern "C" void cookie_kernel_syscall_entry(
         return;
     }
 
+    // M7.16: a process takes a mapping back.
+    //
+    // The authority is in Kernel::unmap_authorize - see docs/M7_16_UNMAP.md -
+    // and the two things worth remembering at the call site are that it needs
+    // the *backing* capability as well as the space, because a principal may
+    // undo only what it could have done, and that it refuses the space's
+    // executable region outright, because unmap followed by map is replace.
+    if (call.value().call == os::kernel::KernelCall::unmap) {
+        auto decoded = os::kernel::decode_unmap_syscall(
+            frame->x[0], frame->x[1], frame->x[2]);
+        if (!decoded) {
+            refuse_call(*frame, decoded.error().code, "UNMAP_DECODE");
+            return;
+        }
+        auto authorized = boot_kernel.unmap_authorize(
+            current, decoded.value(), boot_epochs, boot_grants, boot_executables);
+        if (!authorized) {
+            os::kernel::aarch64::refuse(*frame, authorized.error());
+            uart_write("COOKIE:M7.16:EL0_UNMAP_REFUSED code=");
+            uart_write_hex(static_cast<std::uint64_t>(authorized.error().code));
+            uart_write("\n");
+            return;
+        }
+        auto* space = machine_space_for(authorized.value().space);
+        if (space == nullptr) {
+            uart_write("COOKIE:PANIC:M7_16_UNMAP_NO_SPACE\n");
+            halt();
+        }
+        auto removed = os::kernel::machine_unmap(
+            *space,
+            static_cast<std::uintptr_t>(authorized.value().virtual_base),
+            static_cast<std::size_t>(authorized.value().length));
+        if (!removed) {
+            os::kernel::aarch64::refuse(*frame, removed.error());
+            uart_write("COOKIE:M7.16:EL0_UNMAP_REFUSED code=");
+            uart_write_hex(static_cast<std::uint64_t>(removed.error().code));
+            uart_write("\n");
+            return;
+        }
+        // No value, for the reason map answers with none: the caller named the
+        // address, so there is nothing to tell it that it did not say.
+        os::kernel::aarch64::answer(*frame);
+        uart_write("COOKIE:M7.16:EL0_UNMAPPED\n");
+        return;
+    }
+
     // M7.16c: a process establishes a mapping in an address space.
     //
     // The first call in Cookie by which one principal furnishes memory to a
@@ -1768,6 +1879,12 @@ extern "C" void cookie_kernel_syscall_entry(
             if (el0_map_stage == 2U) {
                 uart_write("COOKIE:M7.16:EL0_REMAP_REFUSED\n");
             }
+            // The second executable region, refused. Announced separately
+            // because it is a different rule from the one above and a proof
+            // that reported them with one marker could not say which held.
+            if (el0_map_stage == 3U) {
+                uart_write("COOKIE:M7.16:EL0_SECOND_TEXT_REFUSED\n");
+            }
             uart_write("COOKIE:M7.16:EL0_MAP_REFUSED code=");
             uart_write_hex(static_cast<std::uint64_t>(backed.error().code));
             uart_write("\n");
@@ -1780,6 +1897,13 @@ extern "C" void cookie_kernel_syscall_entry(
         // could pass while the property it exists for had stopped holding.
         if (el0_map_stage == 2U) {
             uart_write("COOKIE:PANIC:M7_16_REMAP_ALLOWED\n");
+            halt();
+        }
+        // A second executable region would mean a space with two answers to
+        // where it begins. Fatal for the same reason the remap is: the caller
+        // did nothing wrong and the kernel did.
+        if (el0_map_stage == 3U) {
+            uart_write("COOKIE:PANIC:M7_16_SECOND_TEXT_ALLOWED\n");
             halt();
         }
         // No value. The caller asked for a mapping at an address it already
@@ -1804,7 +1928,12 @@ extern "C" void cookie_kernel_syscall_entry(
             }
         }
         os::kernel::aarch64::answer(*frame);
-        uart_write("COOKIE:M7.16:EL0_MAPPED\n");
+        // Stage 5 is the same address stage 1 was refused at, so saying so
+        // separately is what turns "unmap returned success" into "unmap removed
+        // the translation".
+        uart_write(el0_map_stage == 5U
+                       ? "COOKIE:M7.16:EL0_REMAPPED_AFTER_UNMAP\n"
+                       : "COOKIE:M7.16:EL0_MAPPED\n");
         return;
     }
 

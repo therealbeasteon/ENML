@@ -1485,8 +1485,32 @@ discovery_ceiling=1272
 # inside the kernel, and one that completes - see the comment at the call site
 # for why TTBR0-only translation makes a target space's tables the caller's
 # problem.
-entry_ceiling=2023
-total_ceiling=11514
+# Raised by unmap's EL0 dispatch and its boot proof: entry 2,023 -> 2,097,
+# total 11,514 -> 11,592.
+#
+# The dispatch is the small half. The lines are mostly the proof, and it puts
+# three properties on the machine that had only ever been checked on the host:
+#
+#   COOKIE:M7.16:EL0_SECOND_TEXT_REFUSED - a second executable region in a space
+#   that already has one is refused. That rule is what makes an entry point
+#   unnecessary, and it had never run on hardware.
+#
+#   COOKIE:M7.16:EL0_UNMAPPED - a process takes a mapping back, holding both the
+#   space and the backing, which is the authority docs/M7_16_UNMAP.md settled.
+#
+#   COOKIE:M7.16:EL0_REMAPPED_AFTER_UNMAP - the same address that was *refused*
+#   at stage 1 now maps. This is the stage that proves the unmap did something.
+#   A call returning success while removing no translation is indistinguishable
+#   from one that worked until something depends on the difference, and `map`
+#   fills absent translations only - so a success here is only possible if the
+#   translation really became absent. Identical arguments to the refused stage
+#   are what make the two outcomes attributable to the unmap between them.
+#
+# Each refusal has its own marker rather than sharing one, because they are
+# different rules - already-mapped and already-executable - and a proof that
+# reported both the same way could not say which held.
+entry_ceiling=2097
+total_ceiling=11592
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
