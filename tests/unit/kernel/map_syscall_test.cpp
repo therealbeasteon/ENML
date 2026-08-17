@@ -315,7 +315,9 @@ int main() {
                            map_syscall_errors::invalid_address),
                    "unmap accepted a zero address")) return 1;
 
-        const UnmapSyscall request{
+        // Named for the call rather than `request`, which is the outer
+        // fixture's map request and still in scope here.
+        const UnmapSyscall unmap_request{
             .space = sp.value().capability,
             .virtual_address = marker_virtual,
             .backing = back.value(),
@@ -323,7 +325,7 @@ int main() {
 
         // A data mapping unmaps, and the extent is the grant's rather than
         // anything the caller said - there is no register for it to say one in.
-        auto ok = k.unmap_authorize(owner, request, e, g, x);
+        auto ok = k.unmap_authorize(owner, unmap_request, e, g, x);
         if (!check(static_cast<bool>(ok), "unmap_authorize refused a valid unmap")) return 1;
         if (!check(ok.value().valid(), "unmap returned an incomplete authorization")) return 1;
         if (!check(ok.value().length == marker_length,
@@ -333,13 +335,13 @@ int main() {
 
         // Holding the space and not the backing. This is the pager, and it is
         // the whole reason the third argument exists.
-        if (!check(!k.unmap_authorize(stranger, request, e, g, x),
+        if (!check(!k.unmap_authorize(stranger, unmap_request, e, g, x),
                    "a caller holding neither capability unmapped")) return 1;
         {
             auto space_only = k.capabilities().grant(
                 owner, sp.value().capability, stranger, address_space_right_hold, false);
             if (!check(static_cast<bool>(space_only), "hold could not be derived")) return 1;
-            UnmapSyscall pager = request;
+            UnmapSyscall pager = unmap_request;
             pager.space = space_only.value();
             if (!check(!k.unmap_authorize(stranger, pager, e, g, x),
                        "a holder of the space without the backing unmapped it - "
@@ -352,13 +354,13 @@ int main() {
         if (!check(static_cast<bool>(x.record(
                        sp.value().epoch.identity(), marker_virtual, marker_length)),
                    "recording the executable region was refused")) return 1;
-        if (!check(refused(k.unmap_authorize(owner, request, e, g, x),
+        if (!check(refused(k.unmap_authorize(owner, unmap_request, e, g, x),
                            map_syscall_errors::executable_region_immutable),
                    "the executable region was unmapped")) return 1;
 
         // A different address in the same space still unmaps: the rule is about
         // the region, not about the space being frozen.
-        UnmapSyscall elsewhere = request;
+        UnmapSyscall elsewhere = unmap_request;
         elsewhere.virtual_address = marker_virtual + 0x10000ULL;
         if (!check(static_cast<bool>(k.unmap_authorize(owner, elsewhere, e, g, x)),
                    "a non-executable mapping was refused because the space had text")) return 1;
