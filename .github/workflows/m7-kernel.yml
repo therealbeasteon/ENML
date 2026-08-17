@@ -303,53 +303,17 @@ jobs:
           # Report the stage the kernel rejected before reporting the marker it
           # never printed. A bare grep for the success marker says only that
           # boot did not finish, which is the one thing already known.
-          if grep -F 'COOKIE:PANIC:' cookie-qemu.log; then
-            echo '--- kernel reported the stage above and halted ---'
-            exit 1
-          fi
-          grep -F 'COOKIE:M7.5d:MMU' cookie-qemu.log
-          grep -F 'COOKIE:M7.5d:GUARDED' cookie-qemu.log
-          grep -F 'COOKIE:M7.5f:EL0_SVC_RETURN' cookie-qemu.log
-          grep -F 'COOKIE:M7.5g:GICV3' cookie-qemu.log
-          grep -F 'COOKIE:M7.5g:TIMER_IRQ' cookie-qemu.log
-          grep -F 'COOKIE:M7.5g:TIMER_IRQ_RETURN' cookie-qemu.log
-          grep -F 'COOKIE:M7.5i:CONTENTION_ARMED' cookie-qemu.log
-          grep -F 'COOKIE:M7.5i:A_TO_B' cookie-qemu.log
-          grep -F 'COOKIE:M7.5i:B_TO_A' cookie-qemu.log
-          grep -F 'COOKIE:M7.5i:ISOLATED_A_B_A' cookie-qemu.log
-          grep -F 'COOKIE:M7.6:IPC_RECEIVER_FIRST' cookie-qemu.log
-          grep -F 'COOKIE:M7.6:IPC_REQUEST_B' cookie-qemu.log
-          grep -F 'COOKIE:M7.6:IPC_A_B_REPLY' cookie-qemu.log
-          grep -F 'COOKIE:M7.9:ATTACHED' cookie-qemu.log
-          grep -F 'COOKIE:M7.9:DISPATCHED' cookie-qemu.log
-          grep -F 'COOKIE:M7.9:SERVICED' cookie-qemu.log
-          grep -F 'COOKIE:M7.9:COMPLETED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:SPACE_CREATED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:SPACE_MAPPED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:SPACE_DESTROYED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:PAGES_ZEROED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:STALE_REFUSED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:EL0_CREATED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:EL0_DESTROYED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:EL0_GRANT_REUSED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:FAULT_REGION' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:FAULT_ASKED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:PAGER_BACKED' cookie-qemu.log
-          grep -F 'COOKIE:M7.11:FAULT_RESUMED' cookie-qemu.log
-          grep -F 'COOKIE:M7.12:THREAD_ADMITTED' cookie-qemu.log
-          grep -F 'COOKIE:M7.12:THREAD_WOKEN' cookie-qemu.log
-          # The M7.12 claim: a thread ran in an address space created after
-          # boot, entering where that space's sealed root said and nowhere
-          # else. The decoy at the base of its code page yields with a
-          # different marker, so entering the mapping anywhere but the sealed
-          # entry halts with COOKIE:PANIC:M7_12_ENTRY rather than printing
-          # this.
-          grep -F 'COOKIE:M7.12:PROCESS_RAN' cookie-qemu.log
-          # cortex-a72 is ARMv8.0 and has no FEAT_PAN, so this run proves
-          # the feature-absent path: SPAN stays RES1 and the kernel says so
-          # rather than clearing a bit that is CONSTRAINED UNPREDICTABLE to
-          # clear. The -cpu max run below proves the other half.
-          grep -F 'COOKIE:M7.13:NO_PAN' cookie-qemu.log
+          # One call, against .github/scripts/cookie-boot-markers.txt. This used to be
+          # thirty-three individual greps here, thirteen in the EL2 step and nine in the
+          # relocated step - three hand-maintained subsets of one fact. The checker also
+          # reports the panic stage before the missing markers, because a run that
+          # panicked usually emitted most of them and listing those buries the cause.
+          #
+          # cortex-a72 is ARMv8.0 and has no FEAT_PAN, so --no-pan is the assertion: SPAN
+          # stays RES1 and the kernel says so rather than clearing a bit that is
+          # CONSTRAINED UNPREDICTABLE to clear. The -cpu max run below proves the other
+          # half with --pan.
+          .github/scripts/check-boot-markers.sh 'kernel-arm64-native' cookie-qemu.log --no-pan
           # The disclosure property itself, checked as an absence: the fault
           # report must name a region and must not name the faulting address.
           # A regression that started printing FAR would still emit the marker
@@ -384,23 +348,19 @@ jobs:
           if [[ $status -ne 0 && $status -ne 124 ]]; then
             exit "$status"
           fi
-          if grep -F 'COOKIE:PANIC:' cookie-qemu-el2.log; then
-            echo '--- kernel reported the stage above and halted after EL2 entry ---'
-            exit 1
-          fi
-          # The same milestones as the EL1 run rather than a reduced set. The
-          # claim is that entering at EL2 produces the same system, and a subset
-          # would let the drop silently cost a subsystem. GICV3 is the one the
-          # drop can break on its own: EL1's ICC_SRE_EL1 write traps to EL2
-          # unless ICC_SRE_EL2.Enable was set first, and the GIC code fails
-          # closed when it does.
-          for marker in             COOKIE:M7.5d:MMU             COOKIE:M7.5d:GUARDED             COOKIE:M7.5f:EL0_SVC_RETURN             COOKIE:M7.5g:GICV3             COOKIE:M7.5g:TIMER_IRQ             COOKIE:M7.5i:ISOLATED_A_B_A             COOKIE:M7.6:IPC_A_B_REPLY             COOKIE:M7.9:COMPLETED             COOKIE:M7.11:STALE_REFUSED             COOKIE:M7.11:EL0_GRANT_REUSED             COOKIE:M7.11:FAULT_RESUMED             COOKIE:M7.12:PROCESS_RAN             COOKIE:M7.13:PAN ; do
-            if ! grep -F "$marker" cookie-qemu-el2.log >/dev/null; then
-              echo "EL2 entry did not reach: $marker" >&2
-              exit 1
-            fi
-          done
-          echo 'EL2 entry with PAN enabled reached every milestone the EL1 entry does'
+          # The same milestone set as the EL1 run, and now actually the same one.
+          # This step's own comment used to say "the same milestones as the EL1 run
+          # rather than a reduced set - a subset would let the drop silently cost a
+          # subsystem", directly above a hand-written list of thirteen of the
+          # thirty-three the EL1 step checked. The rule was recorded and the code
+          # below it broke the rule, which is the shape this repository keeps
+          # finding: a mechanism that is present is not a mechanism that is engaged.
+          #
+          # GICV3 is the marker the drop to EL1 can break on its own: EL1's
+          # ICC_SRE_EL1 write traps to EL2 unless ICC_SRE_EL2.Enable was set first,
+          # and the GIC code fails closed when it does. --pan because -cpu max
+          # implements FEAT_PAN, where cortex-a72 does not.
+          .github/scripts/check-boot-markers.sh 'kernel-el2-entry' cookie-qemu-el2.log --pan
       - name: Boot the raw image at an address it was not linked for
         shell: bash
         run: |
@@ -425,14 +385,34 @@ jobs:
           if [[ $status -ne 0 && $status -ne 124 ]]; then
             exit "$status"
           fi
-          if grep -F 'COOKIE:PANIC:' cookie-qemu-reloc.log; then
-            echo '--- kernel reported the stage above and halted when relocated ---'
-            exit 1
-          fi
-          for marker in             COOKIE:M7.5d:MMU             COOKIE:M7.5d:GUARDED             COOKIE:M7.5f:EL0_SVC_RETURN             COOKIE:M7.5g:GICV3             COOKIE:M7.5i:ISOLATED_A_B_A             COOKIE:M7.6:IPC_A_B_REPLY             COOKIE:M7.9:COMPLETED             COOKIE:M7.11:FAULT_RESUMED             COOKIE:M7.12:PROCESS_RAN ; do
-            if ! grep -F "$marker" cookie-qemu-reloc.log >/dev/null; then
-              echo "relocated image did not reach: $marker" >&2
-              exit 1
-            fi
-          done
+          # The full set here too. A relocation defect that left one subsystem's
+          # pointers unrelocated would show up as exactly one missing marker, so the
+          # nine this used to check were the nine least likely to catch it.
+          .github/scripts/check-boot-markers.sh 'kernel-relocated' cookie-qemu-reloc.log --no-pan
           echo 'the image runs at an address it was not linked for'
+      # Uploaded on failure too, and that is the point.
+      #
+      # This job is the project's only real verification and needs an AArch64
+      # host plus a toolchain, so a developer without one could previously do
+      # nothing with a red boot but read the log. The image is what makes the
+      # failure reproducible: `tools/boot-cookie-qemu.sh <elf> el1` boots it
+      # with this job's machine configuration and calls the same marker checker,
+      # so a local run and CI cannot disagree about what booting means.
+      #
+      # The QEMU traces go with it. They are the part that cannot be
+      # reconstructed afterwards - the instruction window around the first
+      # exception is what diagnosed the pre-MMU faults.
+      - name: Publish the boot image and its traces
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cookie-kernel-boot-image
+          if-no-files-found: warn
+          retention-days: 14
+          path: |
+            build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot
+            build/m7-arm64-native/core/oskernel/cookie_kernel_aarch64_boot.bin
+            cookie-qemu.log
+            cookie-qemu-debug.log
+            cookie-qemu-el2.log
+            cookie-qemu-reloc.log

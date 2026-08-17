@@ -1,0 +1,52 @@
+# What proves Cookie booted. One definition, used by every run that boots it.
+#
+# Before this file the list was written three times in m7-kernel.yml: 33 markers
+# for the EL1 entry run, 13 for the EL2 entry run, 9 for the relocated run. So
+# the EL2 path - the one phone bootloaders actually use, per
+# docs/M7_13_HARDWARE_NEUTRALITY.md - was verified against under half the proofs
+# the EL1 path was, and a regression reachable only from an EL2 handoff in any of
+# the twenty-one unlisted subsystems would have passed.
+#
+# That subset is exactly what the EL2 work said must not happen: its own note
+# records gating "the same milestone set as the EL1 run - a subset would let the
+# drop silently cost a subsystem". The intent was written down and the
+# implementation was the subset it warned about, which is this project's
+# recurring shape: a rule recorded, and the mechanism that breaks it left in
+# place.
+#
+# Markers whose presence depends on the CPU rather than on the code are not
+# listed here - PAN is the only one, and check-boot-markers.sh takes it as a flag
+# because `cortex-a72` lacks FEAT_PAN and `-cpu max` has it. A difference that
+# real belongs in an argument, not in a silently shorter list.
+COOKIE:M7.5d:MMU
+COOKIE:M7.5d:GUARDED
+COOKIE:M7.5f:EL0_SVC_RETURN
+COOKIE:M7.5g:GICV3
+COOKIE:M7.5g:TIMER_IRQ
+COOKIE:M7.5g:TIMER_IRQ_RETURN
+COOKIE:M7.5i:CONTENTION_ARMED
+COOKIE:M7.5i:A_TO_B
+COOKIE:M7.5i:B_TO_A
+COOKIE:M7.5i:ISOLATED_A_B_A
+COOKIE:M7.6:IPC_RECEIVER_FIRST
+COOKIE:M7.6:IPC_REQUEST_B
+COOKIE:M7.6:IPC_A_B_REPLY
+COOKIE:M7.9:ATTACHED
+COOKIE:M7.9:DISPATCHED
+COOKIE:M7.9:SERVICED
+COOKIE:M7.9:COMPLETED
+COOKIE:M7.11:SPACE_CREATED
+COOKIE:M7.11:SPACE_MAPPED
+COOKIE:M7.11:SPACE_DESTROYED
+COOKIE:M7.11:PAGES_ZEROED
+COOKIE:M7.11:STALE_REFUSED
+COOKIE:M7.11:EL0_CREATED
+COOKIE:M7.11:EL0_DESTROYED
+COOKIE:M7.11:EL0_GRANT_REUSED
+COOKIE:M7.11:FAULT_REGION
+COOKIE:M7.11:FAULT_ASKED
+COOKIE:M7.11:PAGER_BACKED
+COOKIE:M7.11:FAULT_RESUMED
+COOKIE:M7.12:THREAD_ADMITTED
+COOKIE:M7.12:THREAD_WOKEN
+COOKIE:M7.12:PROCESS_RAN
