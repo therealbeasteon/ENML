@@ -1369,8 +1369,46 @@ discovery_ceiling=1272
 # space with no kernel mappings of their own. Stated here so the exclusion is a
 # decision on the page - the program's source is 100-odd lines and gets its own
 # review under system/programs/first, not silence.
-entry_ceiling=1889
-total_ceiling=11183
+# Raised by M7.16c's second increment: entry 1,889 -> 2,004, total 11,183 ->
+# 11,298. `map` becomes reachable from EL0, and a process establishes a mapping
+# in an address space for the first time.
+#
+# The lines are the dispatch, the machine-side lookup from a resolved identity to
+# the space behind it, and the boot proof. What the dispatch does *not* contain
+# is any decision about who may map - that is Kernel::map_authorize, counted in
+# core by the previous increment, and the split is the one every address-space
+# operation in this image already uses.
+#
+# Two of these lines are the security content and are worth naming, because a
+# reviewer counting lines will otherwise see a dispatch and a marker.
+#
+# The call uses aarch64_back_user_page rather than aarch64_map_user. That
+# primitive can only fill an *absent* translation, never change one - so `map`
+# cannot quietly rewrite the permissions of memory a process is already
+# executing from, and widening or narrowing an existing mapping has to go
+# through an unmap the holder can see. A `map` that could overwrite would defeat
+# W^X with a call that simply succeeded twice.
+#
+# And the proof calls it twice on purpose. The second call carries identical
+# arguments and must be refused (COOKIE:M7.16:EL0_REMAP_REFUSED, gated); a
+# second *success* halts the machine rather than being reported as an ordinary
+# outcome, because the caller would have done nothing wrong and the kernel would
+# have. A property nothing asserts is one that can stop holding without anything
+# going red.
+#
+# The proof's shape is also the loader's. A holds C's space with
+# address_space_right_hold and nothing else - not destroy, not admit - which is
+# what docs/M7_12_ENTRY_BINDING.md described for a principal servicing a space
+# it does not own, and the first time anything in Cookie has held a space it did
+# not create.
+# And by the manifest entry that made it work: entry 2,004 -> 2,011, total
+# 11,298 -> 11,305. Seven lines of manifest range plus its justification. They
+# are the difference between a map call that authorizes correctly and faults
+# inside the kernel, and one that completes - see the comment at the call site
+# for why TTBR0-only translation makes a target space's tables the caller's
+# problem.
+entry_ceiling=2011
+total_ceiling=11305
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

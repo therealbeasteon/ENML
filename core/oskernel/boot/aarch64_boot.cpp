@@ -95,13 +95,26 @@ constexpr std::size_t runtime_stack_pages = 8U;
 // Four table pages plus one page for the created space to map. See the
 // selection site for why they are selected rather than carved from the boot
 // plan's arena.
-constexpr std::size_t dynamic_proof_pages = 7U;
+// The eighth is M7.16c's: the page A maps through the `map` call. Its own page
+// rather than a reuse of one above, for the reason the rest of this comment
+// gives - a proof that passes because of a page another proof left in a
+// particular state has proved something about the other proof.
+constexpr std::size_t dynamic_proof_pages = 8U;
 // Of those, the ones the boot proof donates as translation tables. The next
 // page is what it maps, and the last is kept back for the EL0 proof to name as
 // its own space's root - separate pages throughout, so neither proof can pass
 // because of state the other left behind.
 constexpr std::size_t dynamic_donated_pages = 4U;
 constexpr std::uint64_t dynamic_proof_virtual = 0x0000'0000'2000'0000ULL;
+// The page M7.16c's `map` proof hands over, addressed from the *donated* count
+// rather than from the total. The two pages after it are addressed from the
+// total (dynamic_proof_pages - 1 and - 2), which is why this one is not: an
+// index counted from the end moves whenever the count changes, and this page
+// exists precisely because the count changed once already.
+constexpr std::size_t map_proof_page_index = dynamic_donated_pages + 1U;
+static_assert(map_proof_page_index < dynamic_proof_pages - 2U,
+              "the map proof's page must not be the pager's backing or the "
+              "EL0 proof's root page");
 
 // M7.12's proof: a thread that runs in a space created after boot. Its own
 // pages throughout, separate from the M7.11 proof's, so neither can pass
@@ -208,6 +221,33 @@ constexpr std::uint64_t fault_resume_entry_virtual =
 constexpr std::uint64_t pager_supply_entry_virtual =
     user_code_virtual + 16U * sizeof(std::uint32_t);
 
+// M7.16c redirects A here to issue the `map` call - the same bare svc and
+// branch-to-self every redirect above uses, with all four arguments and the
+// call number placed by complete_after_switch. A never learns it is mapping.
+constexpr std::uint64_t map_entry_virtual =
+    user_code_virtual + 24U * sizeof(std::uint32_t);
+
+// Where A maps, and it is inside *C's* address space rather than its own.
+//
+// That is the point of the proof rather than an incidental choice. A holds C's
+// space with address_space_right_hold and nothing else - not destroy, not
+// admit - which is exactly the shape docs/M7_12_ENTRY_BINDING.md described for
+// a principal that services a space it does not own: it may furnish memory and
+// must not be able to run code there. A loader has that shape, and this is the
+// first time anything in Cookie has held a space it did not create.
+//
+// The address is chosen inside the same 2MB the code and stack regions already
+// occupy, so the mapping needs no new table page. C's arena has spare pages,
+// but "needs none" is a stronger position than "has some" for a proof whose
+// failure would otherwise depend on a donation number in this file.
+constexpr std::uint64_t c_map_proof_virtual = c_code_virtual + 0x2'0000ULL;
+static_assert(c_map_proof_virtual / 0x20'0000ULL == c_code_virtual / 0x20'0000ULL,
+              "the mapped page must share a 2MB region with C's existing "
+              "mappings, or it needs a table page this proof does not donate");
+static_assert(c_map_proof_virtual != c_stack_virtual &&
+                  c_map_proof_virtual != c_code_virtual,
+              "the mapped page must not land on what C is already running from");
+
 // How many address spaces this image can hold at once for spaces created from
 // EL0. Two rather than one so the structure is a pool with a real bound and a
 // real exhaustion answer rather than a single slot pretending to be one; two
@@ -257,6 +297,23 @@ os::kernel::MachineAddressSpace c_space{};
 // hand, and this one is whatever thread_admit handed back.
 os::kernel::ThreadId c_thread = os::kernel::invalid_thread;
 bool c_ran = false;
+// C's space, by identity. The `map` dispatch has to find the MachineAddressSpace
+// behind the identity map_authorize resolved, and C's is not in the EL0 pool -
+// it was built by boot, before any process existed to ask for one.
+os::kernel::AddressSpaceIdentity c_identity{};
+
+// M7.16c: what A is handed so it can map into C's space.
+//
+// Two capabilities, and neither is a physical address or a space identifier. A
+// names authority and the kernel resolves it, which is the property the whole
+// call exists to have - see docs/M7_16_MAP.md.
+os::kernel::CapabilityId el0_map_space_cap = os::kernel::invalid_capability;
+os::kernel::CapabilityId el0_map_backing_cap = os::kernel::invalid_capability;
+// 0 not attempted, 1 mapped, 2 the repeat was refused. Separate from
+// el0_space_stage because it is a different proof that happens to run after it,
+// and folding two state machines into one counter is how a change to either
+// starts perturbing the other.
+std::uint32_t el0_map_stage = 0U;
 
 // The pool spaces created from EL0 live in. A real system needs this in the
 // machine layer with the rest of address-space lifetime; it is here because
@@ -664,6 +721,15 @@ void install_process_a_program(std::uint64_t physical_page) noexcept {
     words[21] = movz_x8_base | (yield_number << 5U);
     words[22] = svc_zero;
     words[23] = branch_self;
+
+    // M7.16c redirects A here to issue `map` - see map_entry_virtual. Four
+    // arguments and a call number, all placed in the frame by
+    // complete_after_switch, so this entry point needs nothing baked into its
+    // own bytes beyond the svc. The same shape as every redirect above, and the
+    // reason a four-argument call needs no more words here than a one-argument
+    // one does.
+    words[24] = svc_zero;
+    words[25] = branch_self;
 }
 
 void install_process_b_program(std::uint64_t physical_page) noexcept {
@@ -963,7 +1029,47 @@ void disarm_stand_in_device_source() noexcept {
         frame.x[2] = static_cast<std::uint64_t>(question.value().region);
         os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::fault_supply);
-    } else if (next == process_a_thread && el0_space_stage == 4U && !fault_probe_armed) {
+    } else if (next == process_a_thread && el0_space_stage == 4U &&
+               el0_map_stage == 0U) {
+        // M7.16c. The address-space chain above has finished, so A is free.
+        // Send it to map a page into C's space - a space it holds and did not
+        // create, with address_space_right_hold and nothing else.
+        //
+        // After that chain rather than inside it, deliberately. Interleaving
+        // would make a failure here indistinguishable from one of M7.11's
+        // stages, and the two proofs share no state precisely so that neither
+        // can pass because of the other.
+        el0_map_stage = 1U;
+        frame.elr_el1 = map_entry_virtual;
+        frame.x[0] = el0_map_space_cap;
+        frame.x[1] = c_map_proof_virtual;
+        frame.x[2] = el0_map_backing_cap;
+        frame.x[3] = static_cast<std::uint64_t>(
+            os::kernel::MapPermissions::read_write);
+        os::kernel::aarch64::clear_outcome(frame);
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::map);
+    } else if (next == process_a_thread && el0_map_stage == 1U) {
+        // The same call again, with the same arguments, and it must be
+        // *refused*.
+        //
+        // This is the half of the proof that says what `map` is not. It fills
+        // absent translations; it does not rewrite live ones. Without this, a
+        // caller holding a space could change the permissions of memory a
+        // process is already executing from - the whole W^X argument, defeated
+        // by a call that succeeded twice. Sending identical arguments is what
+        // makes the second outcome attributable to the mapping already existing
+        // and to nothing else.
+        el0_map_stage = 2U;
+        frame.elr_el1 = map_entry_virtual;
+        frame.x[0] = el0_map_space_cap;
+        frame.x[1] = c_map_proof_virtual;
+        frame.x[2] = el0_map_backing_cap;
+        frame.x[3] = static_cast<std::uint64_t>(
+            os::kernel::MapPermissions::read_write);
+        os::kernel::aarch64::clear_outcome(frame);
+        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::map);
+    } else if (next == process_a_thread && el0_map_stage == 2U &&
+               !fault_probe_armed) {
         // Last, because it ends the run: send A to touch an address inside a
         // declared region that has no backing. Everything above has already
         // reported by now, so a fault here cannot be mistaken for one of them
@@ -1084,6 +1190,25 @@ namespace {
     for (auto& slot : el0_address_spaces) {
         if (slot.occupied && slot.identity == identity) return &slot;
     }
+    return nullptr;
+}
+
+// The machine-side space behind an identity the kernel resolved, from either of
+// the two places one can come from in this image: the EL0 pool, and C's space,
+// which boot built before any process existed to ask for one.
+//
+// Two sources rather than one is a property of a boot proof rather than of the
+// design - a real system has a single place address spaces live. It is written
+// as a lookup rather than as two branches at the call site so that the day a
+// third source appears, the thing that has to change is here and the call site
+// keeps failing closed on nullptr.
+[[nodiscard]] os::kernel::MachineAddressSpace* machine_space_for(
+    os::kernel::AddressSpaceIdentity identity) noexcept {
+    if (!identity.valid()) return nullptr;
+    if (auto* slot = el0_address_space_for(identity); slot != nullptr) {
+        return &slot->space;
+    }
+    if (c_identity.valid() && identity == c_identity) return &c_space;
     return nullptr;
 }
 
@@ -1378,12 +1503,19 @@ extern "C" void cookie_kernel_syscall_entry(
             *frame, boot_syscall_errors::call_not_dispatched, "PROCESS_CONTROL");
         return;
     }
-    // Same rule for memory_control, and the same reason: map and unmap carry
-    // that authority and have no dispatch here, so admitting the class without
-    // refusing them would let a caller fall through to the yield tail and get a
+    // Same rule for memory_control, and the same reason: unmap carries that
+    // authority and has no dispatch here, so admitting the class without
+    // refusing it would let a caller fall through to the yield tail and get a
     // wrong answer rather than a refusal.
+    //
+    // `map` left this list in M7.16c and is dispatched below. `unmap` did not,
+    // and that is a decision rather than a backlog: unmapping raises a question
+    // mapping does not - whether a caller may unmap a mapping it did not
+    // establish - and answering it by whichever way `map` happened to be
+    // written is exactly what naming it here prevents.
     if (call.value().authority == os::kernel::CallAuthority::memory_control &&
-        call.value().call != os::kernel::KernelCall::fault_supply) {
+        call.value().call != os::kernel::KernelCall::fault_supply &&
+        call.value().call != os::kernel::KernelCall::map) {
         refuse_call(
             *frame, boot_syscall_errors::call_not_dispatched, "MEMORY_CONTROL");
         return;
@@ -1564,6 +1696,88 @@ extern "C" void cookie_kernel_syscall_entry(
             uart_write("COOKIE:PANIC:FAULT_RESUME_RESCHEDULE\n");
             halt();
         }
+        return;
+    }
+
+    // M7.16c: a process establishes a mapping in an address space.
+    //
+    // The first call in Cookie by which one principal furnishes memory to a
+    // space it does not own. Everything about who may do it is in
+    // Kernel::map_authorize - see docs/M7_16_MAP.md - and everything here is
+    // the machine half: find the space the resolved identity names, and fill
+    // the translation.
+    if (call.value().call == os::kernel::KernelCall::map) {
+        auto decoded = os::kernel::decode_map_syscall(
+            frame->x[0], frame->x[1], frame->x[2], frame->x[3]);
+        if (!decoded) {
+            refuse_call(*frame, decoded.error().code, "MAP_DECODE");
+            return;
+        }
+        auto authorized = boot_kernel.map_authorize(
+            current, decoded.value(), boot_epochs, boot_grants);
+        if (!authorized) {
+            os::kernel::aarch64::refuse(*frame, authorized.error());
+            // With the code, for the reason EL0_CREATE_REFUSED already records:
+            // a refusal a caller can act on is also one a reader has to be able
+            // to diagnose, and "refused" alone costs a round trip.
+            uart_write("COOKIE:M7.16:EL0_MAP_REFUSED code=");
+            uart_write_hex(static_cast<std::uint64_t>(authorized.error().code));
+            uart_write("\n");
+            return;
+        }
+        auto* space = machine_space_for(authorized.value().space);
+        if (space == nullptr) {
+            // The kernel authorized a mapping in a space this image has no
+            // machine-side record of. That is an invariant violation rather
+            // than a caller's mistake - every identity the epoch table can
+            // resolve was created by one of the two paths machine_space_for
+            // knows - so it halts rather than refusing.
+            uart_write("COOKIE:PANIC:M7_16_MAP_NO_SPACE\n");
+            halt();
+        }
+        // back_user_page rather than map_user, and the difference is a security
+        // property rather than an implementation detail: it can only fill an
+        // *absent* translation, never change one. So `map` cannot quietly
+        // rewrite the permissions of memory a process is already running from,
+        // and widening or narrowing an existing mapping has to go through an
+        // unmap the holder can see. Its counterpart is the second call the
+        // proof below makes, which is refused for exactly this reason.
+        auto backed = os::kernel::aarch64_back_user_page(
+            *space,
+            static_cast<std::uintptr_t>(authorized.value().virtual_base),
+            static_cast<std::uintptr_t>(authorized.value().physical_base),
+            static_cast<std::size_t>(authorized.value().length),
+            static_cast<MachinePermissions>(authorized.value().permissions));
+        if (!backed) {
+            os::kernel::aarch64::refuse(*frame, backed.error());
+            // The proof's second call is expected to arrive here, and only the
+            // second. Announced as its own marker so the boot gate can require
+            // the refusal rather than merely tolerate it - a property nothing
+            // asserts is one that can stop holding without anything going red.
+            if (el0_map_stage == 2U) {
+                uart_write("COOKIE:M7.16:EL0_REMAP_REFUSED\n");
+            }
+            uart_write("COOKIE:M7.16:EL0_MAP_REFUSED code=");
+            uart_write_hex(static_cast<std::uint64_t>(backed.error().code));
+            uart_write("\n");
+            return;
+        }
+        // A second success at the same address would mean `map` had rewritten a
+        // live translation, which is the one thing this call must not do. Fatal
+        // rather than refused: the caller did nothing wrong, the kernel did, and
+        // a proof that reported it as an ordinary outcome would be a proof that
+        // could pass while the property it exists for had stopped holding.
+        if (el0_map_stage == 2U) {
+            uart_write("COOKIE:PANIC:M7_16_REMAP_ALLOWED\n");
+            halt();
+        }
+        // No value. The caller asked for a mapping at an address it already
+        // named, so there is nothing to tell it that it did not say - and a
+        // kernel that returned the address would be teaching callers to read
+        // back what they sent, which is where a disagreement about which one is
+        // authoritative starts.
+        os::kernel::aarch64::answer(*frame);
+        uart_write("COOKIE:M7.16:EL0_MAPPED\n");
         return;
     }
 
@@ -2514,6 +2728,39 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             page_size,
             MachinePermissions::read_write,
             MachineMemoryKind::normal) ||
+        // C's translation tables, for M7.16c, and for exactly the reason the
+        // entry above gives - restated because this is where it stopped being a
+        // detail of one proof and became a constraint on the loader.
+        //
+        // `map` from EL0 edits the *target* space's tables, and the edit runs
+        // inside the caller's syscall. Under TTBR0-only translation EL1 is
+        // executing under the caller's root at that moment, so a table the
+        // kernel must write has to be mapped in whatever space the caller
+        // happens to be in - which is what the manifest is. Without this the
+        // walk takes a translation fault at EL1 while servicing a system call,
+        // and the first version of this change did: a Data Abort inside the
+        // kernel, reading C's level-3 table at a physical address nothing had
+        // mapped.
+        //
+        // **The general form matters more than this proof: a process can only
+        // map into a space whose tables the kernel can reach, so every space a
+        // loader is expected to furnish must have its tables in the manifest.**
+        // That is a real cost of TTBR0-only translation - it puts every
+        // process's page tables in every process's kernel mapping - and it is
+        // one of the things M7.7's TTBR1 split exists to remove. Fourth
+        // occurrence of this constraint forcing a decision.
+        //
+        // Kernel-only and writable, like the entry above, and the range is the
+        // donated table pages alone - not C's code or stack, which the kernel
+        // has no reason to reach after boot and which would be a strictly
+        // larger widening.
+        !add_manifest_range(
+            kernel_manifest,
+            c_pages.value().base,
+            c_pages.value().base,
+            c_donated_pages * page_size,
+            MachinePermissions::read_write,
+            MachineMemoryKind::normal) ||
         !add_device_manifest(kernel_manifest, gic_topology.value().distributor) ||
         !add_device_manifest(kernel_manifest, uart->registers)) fail("MANIFEST");
 
@@ -2719,6 +2966,26 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!pager_backing_capability) fail("M7_11_PAGER_CAP");
     boot_pager_backing_cap = pager_backing_capability.value();
 
+    // M7.16c: the page A maps into C's space, and A's claim on it. Granted from
+    // boot for the same reason the pager's is - boot is the only origin of
+    // grants, so a process cannot grant itself the memory it furnishes with.
+    //
+    // Zeroed first. A page handed into another address space carries whatever
+    // was in it, and "whatever was in it" during boot is boot's own working
+    // memory. Nothing sensitive is in this particular page today, which is
+    // exactly the argument that stops being true quietly.
+    zero_page(dynamic_pages.value().base + map_proof_page_index * page_size);
+    auto map_granted = boot_grants.create(
+        dynamic_pages.value().base + map_proof_page_index * page_size, page_size);
+    if (!map_granted) fail("M7_16_MAP_GRANT");
+    auto map_backing_capability = boot_kernel.capabilities().mint(
+        process_a_thread,
+        os::kernel::memory_grant_object_id(map_granted.value().identity),
+        os::kernel::memory_right_map,
+        false);
+    if (!map_backing_capability) fail("M7_16_MAP_BACKING_CAP");
+    el0_map_backing_cap = map_backing_capability.value();
+
     if (!boot_fault_regions.declare(
             fault_probe_virtual, page_size,
             os::kernel::FaultDisclosure::paged)) fail("M7_11_DECLARE_REGION");
@@ -2894,6 +3161,27 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (!c_admitted || !c_admitted.value().valid()) fail("M7_12_ADMIT");
     if (c_admitted.value().entry != c_entry_virtual) fail("M7_12_ENTRY");
     c_thread = c_admitted.value().thread;
+    c_identity = c_created.value().epoch.identity();
+
+    // M7.16c: A's claim on C's space, and it is deliberately the weakest of the
+    // three bits.
+    //
+    // hold alone - not destroy, not admit. That is the shape
+    // docs/M7_12_ENTRY_BINDING.md described for a principal servicing a space
+    // it does not own, and it is the first time anything in Cookie has held one
+    // it did not create. A may furnish this space with memory and may not tear
+    // it down or run code in it; the capability itself is what says so, rather
+    // than a check somewhere remembering to.
+    //
+    // Not delegatable, because nothing here needs to pass it on and a right
+    // that can be handed onward is a larger grant than the proof requires.
+    auto c_space_for_a = boot_kernel.capabilities().mint(
+        process_a_thread,
+        os::kernel::address_space_object_id(c_identity),
+        os::kernel::address_space_right_hold,
+        false);
+    if (!c_space_for_a) fail("M7_16_MAP_SPACE_CAP");
+    el0_map_space_cap = c_space_for_a.value();
 
     // The one thing the first program is handed: its initial endpoint, in x0.
     //
