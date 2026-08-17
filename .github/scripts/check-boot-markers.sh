@@ -43,6 +43,17 @@ missing=''
 found=0
 total=0
 while IFS= read -r marker; do
+    # Strip a trailing CR before anything else.
+    #
+    # Found by the first local boot, and it is the same defect this script was
+    # written to remove. On a Windows checkout the manifest arrives with CRLF, so
+    # every pattern carried a trailing \r, matched nothing, and the gate reported
+    # **all thirty-two markers missing on a boot that emitted every one of
+    # them**. CI is Linux-only, so it stayed green and only a developer would
+    # ever have seen it - a gate that cannot tell its own bug from the condition
+    # it tests, which is exactly what the run-ctest.sh header warns about and
+    # what `check-test-reachability.sh` had to be fixed for earlier the same day.
+    marker="${marker%$'\r'}"
     case "$marker" in ''|'#'*) continue ;; esac
     total=$((total + 1))
     if grep -F "$marker" "$log" >/dev/null; then
