@@ -36,21 +36,16 @@ namespace os::abi {
 // structure that belongs in a message.
 inline constexpr std::size_t argument_registers = os::kernel::max_call_arguments;
 
-// The outcome tag, carried in x7 and nowhere else.
+// The outcome tags, aliased from the kernel's ABI header rather than restated.
 //
-// Bitwise complements, so their Hamming distance is 64: no number of bit flips
-// short of every bit turns a refusal into an answer. Neither value is zero and
-// neither is all-ones, which are the two a register most plausibly holds by
-// accident.
-//
-// Zero is neither, and that is the design rather than an omission - see
-// no_answer below.
-inline constexpr std::uint64_t outcome_answered = 0xC00C'1EA5'11ED'0001ULL;
-inline constexpr std::uint64_t outcome_refused = ~outcome_answered;
-
-static_assert(outcome_answered != 0ULL);
-static_assert(outcome_refused != 0ULL);
-static_assert(outcome_answered != outcome_refused);
+// They were defined here first, which was wrong for the reason this project has
+// twice paid to learn: a wire constant with two definitions is two things that
+// can drift, and the drift has no symptom at the point it happens. The contract
+// belongs in the header both sides include. Zero is neither tag, and that is
+// the design rather than an omission - see no_answer below.
+inline constexpr std::uint64_t outcome_answered = os::kernel::outcome_answered;
+inline constexpr std::uint64_t outcome_refused = os::kernel::outcome_refused;
+inline constexpr std::size_t outcome_register = os::kernel::outcome_register;
 
 namespace abi_errors {
 // The call number is not in the ABI table.
@@ -104,9 +99,7 @@ struct SyscallAnswer final {
 // number and widened back into a guess, which is the step where POSIX loses the
 // domain and keeps only a code.
 [[nodiscard]] constexpr std::uint64_t encode_error(os::core::Error error) noexcept {
-    return (static_cast<std::uint64_t>(error.domain) << 48U) |
-           (static_cast<std::uint64_t>(error.reserved) << 32U) |
-           static_cast<std::uint64_t>(error.code);
+    return os::kernel::encode_call_error(error);
 }
 
 // Why a wrapper rather than `Result<os::core::Error>`: that type cannot be

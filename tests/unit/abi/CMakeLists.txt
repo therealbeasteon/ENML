@@ -9,3 +9,14 @@ target_compile_options(abi_syscall_test PRIVATE
 )
 add_test(NAME abi_syscall_test COMMAND abi_syscall_test)
 set_tests_properties(abi_syscall_test PROPERTIES LABELS "m7-kernel")
+
+add_executable(abi_syscall_outcome_test syscall_outcome_test.cpp)
+# The kernel's writer and userland's reader, in one binary, checked against each
+# other rather than against a restatement of the document either was written
+# from.
+target_link_libraries(abi_syscall_outcome_test PRIVATE emnl::osabi emnl::oskernel emnl_warnings)
+target_compile_options(abi_syscall_outcome_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME abi_syscall_outcome_test COMMAND abi_syscall_outcome_test)
+set_tests_properties(abi_syscall_outcome_test PROPERTIES LABELS "m7-kernel")

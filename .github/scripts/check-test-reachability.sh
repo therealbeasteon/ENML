@@ -90,15 +90,32 @@ if [ "${#label_patterns[@]}" -eq 0 ] && [ "${#name_patterns[@]}" -eq 0 ]; then
     exit 1
 fi
 
-# `ctest -N` prints "  <number>: <name>" per test.
+# `ctest -N` names tests one per line, and the exact shape varies by CTest
+# version - "  Test #1: name" and "  1: name" are both in the wild. Both are
+# accepted rather than guessed at, because getting it wrong produces an empty
+# list, and an empty list is indistinguishable from "everything is reachable"
+# in one direction and "nothing is registered" in the other.
+#
+# stderr is kept rather than discarded. The first version of this dropped it,
+# and when the parse produced nothing the gate could say only "registers no
+# tests" - which is exactly the opaque failure `run-ctest.sh`'s own header was
+# written to complain about. A gate that cannot say why it failed costs a CI
+# round trip per guess.
 list_tests() {
-    ctest --test-dir "$build_dir" -N "$@" 2>/dev/null |
-        sed -nE 's/^[[:space:]]+[0-9]+: (.+)$/\1/p'
+    ctest --test-dir "$build_dir" -N "$@" 2>&1 |
+        sed -nE 's/^[[:space:]]*(Test[[:space:]]*)?#?[0-9]+: (.+)$/\2/p'
 }
 
 all_tests="$(list_tests | sort -u)"
 if [ -z "$all_tests" ]; then
-    echo "::error title=test reachability ${label}::${build_dir} registers no tests"
+    raw="$(ctest --test-dir "$build_dir" -N 2>&1 | head -n 20)"
+    encoded=''
+    while IFS= read -r line; do
+        line="${line//%/%25}"
+        encoded="${encoded}${line}%0A"
+    done <<< "$raw"
+    printf '::error title=test reachability (%s)::no tests parsed from %s. ctest said:%%0A%s\n' \
+        "$label" "$build_dir" "$encoded"
     exit 1
 fi
 
