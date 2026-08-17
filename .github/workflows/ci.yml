@@ -20,6 +20,12 @@ jobs:
         run: .github/scripts/check-hygiene.sh 'debug'
       - name: Configure
         run: cmake --preset host-debug
+      # A test no workflow selects is not coverage, and nothing else in the
+      # build relates a CTest label to the jobs that run it. Placed here rather
+      # than in a job of its own because configuring is all it needs and this
+      # job has already paid for that.
+      - name: Test reachability
+        run: .github/scripts/check-test-reachability.sh 'debug' build/host-debug
       - name: Build
         run: .github/scripts/run-build.sh 'debug' --preset host-debug --parallel 2
       - name: Test M0 only
