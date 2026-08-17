@@ -30,11 +30,11 @@ and is worth reading before the table:
 | Cookie Kernel (M7) | Through M7.13 partially merged; **boots on QEMU virt (at EL1 or EL2, position-independently), schedules isolated EL0 processes across native IPC and timer preemption, creates and destroys address spaces after boot, resolves faults through a userland pager, and runs a thread in a space created after boot** |
 | First compiled program (M7.16a/b) | Written, built, embedded in the boot artefact, and **running at EL0**, proven by a witness it folds at run time |
 | Program image format (M7.12) | `.ckx` specified, parsed, written and fuzzed — **and nothing loads one** |
-| Syscall ABI (M7.14, M7.15a–c) | Complete on both sides: `core/osabi` encodes 8 of 16 calls, the kernel answers every call it serves, and a malformed call is refused rather than halting the machine — **and the dispatcher still admits authority by class rather than by capability** |
+| Syscall ABI (M7.14, M7.15a–c) | Complete on both sides: `core/osabi` encodes 9 of 16 calls, the kernel answers every call it serves, and a malformed call is refused rather than halting the machine — **and the dispatcher still admits authority by class rather than by capability** |
 
 Zero `TODO`/`FIXME`/`HACK` markers in the tree. Thirteen CI workflows — twelve
 on every push and pull request, plus nightly fuzzing on a schedule — all green
-on `main` (30/30 checks). The discipline is real and the roadmap should not
+on `main` (48/48 checks). The discipline is real and the roadmap should not
 spend it.
 
 **The one sentence that describes the position better than the table does:
@@ -985,10 +985,43 @@ reconciling check to get wrong at the overflowing end. The encoder has nowhere
 to put a length, which is the stronger form of that rule and the same shape as
 `fault_supply` having nowhere to put a region.
 
-*Still to come in this milestone:* `unmap`, which is deliberately not symmetric
-with `map` and needs its own decision about whether a caller may unmap a mapping
-it did not establish; EL0 dispatch for both, in the diff that also carries a
-boot proof; and the loader itself.
+*Increment two, `map` from EL0:* the dispatch and a boot proof in which process
+A maps a page into **C's** address space — a space it holds and did not create,
+with `address_space_right_hold` and nothing else, which is the loader's own
+shape and the first time anything in Cookie has held a space it did not build.
+The second, identical call is refused and that refusal is gated, because the
+dispatch uses `aarch64_back_user_page`: `map` fills absent translations and does
+not rewrite live ones, so it cannot restamp the permissions of memory a process
+is already executing from.
+
+That increment also found a constraint that belongs to the loader rather than to
+itself, by taking a Data Abort inside the kernel: **a process can only map into
+a space whose page tables are in the kernel mapping manifest.** The edit runs
+inside the caller's syscall and Cookie translates through TTBR0 only, so EL1 is
+under the caller's root at that moment. Every space a loader furnishes must
+therefore have its tables mapped in every space — a real cost of TTBR0-only, and
+one more thing M7.7's split removes.
+
+*The blocker, found by audit rather than by trying (`docs/AUDIT_2026_08_17_LOADER_PATH.md`):*
+**nothing in the sixteen-call ABI can seal a translation root, so a space created
+from EL0 can never acquire an entry and no thread can ever be admitted into it.**
+A loader can now build an address space it cannot start. This was invisible for
+the same reason `map`'s absence was — nothing consumed the surface in the order a
+loader needs it.
+
+It is a decision rather than an omission, because the obvious fix is the one
+M7.12 refused: `thread_create` must not take an entry. The audit's recommendation
+is that **sealing is an act of construction authority**, which this kernel
+already models as a separate object — `TranslationRootSealer::seal` takes the
+*builder*, not the space — so a `seal` call requires a right only the principal
+that built the space holds, stays one-way, and lets a loader bind the entry the
+image it placed declared without the kernel parsing anything or taking an entry
+from the party that will run under it. It is the seventeenth call, and `abi.hpp`
+says plainly that the next call added is worth deciding on purpose.
+
+*Also still to come:* `unmap`, deliberately not symmetric with `map` and needing
+its own decision about whether a caller may unmap a mapping it did not
+establish; and the loader itself.
 
 The startup contract was decided ahead of the code in
 `docs/M7_16_FIRST_PROGRAM_CONTRACT.md`, the same order M7.11 used for the
