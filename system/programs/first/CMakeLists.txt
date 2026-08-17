@@ -68,9 +68,20 @@ set_target_properties(cookie_first_program PROPERTIES
     LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/first_program.ld)
 
 # The flat image, which is what a loader places. The ELF is kept for symbols.
+#
+# No BYPRODUCTS: naming `$<TARGET_FILE:...>.bin` there fails to generate with
+# "No target cookie_first_program", because BYPRODUCTS of a POST_BUILD command is
+# evaluated in a scope that cannot resolve the target it is attached to. Nothing
+# consumes the .bin as a build input - the CI step reads it as a path - so
+# declaring it buys nothing that would justify working around that.
+if(NOT CMAKE_OBJCOPY)
+    message(FATAL_ERROR
+        "CMAKE_OBJCOPY is empty, so the first program cannot be flattened to the "
+        "bytes a loader places. A silent skip here would leave the verification "
+        "step checking a file that was never produced.")
+endif()
 add_custom_command(TARGET cookie_first_program POST_BUILD
     COMMAND ${CMAKE_OBJCOPY} -O binary
         $<TARGET_FILE:cookie_first_program>
         $<TARGET_FILE:cookie_first_program>.bin
-    BYPRODUCTS $<TARGET_FILE:cookie_first_program>.bin
     COMMENT "Flattening the first program to the bytes a loader would place")
