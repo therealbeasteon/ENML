@@ -34,9 +34,14 @@ SECTIONS
 {
     . = COOKIE_FIRST_PROGRAM_BASE;
 
+    /* KEEP, because --gc-sections would otherwise collect the decoy: it is not
+     * reachable from ENTRY and nothing calls it, which is precisely what makes
+     * it a decoy. `[[gnu::used]]` stops the *compiler* discarding it and says
+     * nothing to the linker. The ASSERT at the foot of this file would catch
+     * its absence, but catching it here means the build never gets that far. */
     .text.decoy : {
         __cookie_first_decoy_start = .;
-        *(.text.decoy)
+        KEEP(*(.text.decoy))
         __cookie_first_decoy_end = .;
     }
 
@@ -44,7 +49,7 @@ SECTIONS
 
     .text : {
         __cookie_first_entry_start = .;
-        *(.text.entry)
+        KEEP(*(.text.entry))
         *(.text .text.*)
         *(.rodata .rodata.*)
         __cookie_first_entry_end = .;
