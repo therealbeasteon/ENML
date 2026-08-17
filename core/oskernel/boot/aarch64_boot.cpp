@@ -1582,10 +1582,11 @@ extern "C" void cookie_kernel_syscall_entry(
             halt();
         }
         const auto witness = static_cast<std::uint64_t>(destroy.value().space);
-        if (witness == cookie::first::expected_decoy_witness) {
-            uart_write("COOKIE:PANIC:M7_16_ENTRY decoy ran; the kernel entered the region at its base\n");
-            halt();
-        }
+        // The decoy's witness used to be checked here, to name the case where
+        // the kernel entered the region at its base rather than at the sealed
+        // entry. Gone with the decoy: the entry is the base now, derived from
+        // the executable region, so entering at the base is entering correctly
+        // and there is no wrong address left to arrive from.
         if (witness != cookie::first::expected_witness) {
             uart_write("COOKIE:PANIC:M7_16_WITNESS want=");
             uart_write_hex(cookie::first::expected_witness);
