@@ -117,7 +117,7 @@ jobs:
           kernel_arch_timer_discovery_test kernel_boot_memory_test
           kernel_boot_memory_plan_test kernel_capability_test kernel_context_bound_capability_test kernel_interrupt_test kernel_interrupt_delivery_test
           kernel_scheduler_test kernel_scheduler_deadline_test kernel_composition_test image_ckx_test abi_syscall_test abi_syscall_outcome_test
-          oskernel_machine_aarch64 cookie_kernel_aarch64_boot --parallel 2
+          oskernel_machine_aarch64 cookie_kernel_aarch64_boot cookie_first_program --parallel 2
       - name: Test kernel gates natively
         run: .github/scripts/run-ctest.sh '^m7-(kernel|image)$' 'kernel-arm64-native' --test-dir build/m7-arm64-native
       - name: Inspect freestanding image layout
@@ -402,6 +402,81 @@ jobs:
       # The QEMU traces go with it. They are the part that cannot be
       # reconstructed afterwards - the instruction window around the first
       # exception is what diagnosed the pre-MMU faults.
+      # A program that linked is not a program that could run at EL0. Each check
+      # below is a way this could be quietly wrong while still producing a file.
+      - name: Verify the first compiled program is a usable EL0 image
+        shell: bash
+        run: |
+          set -euo pipefail
+          elf=build/m7-arm64-native/system/programs/first/cookie_first_program
+          bin="${elf}.bin"
+          test -s "$elf"
+          test -s "$bin"
+
+          # It must contain a real trap. The program reaches the kernel through
+          # core/osabi, so an svc appearing here is evidence the stub library
+          # compiled into it rather than being optimised away with the call.
+          if ! objdump -d "$elf" | grep -qw svc; then
+            echo 'the first program contains no svc; it cannot reach the kernel' >&2
+            exit 1
+          fi
+
+          # The two entries must be where the linker script says, because the
+          # kernel's sealed entry is that address. The decoy must be at the base:
+          # its whole purpose is to be what a kernel entering at the base runs.
+          base=0x10000000
+          decoy=$(nm "$elf" | awk '$3 == "cookie_first_decoy" { print "0x"$1 }')
+          entry=$(nm "$elf" | awk '$3 == "cookie_first_entry" { print "0x"$1 }')
+          test -n "$decoy"
+          test -n "$entry"
+          echo "decoy=$decoy entry=$entry base=$base"
+          if [[ $((decoy)) -ne $((base)) ]]; then
+            echo "the decoy is not at the base of the region" >&2
+            exit 1
+          fi
+          if [[ $((entry)) -ne $((base + 0x200)) ]]; then
+            echo "the real entry is not at the offset the kernel will seal" >&2
+            exit 1
+          fi
+
+          # An A64 instruction is four bytes, so an unaligned entry names a point
+          # inside one - TranslationRootSealer refuses exactly that, and finding
+          # out here is cheaper than finding out at seal time.
+          if [[ $((entry % 4)) -ne 0 ]]; then
+            echo 'the entry is not instruction-aligned' >&2
+            exit 1
+          fi
+
+          # It has to fit the one page the boot proof maps as a code region.
+          size=$(stat -c %s "$bin")
+          echo "flat image: ${size} bytes"
+          if [[ $size -gt 4096 ]]; then
+            echo 'the first program no longer fits in a page' >&2
+            exit 1
+          fi
+
+          # Zero relocations, and no dynamic anything. A relocation here would be
+          # an absolute pointer in static data, which nothing at EL0 is going to
+          # process - the program would run with a pointer that was never fixed
+          # up. The linker script has no .got precisely so this stays true.
+          relocs=$(readelf -r "$elf" | grep -c '^[0-9a-f]\{8,\}' || true)
+          echo "relocations: ${relocs}"
+          if [[ $relocs -ne 0 ]]; then
+            readelf -r "$elf"
+            echo 'the first program needs relocation and nothing will relocate it' >&2
+            exit 1
+          fi
+
+          # Reported rather than gated. Writable static data would mean the loader
+          # has to place initialised bytes and zero the rest - a second thing the
+          # .ckx plan would have to describe - but the substance is already gated:
+          # the linker script defines no .data or .got output section, and the
+          # zero-relocation check above is what would catch an absolute pointer
+          # sneaking into static data. A grep over readelf's section table adds a
+          # way for this step to fail on formatting rather than on a defect.
+          echo '--- sections, for the record ---'
+          readelf -SW "$elf" | sed -n '/Section Head/,/Key to Flags/p'
+          echo 'the first compiled program is a usable EL0 image'
       - name: Publish the boot image and its traces
         if: always()
         uses: actions/upload-artifact@v4

@@ -108,6 +108,10 @@ add_subdirectory(system/services/accessibility)
 add_subdirectory(system/services/shell)
 add_subdirectory(system/supervisor)
 add_subdirectory(system/app_manager)
+# Cookie's first compiled program. Guards itself on EMNL_BUILD_AARCH64_BOOT_IMAGE
+# and on an AArch64 target, because EL0 on that machine is the only place it can
+# run - see system/programs/first/CMakeLists.txt.
+add_subdirectory(system/programs/first)
 
 if(BUILD_TESTING)
     add_subdirectory(tests)
