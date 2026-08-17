@@ -1401,8 +1401,14 @@ discovery_ceiling=1272
 # what docs/M7_12_ENTRY_BINDING.md described for a principal servicing a space
 # it does not own, and the first time anything in Cookie has held a space it did
 # not create.
-entry_ceiling=2004
-total_ceiling=11298
+# And by the manifest entry that made it work: entry 2,004 -> 2,011, total
+# 11,298 -> 11,305. Seven lines of manifest range plus its justification. They
+# are the difference between a map call that authorizes correctly and faults
+# inside the kernel, and one that completes - see the comment at the call site
+# for why TTBR0-only translation makes a target space's tables the caller's
+# problem.
+entry_ceiling=2011
+total_ceiling=11305
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
