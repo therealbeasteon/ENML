@@ -29,6 +29,7 @@ and is worth reading before the table:
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
 | Cookie Kernel (M7) | Through M7.13 partially merged; **boots on QEMU virt (at EL1 or EL2, position-independently), schedules isolated EL0 processes across native IPC and timer preemption, creates and destroys address spaces after boot, resolves faults through a userland pager, and runs a thread in a space created after boot** |
 | Program image format (M7.12) | `.ckx` specified, parsed, written and fuzzed — **and nothing loads one** |
+| Syscall ABI, user half (M7.14) | Complete: `core/osabi` encodes 8 of 16 calls and reads a typed answer — **and no dispatcher implements the convention yet** |
 
 Zero `TODO`/`FIXME`/`HACK` markers in the tree. Thirteen CI workflows — twelve
 on every push and pull request, plus nightly fuzzing on a schedule — all green
@@ -38,12 +39,14 @@ spend it.
 **The one sentence that describes the position better than the table does:
 Cookie can now build an address space for a program, and cannot yet run one.**
 Every mechanism a process needs exists and is CI-proven — spaces, epochs,
-capabilities, IPC, interrupts, faults, entry binding — and there is still no
-path by which compiled code reaches any of them. Nothing outside
-`core/oskernel` references `KernelCall`; nothing outside it emits `svc`.
-Everything that has ever executed at EL0 on Cookie is `uint32_t` instruction
-words written into a page by `aarch64_boot.cpp`. That gap is now the critical
-path for the entire product, and Phase 2c below exists to name it.
+capabilities, IPC, interrupts, faults, entry binding. As of M7.14 compiled code
+can also *express* a kernel call: `core/osabi` encodes eight of the sixteen and
+reads a typed answer back. What is still missing is both ends of the path
+between them — nothing in the kernel dispatches those calls for an arbitrary
+caller (M7.15), and nothing places a program into a space to make them (M7.16).
+Everything that has ever executed at EL0 on Cookie is still `uint32_t`
+instruction words written into a page by `aarch64_boot.cpp`. That gap is the
+critical path for the entire product, and Phase 2c below exists to name it.
 
 A second finding from the same review, recorded because it is easy to mistake
 for progress: **`cookie_kernel_syscall_entry` is a proof scaffold, not a
@@ -818,14 +821,38 @@ is still no *way* to move, because nothing compiled can reach a kernel call.
 The sequence, in dependency order. Each is one reviewable diff and each is
 proven before the next starts:
 
-**M7.14 — the syscall ABI and its stub library.** The EL0 side of `KernelCall`:
-how a compiled program encodes a call into registers, and how it reads what
-comes back. The register encoding for arguments already exists as the kernel's
-decoders; what does not exist anywhere is a *return* convention — the boot proof
-writes `frame->x[0] = 1` or `0` per call site, which is a convention only in the
-sense that one file agrees with itself. Design document
-`docs/M7_14_SYSCALL_ABI.md`. Host-testable in full, which matters: it is the
-last piece of this phase that can be proven without a boot.
+**M7.14 — the syscall ABI and its stub library *(complete, PR #150)*.** The EL0
+side of `KernelCall`: how a compiled program encodes a call into registers, and
+how it reads what comes back. `core/osabi` is the code and
+`docs/M7_14_SYSCALL_ABI.md` is the reasoning.
+
+The argument encoding already existed as the kernel's decoders. The *return*
+convention did not exist at all — the boot proof wrote `frame->x[0] = 1` or `0`
+per call site, which is a convention only in the sense that one file agrees with
+itself. It is now: `x0`–`x3` arguments in and results out, `x7` an outcome tag,
+`x8` the call number. The tag is in a register of its own rather than folded
+into `x0`, because POSIX's `-1` and Linux's reserved negative range both
+reinterpret part of the value space and both fail silently the day a legitimate
+result lands in it. The two tags are bitwise complements, so no partial
+corruption turns a refusal into an answer, and **the caller zeroes `x7` before
+the trap** — which makes "the kernel returned without answering" a state that
+exists instead of one that inherits the appearance of the previous call.
+
+Two defects fell out of writing it, and both were the same shape — something
+declared and never engaged:
+
+- `image_ckx_test` had never run in CI (PR #149). It declared a label no
+  workflow selected, so the `.ckx` format's only gate was compiled on every push
+  and executed on none. Second occurrence of Phase 0's `recovery_policy_test`
+  defect, whose lesson was recorded and whose *mechanism* was left in place;
+  `.github/scripts/check-test-reachability.sh` now closes the class.
+- `receive` declared two arguments in the ABI table and its decoder took three.
+  True since before the kernel existed — receive gained a relative deadline in
+  `x2` and the table was never told. Nothing had noticed because nothing consumed
+  `argument_count`. **A declarative field becomes load-bearing the moment
+  something reads it, and that is the moment to check it is true**; had M7.15
+  dispatched from the table first, every bounded receive would silently have
+  become unbounded.
 
 **M7.15 — a dispatcher rather than a proof scaffold.** `cookie_kernel_syscall_
 entry` moves out of the boot proof and becomes what the ABI table already
