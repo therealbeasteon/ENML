@@ -29,6 +29,7 @@ and is worth reading before the table:
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
 | Cookie Kernel (M7) | Through M7.13 partially merged; **boots on QEMU virt (at EL1 or EL2, position-independently), schedules isolated EL0 processes across native IPC and timer preemption, creates and destroys address spaces after boot, resolves faults through a userland pager, and runs a thread in a space created after boot** |
 | Program image format (M7.12) | `.ckx` specified, parsed, written and fuzzed — **and nothing loads one** |
+| First compiled program (M7.16a) | Built and gated as a valid EL0 image — **and nothing runs it yet** |
 | Syscall ABI (M7.14, M7.15a–c) | Complete on both sides: `core/osabi` encodes 8 of 16 calls, the kernel answers every call it serves, and a malformed call is refused rather than halting the machine — **and the dispatcher still admits authority by class rather than by capability** |
 
 Zero `TODO`/`FIXME`/`HACK` markers in the tree. Thirteen CI workflows — twelve
@@ -901,7 +902,29 @@ for a proof and wrong for a system that runs programs it did not write. The M7.1
 moves lines from `entry` into `core`, and the categories are separately capped
 precisely so that cannot happen silently.
 
-**M7.16 — the first compiled program, then the loader.** Boot places exactly
+**M7.16a — a compiled program exists *(built and gated, PR #161; not yet run)*.**
+`system/programs/first/` is a C++ translation unit built by this repository’s
+toolchain, reaching the kernel through `core/osabi` rather than a hand-assembled
+`svc`. Its witness is folded on the machine — eight multiply-xor rounds over a
+seed read through a `volatile` lvalue — because a literal is exactly what a
+hand-written program could have produced. It rides in `address_space_destroy`’s
+single argument, which is chosen rather than preferred: the witness must sit in
+a register the *stub* writes, so the call has to declare at least one argument,
+and `yield` declares none. The call is **expected to be refused**, which is only
+survivable because of M7.15c.
+
+Five properties are gated on every arm64 run, because a program that linked is
+not one that could run: an `svc` is present, the decoy sits at the region base
+and the entry at the offset the kernel will seal, the entry is
+instruction-aligned, the flat image fits one page, and it needs **zero
+relocations** — nothing at EL0 would process one.
+
+**Nothing runs it yet.** Installing it is boot-proof surgery: a thread, a space,
+a sealed entry read from that ELF rather than written as a literal, and a
+kernel-side check of the witness. That is M7.16a’s second half, and it is the
+step that ends “everything at EL0 is hand-assembled words”.
+
+**M7.16b — the loader.** Boot places exactly
 one image, identity-bound per `docs/M7_12_FIRST_PROGRAM.md`, so the first
 program is not loaded by a loader — it *is* the loader, or the thing that
 starts one. That splits the milestone cleanly, and the first half is the one
