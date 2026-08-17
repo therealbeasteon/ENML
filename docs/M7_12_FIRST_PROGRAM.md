@@ -1,12 +1,22 @@
 # M7.12 — The first program
 
-**Status: in progress.** Two of the four pieces below have decisions and code:
-`docs/M7_12_ENTRY_BINDING.md` settles who chooses the address a thread starts
-at, and `Kernel::thread_admit` implements it - proven under
-`kernel-arm64-native` by a thread that runs in a space created after boot,
-entering where that space's sealed root declared and nowhere else. What remains
-is the toolchain half: an image format, a loader, syscall stubs, and a first
-process that is compiled rather than hand-assembled instruction words.
+**Status: in progress.** Of the four pieces below, two are landed and two are
+not.
+
+- **Entry binding — landed.** `docs/M7_12_ENTRY_BINDING.md` settles who chooses
+  the address a thread starts at, and `Kernel::thread_admit` implements it,
+  proven under `kernel-arm64-native` by a thread that runs in a space created
+  after boot, entering where that space's sealed root declared and nowhere else.
+- **Image format — landed.** `.ckx` is specified in
+  `docs/M7_12_CKX_FORMAT.md`, parsed by `core/osimage` (outside the kernel, by
+  the decision below), written by `build_ckx` in the same module, and fuzzed
+  both directly and differentially against its own writer.
+- **Syscall stubs — not started.** Nothing outside `core/oskernel` references
+  `KernelCall` and nothing outside it emits `svc`. This is now the first thing
+  in the way, and it is tracked as M7.14 in `docs/ROADMAP.md`.
+- **A loader, and a first process that is a compiled program — not started.**
+  Everything that has ever run at EL0 on Cookie is still `uint32_t` instruction
+  words written into a page by `aarch64_boot.cpp`.
 
 The original framing, which still holds: `docs/M7_2_NO_DESTINATION.md` found that nothing can
 move off Linux because Cookie has no userland — no syscall stubs, no image
@@ -69,12 +79,32 @@ It would also mean writing an ELF parser: relocations, program headers, dynamic
 sections — a format designed for a linker's convenience rather than for being
 checked. Cookie needs none of that expressiveness.
 
-**A Cookie program image is a fixed-layout table of segments** — offset, length,
-virtual address, permissions — produced by the build, with the whole image
-covered by the `ContentDigest` the package model already carries. The loader
-copies and maps. It does not interpret. There is nothing to relocate because
-images are position-fixed, and nothing to resolve because there is no dynamic
-linking.
+**The format is `.ckx`, and it is specified in `docs/M7_12_CKX_FORMAT.md`.**
+That document supersedes what this paragraph said in its first draft, and the
+correction is worth recording rather than overwriting silently, because it is
+the mistake this whole section was written to avoid.
+
+The first draft described a Cookie image as "a fixed-layout table of segments —
+offset, length, virtual address, permissions". That is ELF's program header
+table with the fields renamed. It replicated the thing the section above had
+just finished declining, and it survived review only because nothing depended on
+it yet; a format is the thing that cannot be changed later.
+
+What replaced it starts from a fact about this kernel rather than from another
+system's file layout: **Cookie has no `load` operation and never will.** The
+syscall surface is create-a-space, donate-pages, map, seal, admit-a-thread —
+nothing in it takes a file. So a format organised around file offsets describes
+an operation Cookie does not have. A `.ckx` is instead **a plan for an address
+space, written in the kernel's own vocabulary, with no file offsets in it at
+all**: regions name their content by digest rather than by location, the cost of
+constructing the space is *computed* from the plan rather than declared by it,
+no executable region may be anonymous, and fault disclosure is declared by the
+signed image rather than chosen by whatever loads it. `docs/M7_12_CKX_FORMAT.md`
+gives the reasoning for each.
+
+The two properties this section originally wanted are preserved. The loader
+still does not interpret: it walks a plan and issues the calls the plan names.
+And there is still nothing to resolve, because there is no dynamic linking.
 
 ### No dynamic linking, ever
 
@@ -124,8 +154,8 @@ already built. The kernel is not involved.
   of the address space, bound when its root is sealed, and is never an argument
   to the call that creates a thread — otherwise a loader could enter signed code
   past its own initialisation while the digest above still verified.
-- **The toolchain path.** How the build produces a fixed-layout image from
-  compiled objects — a linker script and an objcopy step, most likely — is an
+- **The toolchain path.** How the build gets from compiled objects to a `.ckx` —
+  a linker script, an objcopy step and a call to `build_ckx` — is an
   implementation question, not an architectural one.
 - **Where the first program's memory authority comes from.** That is M7.11's
   physical-authority work; this milestone consumes it rather than defining it.
@@ -139,14 +169,18 @@ Where they stand today, stated the way M7.11's were rather than left to be
 inferred:
 
 - **Not met.** A compiled program. Everything that has run at EL0 is still
-  hand-assembled instruction words.
-- **Not met.** A content digest checked before it runs. There is no image to
-  digest yet.
+  hand-assembled instruction words, and there is no way for a compiled one to
+  reach the kernel: no syscall stub library exists (M7.14).
+- **Not met, but no longer vacuously.** A content digest checked before it runs.
+  `.ckx` regions name their content by digest and `core/osimage` parses them,
+  so there is now something to check; nothing checks it yet because nothing
+  loads an image.
 - **Met.** Loaded into an address space created after boot rather than one
   `plan_early_boot_memory` planned - `COOKIE:M7.12:PROCESS_RAN`.
-- **Met, vacuously so far, and worth keeping true.** The kernel contains no
-  code that parses an image format. There is no format yet; the M7.10 count is
-  where that will stay visible.
+- **Met, and no longer vacuously.** The kernel contains no code that parses an
+  image format. The format now exists and its parser is in `core/osimage`,
+  which the M7.10 line count does not count - that is precisely where the
+  claim stays visible.
 - **Met for what exists.** Proven under `kernel-arm64-native`, not on the host.
 
 The full list:
