@@ -2728,6 +2728,39 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
             page_size,
             MachinePermissions::read_write,
             MachineMemoryKind::normal) ||
+        // C's translation tables, for M7.16c, and for exactly the reason the
+        // entry above gives - restated because this is where it stopped being a
+        // detail of one proof and became a constraint on the loader.
+        //
+        // `map` from EL0 edits the *target* space's tables, and the edit runs
+        // inside the caller's syscall. Under TTBR0-only translation EL1 is
+        // executing under the caller's root at that moment, so a table the
+        // kernel must write has to be mapped in whatever space the caller
+        // happens to be in - which is what the manifest is. Without this the
+        // walk takes a translation fault at EL1 while servicing a system call,
+        // and the first version of this change did: a Data Abort inside the
+        // kernel, reading C's level-3 table at a physical address nothing had
+        // mapped.
+        //
+        // **The general form matters more than this proof: a process can only
+        // map into a space whose tables the kernel can reach, so every space a
+        // loader is expected to furnish must have its tables in the manifest.**
+        // That is a real cost of TTBR0-only translation - it puts every
+        // process's page tables in every process's kernel mapping - and it is
+        // one of the things M7.7's TTBR1 split exists to remove. Fourth
+        // occurrence of this constraint forcing a decision.
+        //
+        // Kernel-only and writable, like the entry above, and the range is the
+        // donated table pages alone - not C's code or stack, which the kernel
+        // has no reason to reach after boot and which would be a strictly
+        // larger widening.
+        !add_manifest_range(
+            kernel_manifest,
+            c_pages.value().base,
+            c_pages.value().base,
+            c_donated_pages * page_size,
+            MachinePermissions::read_write,
+            MachineMemoryKind::normal) ||
         !add_device_manifest(kernel_manifest, gic_topology.value().distributor) ||
         !add_device_manifest(kernel_manifest, uart->registers)) fail("MANIFEST");
 
