@@ -24,10 +24,18 @@ set(COOKIE_FIRST_PROGRAM_BASE "0x10000000" CACHE STRING
 # them - and a stack protector needs __stack_chk_fail, which does not exist at
 # EL0 on a system with no libc. Compiling the sources here gives them this
 # target's freestanding flags instead.
+# abi.cpp is here because `encode_call` calls `describe_call`, and the ABI table
+# it looks up lives in a kernel .cpp rather than in the header.
+#
+# That is not an accident of layout and it is worth stating: the table *is* the
+# contract, so a program encoding a call has to carry it. What a user program
+# must not link is kernel *behaviour*, and it does not - abi.cpp is sixteen
+# descriptors and three lookups over them, with no state and no privilege.
 add_executable(cookie_first_program
     first_program.cpp
     ${PROJECT_SOURCE_DIR}/core/osabi/src/syscall.cpp
     ${PROJECT_SOURCE_DIR}/core/osabi/src/syscall_aarch64.cpp
+    ${PROJECT_SOURCE_DIR}/core/oskernel/src/abi.cpp
 )
 
 target_include_directories(cookie_first_program PRIVATE
@@ -52,6 +60,12 @@ target_compile_options(cookie_first_program PRIVATE
     -ffreestanding -fno-builtin -fno-exceptions -fno-rtti
     -fno-threadsafe-statics -fno-stack-protector -fno-asynchronous-unwind-tables
     -fno-unwind-tables -fvisibility=hidden -mgeneral-regs-only
+    # -Os and section-per-function, so --gc-sections below can drop what is not
+    # reached. The program must fit the one page the boot proof maps as a code
+    # region, and linking the ABI table brought in more than the first attempt
+    # left room for - the linker script's ASSERT is what said so, which is the
+    # point of having it.
+    -Os -ffunction-sections -fdata-sections
     -Wall -Wextra -Wpedantic -Wconversion -Wsign-conversion -Wshadow)
 if(EMNL_WARNINGS_AS_ERRORS)
     target_compile_options(cookie_first_program PRIVATE -Werror)
@@ -62,6 +76,7 @@ target_link_options(cookie_first_program PRIVATE
     -static
     -no-pie
     -Wl,--build-id=none
+    -Wl,--gc-sections
     -Wl,--defsym,COOKIE_FIRST_PROGRAM_BASE=${COOKIE_FIRST_PROGRAM_BASE}
     -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/first_program.ld)
 set_target_properties(cookie_first_program PROPERTIES
