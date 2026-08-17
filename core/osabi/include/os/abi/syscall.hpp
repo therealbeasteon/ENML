@@ -10,6 +10,7 @@
 #include <os/kernel/address_space_syscall.hpp>
 #include <os/kernel/fault_delivery.hpp>
 #include <os/kernel/ipc_syscall.hpp>
+#include <os/kernel/map_syscall.hpp>
 #include <os/kernel/thread_admission.hpp>
 
 // The EL0 side of the Cookie Kernel's system call surface.
@@ -180,6 +181,13 @@ struct Refusal final {
 [[nodiscard]] os::core::Result<SyscallRequest> encode_fault_supply(
     const os::kernel::FaultSupplySyscall& request) noexcept;
 
+// The first of the two calls a loader needs, and the one that had been declared
+// longest without existing - see docs/M7_16_MAP.md. Note what it does not take:
+// a length. The mapping covers the grant the backing capability names, so there
+// is no second statement of an extent the authority already fixes.
+[[nodiscard]] os::core::Result<SyscallRequest> encode_map(
+    const os::kernel::MapSyscall& request) noexcept;
+
 // --- What is deliberately absent.
 //
 // These calls are in the ABI table and have no decoder in the kernel, so their
@@ -191,9 +199,8 @@ struct Refusal final {
 // the table: a call may be implemented or listed here, never both and never
 // neither. Adding a seventeenth call to the ABI without deciding fails that
 // test rather than being discovered at EL0.
-inline constexpr std::array<os::kernel::KernelCall, 8U> calls_without_stubs{
+inline constexpr std::array<os::kernel::KernelCall, 7U> calls_without_stubs{
     os::kernel::KernelCall::thread_exit,
-    os::kernel::KernelCall::map,
     os::kernel::KernelCall::unmap,
     os::kernel::KernelCall::interrupt_attach,
     os::kernel::KernelCall::interrupt_detach,

@@ -144,6 +144,7 @@ core_files=(
     "core/oskernel/include/os/kernel/ipc_endpoint.hpp"
     "core/oskernel/include/os/kernel/ipc_syscall.hpp"
     "core/oskernel/include/os/kernel/address_space_syscall.hpp"
+    "core/oskernel/include/os/kernel/map_syscall.hpp"
     "core/oskernel/include/os/kernel/fault_delivery.hpp"
     "core/oskernel/include/os/kernel/fault_region.hpp"
     "core/oskernel/include/os/kernel/memory_grant.hpp"
@@ -165,6 +166,7 @@ core_files=(
     "core/oskernel/src/ipc_endpoint.cpp"
     "core/oskernel/src/ipc_syscall.cpp"
     "core/oskernel/src/address_space_syscall.cpp"
+    "core/oskernel/src/map_syscall.cpp"
     "core/oskernel/src/fault_delivery.cpp"
     "core/oskernel/src/fault_region.cpp"
     "core/oskernel/src/memory_grant.cpp"
@@ -971,7 +973,39 @@ not_kernel=(
 # results, and they carry out-of-band delivery - a driver's interrupt service, a
 # pager's region. Clearing them would have emptied whichever of the two ran
 # first, and the current order is only accidentally safe.
-core_ceiling=4528
+# Raised by M7.16c's first increment: core 4,528 -> 4,651, total 11,060 ->
+# 11,183. The `map` call, which had been declared and unimplemented longer than
+# anything else in the surface.
+#
+# Worth stating plainly, because "a call gained a decoder" sounds like
+# bookkeeping and this was a finding. `map` and `unmap` have been in the
+# published sixteen-entry ABI table since before the kernel existed - with an
+# authority class, an argument count, and a comment explaining why establishing
+# a mapping is authority rather than convenience - and neither had a decoder, a
+# kernel operation, a dispatch or a stub. A `.ckx` is a plan for an address
+# space to be constructed and the operation that constructs one did not exist.
+#
+# That is the third occurrence of the class this gate's own history keeps
+# recording - recovery_policy_test registered and never selected, image_ckx_test
+# labelled and never matched, receive's argument_count declaring two against a
+# decoder taking three - and the first where the thing declared and unengaged is
+# a whole kernel call. Each was invisible because nothing consumed the
+# declaration; an ABI table is consumed by whoever writes a program against it,
+# which is a consumer this project did not have until M7.16a.
+#
+# The lines are a decoder that validates the encoding, and an authority half
+# that resolves two capabilities and checks the rights each call needs. What
+# they are not is a mapping: Kernel::map_authorize returns what the machine
+# layer is to perform, which is the split every address-space operation here
+# already uses and what keeps the portable core host-testable. There is no EL0
+# dispatch yet, deliberately - that diff carries a boot proof, because a
+# dispatch with no caller is the seam-with-nothing-behind-it this project has
+# criticised twice.
+#
+# See docs/M7_16_MAP.md for the two decisions: the required right on the space
+# is address_space_right_hold rather than a new one, and the length comes from
+# the grant rather than from the caller.
+core_ceiling=4651
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -1336,7 +1370,7 @@ discovery_ceiling=1272
 # decision on the page - the program's source is 100-odd lines and gets its own
 # review under system/programs/first, not silence.
 entry_ceiling=1889
-total_ceiling=11060
+total_ceiling=11183
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

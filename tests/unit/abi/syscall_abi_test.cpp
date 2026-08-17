@@ -7,6 +7,7 @@
 #include <os/kernel/address_space_syscall.hpp>
 #include <os/kernel/fault_delivery.hpp>
 #include <os/kernel/ipc_syscall.hpp>
+#include <os/kernel/map_syscall.hpp>
 #include <os/kernel/thread_admission.hpp>
 
 // The user half of the syscall ABI, checked against the kernel's own readers.
@@ -35,6 +36,9 @@ constexpr std::uint64_t marker_address = 0x0000'BEEF'0000'1000ULL;
 constexpr std::uint64_t marker_length = 0x0000'0000'0000'0040ULL;
 constexpr std::uint64_t marker_deadline = 0x0000'0000'0BAD'1DEAULL;
 constexpr std::uint64_t marker_stack = 0x0000'7FFF'FFFF'0000ULL;
+// Distinct from marker_capability, because map carries two capabilities in two
+// non-adjacent registers and one value for both would let a swap pass.
+constexpr std::uint64_t marker_backing = 0x5EA1'0000'0000'00B2ULL;
 
 // Every register past a call's declared argument count must be zero. Checked
 // for every call rather than asserted once, because the property is a promise
@@ -235,6 +239,44 @@ int main() {
                    "the kernel rejected what the stub encoded for fault_supply")) return 1;
         if (!check(decoded.value().backing == original.backing,
                    "fault_supply did not survive encode/decode")) return 1;
+    }
+
+    // --- map. Four registers, and the trailing-zero assertion is the half that
+    // matters here for the same reason it did for fault_supply: a caller has
+    // nowhere to put a *length*, which is the stronger form of
+    // docs/M7_16_MAP.md's decision that the extent comes from the grant. A fifth
+    // register would arrive exactly here.
+    {
+        const os::kernel::MapSyscall original{
+            static_cast<os::kernel::CapabilityId>(marker_capability),
+            marker_address,
+            static_cast<os::kernel::CapabilityId>(marker_backing),
+            os::kernel::MapPermissions::read_execute,
+        };
+        auto encoded = os::abi::encode_map(original);
+        if (!check(static_cast<bool>(encoded), "map refused encoding")) return 1;
+        if (!check(trailing_registers_zero(encoded.value(), 4U),
+                   "map carried a register beyond its four - a length would "
+                   "arrive exactly here")) return 1;
+
+        auto decoded = os::kernel::decode_map_syscall(
+            encoded.value().arguments[0],
+            encoded.value().arguments[1],
+            encoded.value().arguments[2],
+            encoded.value().arguments[3]);
+        if (!check(static_cast<bool>(decoded),
+                   "the kernel rejected what the stub encoded for map")) return 1;
+        // Each field separately. The two capabilities are in x0 and x2 with an
+        // address between them, which is exactly the shape a transposition
+        // survives if only one field is compared.
+        if (!check(decoded.value().space == original.space,
+                   "map's space did not survive encode/decode")) return 1;
+        if (!check(decoded.value().virtual_address == original.virtual_address,
+                   "map's virtual address did not survive encode/decode")) return 1;
+        if (!check(decoded.value().backing == original.backing,
+                   "map's backing did not survive encode/decode")) return 1;
+        if (!check(decoded.value().permissions == original.permissions,
+                   "map's permissions did not survive encode/decode")) return 1;
     }
 
     // --- yield takes nothing, and still writes the whole register set.

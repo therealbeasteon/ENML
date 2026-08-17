@@ -3,9 +3,9 @@
 namespace os::abi {
 namespace {
 
-// The eight calls this module encodes. Kept beside calls_without_stubs, which
+// The nine calls this module encodes. Kept beside calls_without_stubs, which
 // the test holds against the ABI table so the two partition it exactly.
-constexpr std::array<os::kernel::KernelCall, 8U> calls_with_stubs{
+constexpr std::array<os::kernel::KernelCall, 9U> calls_with_stubs{
     os::kernel::KernelCall::send,
     os::kernel::KernelCall::receive,
     os::kernel::KernelCall::reply,
@@ -14,6 +14,7 @@ constexpr std::array<os::kernel::KernelCall, 8U> calls_with_stubs{
     os::kernel::KernelCall::address_space_create,
     os::kernel::KernelCall::address_space_destroy,
     os::kernel::KernelCall::fault_supply,
+    os::kernel::KernelCall::map,
 };
 
 static_assert(
@@ -179,6 +180,22 @@ os::core::Result<SyscallRequest> encode_fault_supply(
         os::kernel::KernelCall::fault_supply,
         {static_cast<std::uint64_t>(request.backing), 0ULL, 0ULL, 0ULL},
         1U);
+}
+
+os::core::Result<SyscallRequest> encode_map(
+    const os::kernel::MapSyscall& request) noexcept {
+    // Four, and there is deliberately no fifth for a length. The mapping covers
+    // the grant the backing capability names - see docs/M7_16_MAP.md - so the
+    // extent is fixed by the authority rather than restated beside it, and the
+    // encoder has nowhere to put a length that could disagree. That is the same
+    // shape as fault_supply having nowhere to put a region.
+    return encode_call(
+        os::kernel::KernelCall::map,
+        {static_cast<std::uint64_t>(request.space),
+         request.virtual_address,
+         static_cast<std::uint64_t>(request.backing),
+         static_cast<std::uint64_t>(request.permissions)},
+        4U);
 }
 
 } // namespace os::abi
