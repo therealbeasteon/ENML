@@ -1213,7 +1213,14 @@ core_ceiling=4852
 # what PAN leaves working. The EL2 gate moved from cortex-a72 to -cpu max so
 # that one run actually executes with PAN set; cortex-a72 is ARMv8.0 and could
 # only ever prove the feature-absent path.
-machine_ceiling=3374
+# Raised by one line in machine_unmap, and it is a security fix rather than a
+# feature. A sealed root refuses unmap_page, and that refusal was discovered
+# past the "no recoverable failures remain" boundary, where it became
+# os::core::invariant_violated() - a kernel trap any EL0 caller could reach by
+# asking to unmap from a running address space, which is every space a process
+# can name. The check moved above the boundary and became a refusal. Same defect
+# class as M7.15c, in the machine layer instead of at the syscall boundary.
+machine_ceiling=3375
 discovery_ceiling=1272
 #
 # Raised again, fixing the UNIVERSE_MARKER race in the boot proof: entry

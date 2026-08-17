@@ -1109,10 +1109,25 @@ void disarm_stand_in_device_source() noexcept {
         os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::map);
     } else if (next == process_a_thread && el0_map_stage == 3U) {
-        // Now take the data mapping back. A holds both capabilities the call
-        // needs - the space and the backing - which is the whole authority
-        // question docs/M7_16_UNMAP.md answered: a principal may undo only what
-        // it could have done.
+        // Now try to take the data mapping back, and it must be *refused*
+        // because C's translation root is sealed.
+        //
+        // This is not the proof originally written here, and the difference is
+        // worth keeping. The intent was to unmap and then map the same address
+        // again, so that the second success proved the unmap had removed a
+        // translation. It cannot be proven that way today: sealing is what
+        // makes a space runnable, every space a process can name is sealed, and
+        // a sealed root refuses to have a live translation removed - which is
+        // the seal working rather than a gap in it.
+        //
+        // So `unmap` is not yet usable from EL0 at all, and saying that plainly
+        // is better than a proof that demonstrates it against something no
+        // process could reach. It becomes usable when a loader holds a space it
+        // is still building, which is the loader's own increment.
+        //
+        // A holds both capabilities the call needs, so the refusal is
+        // attributable to the seal and not to authority - which is what makes
+        // this worth gating rather than merely observing.
         el0_map_stage = 4U;
         frame.elr_el1 = unmap_entry_virtual;
         frame.x[0] = el0_map_space_cap;
@@ -1120,26 +1135,7 @@ void disarm_stand_in_device_source() noexcept {
         frame.x[2] = el0_map_backing_cap;
         os::kernel::aarch64::clear_outcome(frame);
         frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::unmap);
-    } else if (next == process_a_thread && el0_map_stage == 4U) {
-        // And map it again at the same address, which must now *succeed*.
-        //
-        // This is the stage that proves the unmap did something. A call that
-        // returns success and removes no translation is indistinguishable from
-        // one that worked, right up until something depends on the difference -
-        // and `map` fills absent translations only, so a second success here is
-        // only possible if the translation really became absent. The identical
-        // arguments to stage 1, which was refused, are what make the two
-        // outcomes attributable to the unmap between them.
-        el0_map_stage = 5U;
-        frame.elr_el1 = map_entry_virtual;
-        frame.x[0] = el0_map_space_cap;
-        frame.x[1] = c_map_proof_virtual;
-        frame.x[2] = el0_map_backing_cap;
-        frame.x[3] = static_cast<std::uint64_t>(
-            os::kernel::MapPermissions::read_write);
-        os::kernel::aarch64::clear_outcome(frame);
-        frame.x[8] = static_cast<std::uint64_t>(os::kernel::KernelCall::map);
-    } else if (next == process_a_thread && el0_map_stage == 5U &&
+    } else if (next == process_a_thread && el0_map_stage == 4U &&
                !fault_probe_armed) {
         // Last, because it ends the run: send A to touch an address inside a
         // declared region that has no backing. Everything above has already
@@ -1809,6 +1805,13 @@ extern "C" void cookie_kernel_syscall_entry(
             static_cast<std::size_t>(authorized.value().length));
         if (!removed) {
             os::kernel::aarch64::refuse(*frame, removed.error());
+            // The sealed-root refusal, which is what stage 4 expects. Before
+            // this was a refusal it was os::core::invariant_violated() inside
+            // machine_unmap - a kernel trap any EL0 caller could reach by
+            // naming a running address space. See machine_unmap's own comment.
+            if (el0_map_stage == 4U) {
+                uart_write("COOKIE:M7.16:EL0_UNMAP_SEALED_REFUSED\n");
+            }
             uart_write("COOKIE:M7.16:EL0_UNMAP_REFUSED code=");
             uart_write_hex(static_cast<std::uint64_t>(removed.error().code));
             uart_write("\n");
@@ -1816,6 +1819,9 @@ extern "C" void cookie_kernel_syscall_entry(
         }
         // No value, for the reason map answers with none: the caller named the
         // address, so there is nothing to tell it that it did not say.
+        // Not reachable from this proof today - every space a process can name
+        // is sealed. Left in place rather than replaced with a halt, because
+        // the path is correct and the loader is what will exercise it.
         os::kernel::aarch64::answer(*frame);
         uart_write("COOKIE:M7.16:EL0_UNMAPPED\n");
         return;
@@ -1842,6 +1848,15 @@ extern "C" void cookie_kernel_syscall_entry(
             // With the code, for the reason EL0_CREATE_REFUSED already records:
             // a refusal a caller can act on is also one a reader has to be able
             // to diagnose, and "refused" alone costs a round trip.
+            // Stage 3 asks for a second executable region, and map_authorize
+            // is where that is refused - not the machine layer below, which
+            // never sees the call. The marker lived in the wrong branch on the
+            // first attempt and printed nothing while the refusal itself was
+            // correct: a proof reporting from the wrong side of a check can
+            // fail while the property holds.
+            if (el0_map_stage == 3U) {
+                uart_write("COOKIE:M7.16:EL0_SECOND_TEXT_REFUSED\n");
+            }
             uart_write("COOKIE:M7.16:EL0_MAP_REFUSED code=");
             uart_write_hex(static_cast<std::uint64_t>(authorized.error().code));
             uart_write("\n");
@@ -1878,12 +1893,6 @@ extern "C" void cookie_kernel_syscall_entry(
             // asserts is one that can stop holding without anything going red.
             if (el0_map_stage == 2U) {
                 uart_write("COOKIE:M7.16:EL0_REMAP_REFUSED\n");
-            }
-            // The second executable region, refused. Announced separately
-            // because it is a different rule from the one above and a proof
-            // that reported them with one marker could not say which held.
-            if (el0_map_stage == 3U) {
-                uart_write("COOKIE:M7.16:EL0_SECOND_TEXT_REFUSED\n");
             }
             uart_write("COOKIE:M7.16:EL0_MAP_REFUSED code=");
             uart_write_hex(static_cast<std::uint64_t>(backed.error().code));
@@ -1931,9 +1940,7 @@ extern "C" void cookie_kernel_syscall_entry(
         // Stage 5 is the same address stage 1 was refused at, so saying so
         // separately is what turns "unmap returned success" into "unmap removed
         // the translation".
-        uart_write(el0_map_stage == 5U
-                       ? "COOKIE:M7.16:EL0_REMAPPED_AFTER_UNMAP\n"
-                       : "COOKIE:M7.16:EL0_MAPPED\n");
+        uart_write("COOKIE:M7.16:EL0_MAPPED\n");
         return;
     }
 

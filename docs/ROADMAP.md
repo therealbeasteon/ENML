@@ -475,7 +475,7 @@ milestone document move in the same diff, or two of the three are wrong.
 | Category | Ceiling |
 | --- | --- |
 | core — privileged portable runtime | 4,852 |
-| machine — the AArch64 port, including the physical ledger's reservation table | 3,374 |
+| machine — the AArch64 port, including the physical ledger's reservation table | 3,375 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
 | entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter, the first compiled program's placement and witness check, the EL0 map and unmap dispatch | 2,097 |
 | **total** | **11,592** |
