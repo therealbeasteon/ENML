@@ -474,11 +474,11 @@ milestone document move in the same diff, or two of the three are wrong.
 
 | Category | Ceiling |
 | --- | --- |
-| core — privileged portable runtime | 4,651 |
+| core — privileged portable runtime | 4,764 |
 | machine — the AArch64 port, including the physical ledger's reservation table | 3,374 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
-| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter, the first compiled program's placement and witness check, the EL0 map dispatch | 2,011 |
-| **total** | **11,305** |
+| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter, the first compiled program's placement and witness check, the EL0 map dispatch | 2,021 |
+| **total** | **11,428** |
 
 `core` is the figure comparable to QNX's 605 — but only measured QNX's own way, by semicolons, and only for a kernel of the same scope. Both corrections landed 2026-08-14 (`docs/REFERENCE_NOTES_2026_08_14_QNX.md`): `core` is 1,607 semicolons, **2.7×** the 605, and QNX's microkernel excludes memory management entirely — it lives in `Proc`, a user-space resource manager of 3,924 semicolons. Neither correction moved a ceiling. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -1009,15 +1009,42 @@ A loader can now build an address space it cannot start. This was invisible for
 the same reason `map`'s absence was — nothing consumed the surface in the order a
 loader needs it.
 
-It is a decision rather than an omission, because the obvious fix is the one
-M7.12 refused: `thread_create` must not take an entry. The audit's recommendation
-is that **sealing is an act of construction authority**, which this kernel
-already models as a separate object — `TranslationRootSealer::seal` takes the
-*builder*, not the space — so a `seal` call requires a right only the principal
-that built the space holds, stays one-way, and lets a loader bind the entry the
-image it placed declared without the kernel parsing anything or taking an entry
-from the party that will run under it. It is the seventeenth call, and `abi.hpp`
-says plainly that the next call added is worth deciding on purpose.
+**It is closed by `docs/M7_16_ENTRY_FROM_REGION.md`, and by none of the three
+answers that were on the table.** A seventeenth `seal` call, a third argument to
+`address_space_create`, and a process-manager service all answer the question
+*"who may name the entry?"* — and the references say that is the wrong question.
+
+Apple's Secure Enclave Boot Monitor is handed **"the address and size"** of an
+image, hashes it, makes that region executable, and "starts execution within the
+newly loaded code": a request carrying a *region* and no entry, so there is no
+entry for a caller to get wrong. SCIP expresses W^X as a property of a region;
+PPL and SPTM exist to protect *which memory may execute*. None of them protects
+an address. QNX, for its part, puts process creation in `Proc` rather than in its
+14 calls — a real argument for the service answer, and one that predates a threat
+model in which the loader is not trusted with the code it loads.
+
+So Cookie derives the entry instead: **a thread admitted into a space begins at
+the base of that space's executable region**, which the kernel records when
+`map` establishes a `read_execute` mapping — Cookie's equivalent of the Boot
+Monitor request. No call in the surface takes an entry point, the surface is
+still **16 calls**, and M7.12's threat stops being refused and becomes
+*unrepresentable*: there is no argument to put the wrong address in. That is the
+fifth time this project has removed a capability rather than gating it, after
+`argv`, a program's knowledge of its own layout, `map`'s length, and the outcome
+tag's own register.
+
+Where Cookie improves on the reference rather than copying it: the Boot Monitor
+hashes the region at the transition because the content is its only evidence.
+A `.ckx` region is content-addressed by digest already, so the measurement is in
+the plan rather than recomputed — and "starts execution *within* the loaded
+code", which is vague enough for a boot ROM handing off to one image, becomes
+exact for a general loader: the base of the region, the first byte the digest
+covers.
+
+The constraint it takes on, stated rather than discovered later: **one executable
+region per address space.** Cookie had already accepted that without writing it
+down, because `docs/M7_12_FIRST_PROGRAM.md` refuses dynamic linking outright and
+a program carrying its own copy of all its code has one text region.
 
 *Also still to come:* `unmap`, deliberately not symmetric with `map` and needing
 its own decision about whether a caller may unmap a mapping it did not

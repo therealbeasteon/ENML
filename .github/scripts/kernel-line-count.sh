@@ -145,6 +145,7 @@ core_files=(
     "core/oskernel/include/os/kernel/ipc_syscall.hpp"
     "core/oskernel/include/os/kernel/address_space_syscall.hpp"
     "core/oskernel/include/os/kernel/map_syscall.hpp"
+    "core/oskernel/include/os/kernel/executable_region.hpp"
     "core/oskernel/include/os/kernel/fault_delivery.hpp"
     "core/oskernel/include/os/kernel/fault_region.hpp"
     "core/oskernel/include/os/kernel/memory_grant.hpp"
@@ -167,6 +168,7 @@ core_files=(
     "core/oskernel/src/ipc_syscall.cpp"
     "core/oskernel/src/address_space_syscall.cpp"
     "core/oskernel/src/map_syscall.cpp"
+    "core/oskernel/src/executable_region.cpp"
     "core/oskernel/src/fault_delivery.cpp"
     "core/oskernel/src/fault_region.cpp"
     "core/oskernel/src/memory_grant.cpp"
@@ -1005,7 +1007,35 @@ not_kernel=(
 # See docs/M7_16_MAP.md for the two decisions: the required right on the space
 # is address_space_right_hold rather than a new one, and the length comes from
 # the grant rather than from the caller.
-core_ceiling=4651
+# Raised by M7.16's entry-from-region decision: core 4,651 -> 4,764, entry
+# 2,011 -> 2,021, total 11,305 -> 11,428.
+#
+# These lines exist so that *other* lines never have to. The audit found the
+# loader could not start a program because nothing in the surface seals a
+# translation root, and the three obvious closures all added something to the
+# kernel: a seventeenth call, a third argument to address_space_create, or a
+# process-manager service. This is the fourth answer and it adds none of them -
+# the surface is still 16 calls and no call anywhere takes an entry point.
+#
+# docs/M7_16_ENTRY_FROM_REGION.md is the reasoning and the reference work behind
+# it. The short form: Apple's Secure Enclave Boot Monitor is handed "the address
+# and size" of an image, makes that region executable, and starts execution
+# within it - a request carrying a region and no entry, so there is no entry for
+# a caller to get wrong. Cookie's `map` with read_execute is the same request.
+# The entry becomes the base of the space's executable region, derived by the
+# kernel from its own record rather than named by anyone.
+#
+# So the cost here buys the deletion of an attack rather than a guard against
+# it. M7.12's threat - a loader entering signed code past its own initialisation
+# while the content digest still verifies - stops being refused and becomes
+# unrepresentable, because there is no argument to put the wrong address in.
+# That is the fifth time this project has removed a capability rather than
+# gating it, after argv, a program's knowledge of its own layout, map's length,
+# and the outcome tag's register.
+#
+# ExecutableRegionTable is fixed-size like every other table here, so a caller
+# cannot grow it and a syscall cannot fail for want of kernel memory.
+core_ceiling=4764
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -1407,8 +1437,8 @@ discovery_ceiling=1272
 # inside the kernel, and one that completes - see the comment at the call site
 # for why TTBR0-only translation makes a target space's tables the caller's
 # problem.
-entry_ceiling=2011
-total_ceiling=11305
+entry_ceiling=2021
+total_ceiling=11428
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

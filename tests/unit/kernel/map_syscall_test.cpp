@@ -4,6 +4,7 @@
 #include <os/core/error.hpp>
 #include <os/kernel/address_space_epoch.hpp>
 #include <os/kernel/address_space_syscall.hpp>
+#include <os/kernel/executable_region.hpp>
 #include <os/kernel/kernel.hpp>
 #include <os/kernel/map_syscall.hpp>
 #include <os/kernel/memory_grant.hpp>
@@ -99,6 +100,7 @@ int main() {
     Kernel kernel{};
     AddressSpaceEpochAuthority epochs{};
     MemoryGrantAuthority grants{};
+    ExecutableRegionTable executables{};
 
     if (!check(static_cast<bool>(kernel.create_thread(owner, priority)),
                "owner thread refused")) return 1;
@@ -126,7 +128,7 @@ int main() {
 
     // --- The real thing, and the decision it embodies.
     {
-        auto authorized = kernel.map_authorize(owner, request, epochs, grants);
+        auto authorized = kernel.map_authorize(owner, request, epochs, grants, executables);
         if (!check(static_cast<bool>(authorized), "map_authorize refused a valid map")) return 1;
         if (!check(authorized.value().valid(),
                    "map_authorize returned an incomplete authorization")) return 1;
@@ -149,7 +151,7 @@ int main() {
     // --- Authority, on both capabilities independently.
     {
         // Holding neither.
-        if (!check(refused(kernel.map_authorize(stranger, request, epochs, grants),
+        if (!check(refused(kernel.map_authorize(stranger, request, epochs, grants, executables),
                            address_space_syscall_errors::invalid_capability),
                    "a non-holder mapped into a space")) return 1;
 
@@ -162,7 +164,7 @@ int main() {
         if (!check(static_cast<bool>(destroy_only), "destroy-only mint refused")) return 1;
         MapSyscall wrong_right = request;
         wrong_right.space = destroy_only.value();
-        if (!check(refused(kernel.map_authorize(owner, wrong_right, epochs, grants),
+        if (!check(refused(kernel.map_authorize(owner, wrong_right, epochs, grants, executables),
                            address_space_syscall_errors::invalid_capability),
                    "a capability without hold mapped into a space")) return 1;
 
@@ -175,7 +177,7 @@ int main() {
         if (!check(static_cast<bool>(donate_only), "donate-only mint refused")) return 1;
         MapSyscall wrong_backing = request;
         wrong_backing.backing = donate_only.value();
-        if (!check(!kernel.map_authorize(owner, wrong_backing, epochs, grants),
+        if (!check(!kernel.map_authorize(owner, wrong_backing, epochs, grants, executables),
                    "a backing capability without the map right was accepted")) return 1;
     }
 
@@ -183,7 +185,7 @@ int main() {
     {
         MapSyscall too_high = request;
         too_high.virtual_address = UINT64_MAX - (marker_length / 2ULL);
-        if (!check(refused(kernel.map_authorize(owner, too_high, epochs, grants),
+        if (!check(refused(kernel.map_authorize(owner, too_high, epochs, grants, executables),
                            map_syscall_errors::range_overflows),
                    "a mapping running off the end of the address space was "
                    "accepted, and would have wrapped to a low address")) return 1;
@@ -196,8 +198,86 @@ int main() {
         if (!check(static_cast<bool>(retiring), "begin_destroy refused")) return 1;
         // Still holding the same capability, and the space is on its way out.
         // Mapping into it now would write translations nothing will tear down.
-        if (!check(!kernel.map_authorize(owner, request, epochs, grants),
+        if (!check(!kernel.map_authorize(owner, request, epochs, grants, executables),
                    "a mapping was authorized into a retiring space")) return 1;
+    }
+
+    // --- At most one executable region per space, which is what makes an entry
+    // point unnecessary rather than merely unauthorised.
+    //
+    // docs/M7_16_ENTRY_FROM_REGION.md: a thread admitted into a space begins at
+    // the base of that space's executable region, so the region has to be
+    // unique or "where does this space begin" has more than one answer. This is
+    // the check that keeps it unique, and the table below is what remembers it.
+    {
+        Kernel k{};
+        AddressSpaceEpochAuthority e{};
+        MemoryGrantAuthority g{};
+        ExecutableRegionTable x{};
+        if (!check(static_cast<bool>(k.create_thread(owner, priority)),
+                   "second-fixture owner refused")) return 1;
+        auto auth = k.capabilities().mint(
+            owner, address_space_authority_object, address_space_right_create, false);
+        auto sp = k.address_space_create(owner, auth.value(), e);
+        if (!check(static_cast<bool>(sp), "second-fixture create refused")) return 1;
+        auto gr = g.create(marker_physical, marker_length);
+        auto back = k.capabilities().mint(
+            owner, memory_grant_object_id(gr.value().identity), memory_right_map, true);
+
+        MapSyscall text{
+            .space = sp.value().capability,
+            .virtual_address = marker_virtual,
+            .backing = back.value(),
+            .permissions = MapPermissions::read_execute,
+        };
+
+        // The first executable mapping is fine, and recording it is what the
+        // dispatch does after the machine layer succeeds.
+        auto first = k.map_authorize(owner, text, e, g, x);
+        if (!check(static_cast<bool>(first),
+                   "the first executable mapping was refused")) return 1;
+        if (!check(static_cast<bool>(x.record(
+                       sp.value().epoch.identity(),
+                       first.value().virtual_base, first.value().length)),
+                   "recording the first executable region was refused")) return 1;
+
+        // A second one is refused - at a *different* address, so the refusal is
+        // about the space already being executable and not about the mapping
+        // already existing, which is a different check in a different layer.
+        MapSyscall second_text = text;
+        second_text.virtual_address = marker_virtual + 0x10000ULL;
+        if (!check(refused(k.map_authorize(owner, second_text, e, g, x),
+                           executable_region_errors::already_executable),
+                   "a space was given a second executable region")) return 1;
+
+        // Non-executable mappings are unaffected. The rule is about where
+        // execution may begin, not about how much memory a space may have.
+        MapSyscall data = second_text;
+        data.permissions = MapPermissions::read_write;
+        if (!check(static_cast<bool>(k.map_authorize(owner, data, e, g, x)),
+                   "a data mapping was refused because the space had text")) return 1;
+
+        // And the entry a thread would get is the base of that region - derived,
+        // never named.
+        auto region = x.region_for(sp.value().epoch.identity());
+        if (!check(static_cast<bool>(region), "the recorded region is unreachable")) return 1;
+        if (!check(region.value().base == marker_virtual,
+                   "the entry is not the base of the executable region")) return 1;
+
+        // A space with nothing executable has nowhere to begin, and says so
+        // distinctly rather than looking like a missing capability.
+        auto other = k.address_space_create(owner, auth.value(), e);
+        if (!check(refused(x.region_for(other.value().epoch.identity()),
+                           executable_region_errors::not_executable),
+                   "a space with no text did not report it distinctly")) return 1;
+
+        // Teardown releases the slot, and releasing a space that never had a
+        // region is not an error.
+        if (!check(static_cast<bool>(x.forget(sp.value().epoch.identity())),
+                   "forget refused a live region")) return 1;
+        if (!check(x.live_count() == 0U, "forget did not release the slot")) return 1;
+        if (!check(static_cast<bool>(x.forget(other.value().epoch.identity())),
+                   "forgetting a space with no region was an error")) return 1;
     }
 
     std::fprintf(stderr, "map syscall: ok\n");
