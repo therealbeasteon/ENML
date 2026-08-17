@@ -302,6 +302,12 @@ bool c_ran = false;
 // it was built by boot, before any process existed to ask for one.
 os::kernel::AddressSpaceIdentity c_identity{};
 
+// Which space has executable memory, and therefore where a thread admitted into
+// it would begin. docs/M7_16_ENTRY_FROM_REGION.md - the entry is derived from
+// this rather than named by any caller, which is why no call in the surface
+// takes one.
+os::kernel::ExecutableRegionTable boot_executables{};
+
 // M7.16c: what A is handed so it can map into C's space.
 //
 // Two capabilities, and neither is a physical address or a space identifier. A
@@ -1714,7 +1720,7 @@ extern "C" void cookie_kernel_syscall_entry(
             return;
         }
         auto authorized = boot_kernel.map_authorize(
-            current, decoded.value(), boot_epochs, boot_grants);
+            current, decoded.value(), boot_epochs, boot_grants, boot_executables);
         if (!authorized) {
             os::kernel::aarch64::refuse(*frame, authorized.error());
             // With the code, for the reason EL0_CREATE_REFUSED already records:
@@ -1776,6 +1782,22 @@ extern "C" void cookie_kernel_syscall_entry(
         // kernel that returned the address would be teaching callers to read
         // back what they sent, which is where a disagreement about which one is
         // authoritative starts.
+        // Recorded after the machine layer succeeded, never before: a space
+        // claiming an executable region the mapping then failed to create is one
+        // a thread would be admitted into, to enter memory that is not there.
+        // The uniqueness refusal happened in map_authorize, before any work.
+        if (authorized.value().permissions == os::kernel::MapPermissions::read_execute) {
+            if (!boot_executables.record(
+                    authorized.value().space,
+                    authorized.value().virtual_base,
+                    authorized.value().length)) {
+                // map_authorize said this would be accepted and the record
+                // refused it. That is the two disagreeing about one fact, which
+                // is a kernel invariant violation rather than a caller mistake.
+                uart_write("COOKIE:PANIC:M7_16_EXEC_RECORD\n");
+                halt();
+            }
+        }
         os::kernel::aarch64::answer(*frame);
         uart_write("COOKIE:M7.16:EL0_MAPPED\n");
         return;

@@ -500,7 +500,8 @@ os::core::Result<MapAuthorization> Kernel::map_authorize(
     ThreadId caller,
     const MapSyscall& request,
     const AddressSpaceEpochAuthority& epochs,
-    const MemoryGrantAuthority& grants) const noexcept {
+    const MemoryGrantAuthority& grants,
+    const ExecutableRegionTable& executables) const noexcept {
     // The space first, and with address_space_right_hold. Not a right of its
     // own: holding a space is what furnishing it is, and the split M7.12 drew
     // was between furnishing memory and running code - which is what
@@ -522,6 +523,23 @@ os::core::Result<MapAuthorization> Kernel::map_authorize(
     auto backing = memory_for_capability(
         caller, request.backing, memory_right_map, grants);
     if (!backing) return backing.error();
+
+    // At most one executable region per space, refused here rather than after
+    // the machine layer has done the work.
+    //
+    // This is what makes an entry point unnecessary: a thread admitted into a
+    // space begins at the base of that space's executable region, so the region
+    // has to be unique or "where does this space begin" has more than one
+    // answer - and the answer to an ambiguous question is the one an attacker
+    // picks. See docs/M7_16_ENTRY_FROM_REGION.md, and Apple's Boot Monitor,
+    // which is handed a region and no entry for the same reason.
+    if (request.permissions == MapPermissions::read_execute &&
+        executables.would_refuse(identity.value())) {
+        return os::core::Result<MapAuthorization>{
+            os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                executable_region_errors::already_executable)};
+    }
 
     // The length is the grant's whole extent. Not an argument, so there is no
     // second statement of it to disagree with the authority, and no reconciling

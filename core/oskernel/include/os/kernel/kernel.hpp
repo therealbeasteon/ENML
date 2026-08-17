@@ -11,6 +11,7 @@
 #include <os/kernel/interrupt.hpp>
 #include <os/kernel/interrupt_delivery.hpp>
 #include <os/kernel/ipc_continuation.hpp>
+#include <os/kernel/executable_region.hpp>
 #include <os/kernel/ipc_endpoint.hpp>
 #include <os/kernel/map_syscall.hpp>
 #include <os/kernel/memory_grant.hpp>
@@ -220,7 +221,8 @@ public:
         ThreadId caller,
         const MapSyscall& request,
         const AddressSpaceEpochAuthority& epochs,
-        const MemoryGrantAuthority& grants) const noexcept;
+        const MemoryGrantAuthority& grants,
+        const ExecutableRegionTable& executables) const noexcept;
 
     // Two phases, because retirement genuinely has two. begin invalidates the
     // software epoch so nothing new can bind to the space, and only then may
