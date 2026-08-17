@@ -27,6 +27,13 @@ namespace os::kernel::aarch64 {
 // Result registers are cleared rather than left alone. A call that answers
 // "yes" and leaves x0 holding its own first argument is handing the caller back
 // its own input as though it were an answer, and the caller cannot tell.
+//
+// "Result registers" means x0 and x1 only. x2 and x3 are argument registers
+// that no call uses for results - they carry out-of-band delivery instead (an
+// interrupt service, a pager's region), which rides back on a wakeup rather
+// than answering anything. Clearing them here would destroy it. See the note
+// in syscall_outcome.cpp; that distinction was found by converting the call
+// sites, not by reading the ABI.
 void answer(ExceptionFrame& frame) noexcept;
 
 // The call succeeded and returns one value in x0, or two in x0 and x1.

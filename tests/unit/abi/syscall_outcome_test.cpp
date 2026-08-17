@@ -60,11 +60,17 @@ int main() {
         os::kernel::aarch64::answer(frame);
         auto seen = read_back(frame);
         if (!check(static_cast<bool>(seen), "a valueless answer read as a refusal")) return 1;
-        for (std::size_t index = 0U; index < os::kernel::max_call_arguments; ++index) {
-            if (!check(seen.value().results[index] == 0ULL,
-                       "a valueless answer left a dirty result register - the "
-                       "caller gets its own argument back as an answer")) return 1;
-        }
+        if (!check(seen.value().results[0] == 0ULL && seen.value().results[1] == 0ULL,
+                   "a valueless answer left a dirty result register - the "
+                   "caller gets its own argument back as an answer")) return 1;
+        // x2 and x3 must survive an answer untouched. They are not result
+        // registers for any call; they carry out-of-band delivery - an
+        // interrupt service, a pager's region - written by a different path on
+        // the same resume. An answer that cleared them would empty whichever
+        // of the two happened to run first, which is a bug whose symptom is a
+        // driver quietly servicing nothing.
+        if (!check(seen.value().results[2] != 0ULL && seen.value().results[3] != 0ULL,
+                   "an answer cleared the out-of-band delivery registers")) return 1;
     }
 
     // --- An answer with one value, and with two.
@@ -75,9 +81,10 @@ int main() {
         if (!check(static_cast<bool>(seen), "a one-value answer read as a refusal")) return 1;
         if (!check(seen.value().results[0] == 0x5EA1'0000'0000'00A1ULL,
                    "a one-value answer lost its value")) return 1;
-        if (!check(seen.value().results[1] == 0ULL && seen.value().results[2] == 0ULL &&
-                       seen.value().results[3] == 0ULL,
-                   "a one-value answer left later registers dirty")) return 1;
+        if (!check(seen.value().results[1] == 0ULL,
+                   "a one-value answer left the second result register dirty")) return 1;
+        if (!check(seen.value().results[2] != 0ULL && seen.value().results[3] != 0ULL,
+                   "a one-value answer cleared the out-of-band registers")) return 1;
     }
     {
         auto frame = dirty_frame();
@@ -86,8 +93,8 @@ int main() {
         if (!check(static_cast<bool>(seen), "a two-value answer read as a refusal")) return 1;
         if (!check(seen.value().results[0] == 0x1111ULL && seen.value().results[1] == 0x2222ULL,
                    "a two-value answer lost a value or transposed them")) return 1;
-        if (!check(seen.value().results[2] == 0ULL && seen.value().results[3] == 0ULL,
-                   "a two-value answer left later registers dirty")) return 1;
+        if (!check(seen.value().results[2] != 0ULL && seen.value().results[3] != 0ULL,
+                   "a two-value answer cleared the out-of-band registers")) return 1;
     }
 
     // --- A refusal carries the whole Error, domain included.
