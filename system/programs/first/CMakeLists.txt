@@ -36,6 +36,12 @@ add_executable(cookie_first_program
     ${PROJECT_SOURCE_DIR}/core/osabi/src/syscall.cpp
     ${PROJECT_SOURCE_DIR}/core/osabi/src/syscall_aarch64.cpp
     ${PROJECT_SOURCE_DIR}/core/oskernel/src/abi.cpp
+    # memcpy and friends. -Os emits a memcpy call for the struct copy inside
+    # Result's construct_at, and there is no libc at EL0 to satisfy it. Reused
+    # from the kernel image rather than written again here: two definitions of
+    # memcpy in one repository is two things that can differ, and this file is
+    # already the answer to exactly this question one privilege level up.
+    ${PROJECT_SOURCE_DIR}/core/oskernel/boot/freestanding_memory.cpp
 )
 
 target_include_directories(cookie_first_program PRIVATE
