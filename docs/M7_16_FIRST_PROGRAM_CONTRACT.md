@@ -114,6 +114,47 @@ the kernel checks the arguments are the computed ones, and the kernel emits the
 marker. A hand-assembled program could pass a constant; the check should be
 something a compiler had to produce.
 
+## The x19 marker cannot be the proof, and that is a blocker
+
+Found while starting the code, and recorded here because it invalidates the
+obvious plan.
+
+All three existing EL0 "programs" prove they ran the same way: the instruction at
+their entry sets **x19** to a per-program constant, and the kernel reads
+`frame->x[19]` at the `svc`. That works precisely because they are hand-written
+instruction words, where `movz x19, #marker` is guaranteed to be the instruction
+immediately before the trap.
+
+**A compiled program going through `core/osabi` cannot use it.** x19 is
+callee-saved under AAPCS64. The program would set x19 and then *call*
+`os::abi::trap`, and if the compiler translating `syscall_aarch64.cpp` uses x19
+as one of its scratch callee-saved registers, it saves the caller's value on
+entry and restores it on exit — so x19 holds *osabi's* value at the moment the
+`svc` executes, which is the moment the kernel samples the frame. The value is
+restored by the time `trap` returns, which is too late: the observation already
+happened. Nothing in the source says this will occur and nothing says it will
+not, which is the worst version of it.
+
+A file-scope `register std::uint64_t m asm("x19")` does not fix it either. That
+reserves x19 within the translation unit that declares it, and `trap` is in
+another one.
+
+**Two things follow, and the second is the reusable lesson.**
+
+The first: the first compiled program needs a proof carried in the call's *own*
+argument registers, which the stub writes and the ABI defines — not in a register
+set outside the call by a neighbouring instruction. `yield` takes zero arguments
+and so cannot carry one, so the proof call has to be one the kernel already
+decodes arguments for.
+
+The second: this document reasoned carefully about what a program is *handed* and
+not at all about how its execution is *observed*, and the observation is the part
+that broke. Its own exit criteria already said the proof must be "a kernel-observed
+syscall effect, not a print, and something a constant could not have produced" —
+and x19 is neither: it is set outside the call, and it is a constant. **The
+criteria were right and the plan quietly failed to satisfy them**, which is what a
+criterion is for.
+
 ## What is deliberately still open
 
 - **The loader itself.** Executing a `.ckx` plan against the syscall surface is
