@@ -1271,8 +1271,33 @@ discovery_ceiling=1272
 # pointer to another one" a standing constraint on every future line of kernel
 # code, enforced by a link failure far from whatever introduced it. Twenty
 # instructions cost once and constrain nothing.
-entry_ceiling=1823
-total_ceiling=10994
+#
+# Raised by M7.15c: entry 1,823 -> 1,846, total 10,994 -> 11,017. These 23 lines
+# fix a denial of service, and it is worth naming plainly because the number
+# looks like refactoring.
+#
+# Every malformed system call halted the machine. An unknown call number, a call
+# whose authority class this image does not admit, a call with no dispatch, a
+# decode failure - each reached halt(). `mov x8, #999; svc #0` from the
+# least-privileged code in the system stopped the whole kernel: two
+# instructions, available to exactly the code the capability model exists to
+# confine. Nothing had noticed because every EL0 program in the tree is
+# hand-written by the boot proof and none of them issues a bad call. The defect
+# was in what the kernel would do, not in what it did.
+#
+# They are refusals now, which is what M7.14's return convention was for - a
+# refusal is an answer, so the caller learns it asked for something impossible
+# and nobody else pays for it. `refuse_call` prints a non-panic marker as well,
+# because a proof whose programs never issue a bad call should never emit one
+# and a silent refusal would hide the day it does.
+#
+# One check stays fatal and is now checked first: a thread this image never
+# admitted is the scheduler resuming something nothing created, which is a
+# kernel invariant violation rather than a caller's mistake. Separating it also
+# stops a bad call number from a known thread being diagnosed as an unknown
+# thread.
+entry_ceiling=1846
+total_ceiling=11017
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

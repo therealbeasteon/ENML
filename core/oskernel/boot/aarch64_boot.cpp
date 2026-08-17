@@ -61,6 +61,13 @@ namespace {
 namespace boot_syscall_errors {
 inline constexpr std::uint32_t pool_full = 900U;
 inline constexpr std::uint32_t destroy_refused = 901U;
+// The call number names a call this image has no dispatch for. Distinct from
+// os::kernel::errors::unknown_call, which means it names no call at all -
+// "not built here" and "does not exist" are different answers, and the surface
+// is a published sixteen-entry table so telling them apart discloses nothing.
+inline constexpr std::uint32_t call_not_dispatched = 902U;
+// The call exists and this image does not admit its authority class.
+inline constexpr std::uint32_t authority_not_admitted = 903U;
 } // namespace boot_syscall_errors
 
 using os::kernel::HardwareRange;
@@ -1246,20 +1253,72 @@ extern "C" void cookie_aarch64_el0_fault(
     uart_write("COOKIE:M7.11:SURVIVED_FAULT\n");
 }
 
+// Refuses a call and says so on the console.
+//
+// The refusal is the answer the caller gets; the marker is for whoever reads
+// the log. Both matter and they are different audiences - before M7.15c these
+// conditions halted, so the log line was the *only* output and the caller got
+// nothing at all.
+//
+// Deliberately not a COOKIE:PANIC line. The boot proof's gate greps for those,
+// and a refused call is now a normal outcome rather than a stopped machine; a
+// panic marker here would make an ordinary event fail the run. It still prints,
+// because a proof whose EL0 programs never issue a bad call should never emit
+// one of these, and a silent refusal would hide the day one does.
+static void refuse_call(
+    os::kernel::aarch64::ExceptionFrame& frame,
+    std::uint32_t code,
+    const char* what) noexcept {
+    os::kernel::aarch64::refuse(
+        frame, os::core::make_error(os::core::ErrorDomain::kernel, code));
+    uart_write("COOKIE:M7.15:REFUSED ");
+    uart_write(what);
+    uart_write(" code=");
+    uart_write_hex(static_cast<std::uint64_t>(code));
+    uart_write("\n");
+}
+
 extern "C" void cookie_kernel_syscall_entry(
     os::kernel::aarch64::ExceptionFrame* frame) noexcept {
     if (frame == nullptr) halt();
-    auto call = os::kernel::decode_call(static_cast<std::uint16_t>(frame->x[8]));
     const auto current = boot_preemption.running();
-    if (!call ||
-        (call.value().authority != os::kernel::CallAuthority::unprivileged &&
-         call.value().authority != os::kernel::CallAuthority::interrupt_control &&
-         call.value().authority != os::kernel::CallAuthority::process_control &&
-         call.value().authority != os::kernel::CallAuthority::memory_control) ||
-        (current != process_a_thread && current != process_b_thread &&
-         !(c_thread != os::kernel::invalid_thread && current == c_thread))) {
-        uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
+
+    // A thread this image never admitted is a kernel invariant violation rather
+    // than a caller's mistake - the scheduler resumed something nothing
+    // created. It stays fatal, and it is checked first so a bad call number
+    // from a known thread is never diagnosed as an unknown thread.
+    if (current != process_a_thread && current != process_b_thread &&
+        !(c_thread != os::kernel::invalid_thread && current == c_thread)) {
+        uart_write("COOKIE:PANIC:EL0_UNEXPECTED_THREAD\n");
         halt();
+    }
+
+    // Everything below is a value an EL0 caller chose, so none of it may be
+    // fatal.
+    //
+    // Before M7.15c every one of these halted the machine. `mov x8, #999; svc
+    // #0` from the least-privileged code in the system stopped the whole
+    // kernel: a denial of service reachable in two instructions by exactly the
+    // code the capability model exists to confine. Nothing had noticed because
+    // every EL0 program here is hand-written by the proof and none of them
+    // issues a bad call - the defect was in what the kernel would do, not in
+    // what it did.
+    //
+    // A malformed call is refused and the caller resumes, which is what the
+    // return convention is for: a refusal is an answer, so the caller learns it
+    // asked for something impossible and nobody else pays for it.
+    auto call = os::kernel::decode_call(static_cast<std::uint16_t>(frame->x[8]));
+    if (!call) {
+        refuse_call(*frame, os::kernel::errors::unknown_call, "UNKNOWN_CALL");
+        return;
+    }
+    if (call.value().authority != os::kernel::CallAuthority::unprivileged &&
+        call.value().authority != os::kernel::CallAuthority::interrupt_control &&
+        call.value().authority != os::kernel::CallAuthority::process_control &&
+        call.value().authority != os::kernel::CallAuthority::memory_control) {
+        refuse_call(
+            *frame, boot_syscall_errors::authority_not_admitted, "AUTHORITY");
+        return;
     }
 
     // process_control is admitted above for the two address-space calls, and
@@ -1272,8 +1331,9 @@ extern "C" void cookie_kernel_syscall_entry(
     if (call.value().authority == os::kernel::CallAuthority::process_control &&
         call.value().call != os::kernel::KernelCall::address_space_create &&
         call.value().call != os::kernel::KernelCall::address_space_destroy) {
-        uart_write("COOKIE:PANIC:EL0_PROCESS_CONTROL\n");
-        halt();
+        refuse_call(
+            *frame, boot_syscall_errors::call_not_dispatched, "PROCESS_CONTROL");
+        return;
     }
     // Same rule for memory_control, and the same reason: map and unmap carry
     // that authority and have no dispatch here, so admitting the class without
@@ -1281,15 +1341,16 @@ extern "C" void cookie_kernel_syscall_entry(
     // wrong answer rather than a refusal.
     if (call.value().authority == os::kernel::CallAuthority::memory_control &&
         call.value().call != os::kernel::KernelCall::fault_supply) {
-        uart_write("COOKIE:PANIC:EL0_MEMORY_CONTROL\n");
-        halt();
+        refuse_call(
+            *frame, boot_syscall_errors::call_not_dispatched, "MEMORY_CONTROL");
+        return;
     }
 
     if (call.value().call == os::kernel::KernelCall::fault_supply) {
         auto decoded = os::kernel::decode_fault_supply_syscall(frame->x[0]);
         if (!decoded) {
-            uart_write("COOKIE:PANIC:FAULT_SUPPLY_DECODE\n");
-            halt();
+            refuse_call(*frame, decoded.error().code, "FAULT_SUPPLY_DECODE");
+            return;
         }
         // The pager's claim on the memory it is offering. memory_right_map
         // rather than donate: backing is memory to be mapped for someone else,
@@ -1371,8 +1432,8 @@ extern "C" void cookie_kernel_syscall_entry(
         auto decoded = os::kernel::decode_address_space_create_syscall(
             frame->x[0], frame->x[1]);
         if (!decoded) {
-            uart_write("COOKIE:PANIC:EL0_AS_DECODE\n");
-            halt();
+            refuse_call(*frame, decoded.error().code, "AS_CREATE_DECODE");
+            return;
         }
         // Every failure below returns to A rather than halting, because each
         // one is a condition a caller could legitimately provoke - no free
@@ -1416,8 +1477,8 @@ extern "C" void cookie_kernel_syscall_entry(
     if (call.value().call == os::kernel::KernelCall::address_space_destroy) {
         auto decoded = os::kernel::decode_address_space_destroy_syscall(frame->x[0]);
         if (!decoded) {
-            uart_write("COOKIE:PANIC:EL0_AS_DECODE\n");
-            halt();
+            refuse_call(*frame, decoded.error().code, "AS_DESTROY_DECODE");
+            return;
         }
         if (!destroy_el0_address_space(current, decoded.value().space)) {
             os::kernel::aarch64::refuse(
