@@ -86,12 +86,18 @@ namespace {
 // Placed by section attribute rather than by link order. Link order is a
 // property of how the object files happen to be listed, and the decoy's position
 // is a security property: it has to be the thing at the base of the region.
-__attribute__((section(".text.decoy"), used))
-extern "C" [[noreturn]] void cookie_first_decoy() noexcept {
+//
+// Written as `[[gnu::section]]` after `extern "C"` rather than as a leading
+// `__attribute__`. GCC rejects the latter here - "attributes are not permitted in
+// this position" - because a GNU attribute may not precede a linkage
+// specification. The C++ attribute form goes exactly where `[[noreturn]]` already
+// goes, which is the position the compiler's own note points at.
+extern "C" [[noreturn, gnu::section(".text.decoy"), gnu::used]]
+void cookie_first_decoy() noexcept {
     carry(cookie::first::decoy_seed);
 }
 
-__attribute__((section(".text.entry"), used))
-extern "C" [[noreturn]] void cookie_first_entry() noexcept {
+extern "C" [[noreturn, gnu::section(".text.entry"), gnu::used]]
+void cookie_first_entry() noexcept {
     carry(cookie::first::witness_seed);
 }
