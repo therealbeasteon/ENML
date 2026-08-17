@@ -22,7 +22,21 @@ inline constexpr std::array<CallDescriptor, 16U> call_table{
     // server that could be blocked by a client refusing to collect its answer
     // would be a denial of service with no defence.
     CallDescriptor{KernelCall::send, CallAuthority::unprivileged, 3U, true},
-    CallDescriptor{KernelCall::receive, CallAuthority::unprivileged, 2U, true},
+    // Three, not two. This said two from the day the surface was written -
+    // before the kernel existed - and receive later gained its relative
+    // deadline in x2 without the table being told. `decode_ipc_receive_syscall`
+    // takes three register values and the machine layer passes `frame.x[2]`,
+    // so the ABI's own description of the call has disagreed with the code
+    // that reads it ever since.
+    //
+    // Nothing had noticed because nothing consumed `argument_count`; it was
+    // documentation that happened to live in a struct. M7.14's encoder is its
+    // first consumer, which is exactly why the field has to be right now: an
+    // encoder trusting "two" would write zero into x2, and every bounded
+    // receive would silently become an unbounded one. A caller that believes
+    // it has a timeout and does not is the failure
+    // `ipc_syscall_errors::deadline_unsupported` was created to refuse loudly.
+    CallDescriptor{KernelCall::receive, CallAuthority::unprivileged, 3U, true},
     CallDescriptor{KernelCall::reply, CallAuthority::unprivileged, 3U, false},
     CallDescriptor{KernelCall::yield, CallAuthority::unprivileged, 0U, false},
     CallDescriptor{KernelCall::thread_exit, CallAuthority::unprivileged, 1U, false},
