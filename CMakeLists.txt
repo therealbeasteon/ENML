@@ -75,6 +75,47 @@ elseif(MSVC)
     endif()
 endif()
 
+# Where Cookie's first compiled program is linked, and how far into its region
+# the real entry sits. Declared here rather than in either consumer, because
+# there are two and they must not disagree: system/programs/first links the
+# program at these addresses, and core/oskernel's boot image maps its region and
+# seals its entry at them.
+#
+# docs/M7_16_FIRST_PROGRAM_CONTRACT.md makes this a requirement rather than a
+# tidiness preference - "the link address and the plan are derived from one
+# source" - because PR #145 already found the defect it prevents once: the ARM64
+# Image header declared a text_offset the image was not linked at, and it
+# survived because only one of the two statements was ever read. Neither
+# consumer carries a default, so a build that fails to pass one of these fails to
+# link rather than quietly using a second opinion.
+#
+# The base is the address the boot proof already maps a created space's code
+# region at. It is deliberately one no other space in the image maps, which is
+# what makes "this program ran in the space created for it" provable by the
+# address it executed from.
+set(COOKIE_FIRST_PROGRAM_BASE "0x21000000" CACHE STRING
+    "Virtual address the boot proof maps the first program's code region at")
+# Not tuned. It only has to be larger than the decoy compiles to, and the linker
+# script's own ASSERT is what enforces that rather than the number being trusted.
+set(COOKIE_FIRST_ENTRY_OFFSET "0x200" CACHE STRING
+    "Offset into the first program's region at which its real entry sits")
+
+# Where the program's flat image lands, and the third thing both directories need
+# to agree about.
+#
+# A plain path rather than $<TARGET_FILE:cookie_first_program>.bin, which is what
+# this was first written as and what broke the build: `OBJECT_DEPENDS` does not
+# expand generator expressions, so ninja was handed the literal string and
+# reported it as a missing file with no rule to make it. `target_compile_
+# definitions` *does* expand them, so the two spellings of one path disagreed
+# about what a path even was - which is the same defect as two spellings of one
+# address, in a different notation.
+#
+# system/programs/first asserts this matches its own binary directory, so the
+# layout assumed here is checked rather than hoped for.
+set(COOKIE_FIRST_PROGRAM_BIN
+    "${PROJECT_BINARY_DIR}/system/programs/first/cookie_first_program.bin")
+
 add_subdirectory(core/oscore)
 add_subdirectory(core/osipc)
 add_subdirectory(core/osservice)

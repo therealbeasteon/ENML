@@ -234,6 +234,7 @@ discovery_files=(
 entry_files=(
     "core/oskernel/boot/aarch64_boot.cpp"
     "core/oskernel/boot/aarch64_start.S"
+    "core/oskernel/boot/first_program_image.S"
     "core/oskernel/boot/freestanding_memory.cpp"
 )
 
@@ -1296,8 +1297,46 @@ discovery_ceiling=1272
 # kernel invariant violation rather than a caller's mistake. Separating it also
 # stops a bad call number from a known thread being diagnosed as an unknown
 # thread.
-entry_ceiling=1846
-total_ceiling=11017
+# Raised by M7.16b: entry 1,846 -> 1,889, total 11,017 -> 11,060. This is the
+# milestone that ends "everything that has ever executed at EL0 on Cookie is
+# uint32_t instruction words written into a page by aarch64_boot.cpp", and the
+# lines are what the kernel needs to place a compiled program and to check that
+# it ran.
+#
+# What was deleted matters as much as what was added. install_process_c_program
+# wrote eight hand-assembled words - a decoy that set the wrong marker and
+# yielded, then an entry that set the right one - and it is gone. In its place a
+# flat copy of the bytes core/oskernel/boot/first_program_image.S embeds, which
+# is the whole placement mechanism: the kernel does not parse this image, per
+# docs/M7_12_FIRST_PROGRAM.md's refusal to put a parser at EL1 over structured
+# input.
+#
+# The rest is the check. The program carries a witness - eight multiply-xor
+# rounds over a seed read through a volatile lvalue - in the argument register of
+# a call the kernel already decodes, and the kernel folds the same seed from the
+# same header. That is the part a constant could not have produced, which is what
+# docs/M7_16_FIRST_PROGRAM_CONTRACT.md's exit criteria demand and what the x19
+# marker could not deliver: x19 is callee-saved, so a compiled program cannot
+# guarantee its value at the instant of an svc it reached through a function
+# call. The decoy folds a different seed, so entering the region at its base
+# instead of at the sealed entry is reported as its own failure rather than as a
+# wrong witness.
+#
+# Also here: the startup contract, checked rather than assumed. The frame is
+# built with one capability in x0 and every other register zero, and this image
+# verifies that before admitting it, because this image is the only thing that
+# can establish the property and the only thing that can get it wrong.
+#
+# What these lines deliberately do NOT include is the program itself. The bytes
+# first_program_image.S embeds are counted as the eight directive lines that
+# embed them and no more, and that is correct under this gate's own boundary
+# rather than a convenience: the boundary is code that executes with *kernel
+# privilege* in the shipped image, and those bytes execute at EL0 in an address
+# space with no kernel mappings of their own. Stated here so the exclusion is a
+# decision on the page - the program's source is 100-odd lines and gets its own
+# review under system/programs/first, not silence.
+entry_ceiling=1889
+total_ceiling=11060
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance
