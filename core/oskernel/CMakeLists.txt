@@ -97,6 +97,7 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         add_executable(cookie_kernel_aarch64_boot
             boot/aarch64_start.S
             boot/aarch64_boot.cpp
+            boot/first_program_image.S
             boot/freestanding_memory.cpp
             src/abi.cpp
             src/syscall_outcome.cpp
@@ -144,7 +145,30 @@ if(CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
         )
         target_include_directories(cookie_kernel_aarch64_boot PRIVATE
             ${CMAKE_CURRENT_SOURCE_DIR}/include
-            ${PROJECT_SOURCE_DIR}/core/oscore/include)
+            ${PROJECT_SOURCE_DIR}/core/oscore/include
+            # For cookie/first_witness.hpp. The kernel checks the witness the
+            # first program computes, so both sides must share one definition of
+            # the fold - the header is that definition and neither side restates
+            # it. Nothing else of the program's is visible from here.
+            ${PROJECT_SOURCE_DIR}/system/programs/first/include)
+
+        # The three facts the boot image needs about the program it carries: its
+        # bytes, where they are mapped, and where its real entry sits.
+        #
+        # $<TARGET_FILE:cookie_first_program> names a target this directory has
+        # not seen yet - system/programs/first is added later - and that is fine:
+        # a generator expression is resolved once every directory has been read.
+        # The build-order dependency cannot be expressed that way and is declared
+        # over there, where both targets exist.
+        #
+        # The two addresses come from the top-level CMakeLists.txt, which is
+        # their only definition; the program's linker script is handed the same
+        # two and carries no default of its own, so an image that maps the region
+        # somewhere the program was not linked cannot be built.
+        target_compile_definitions(cookie_kernel_aarch64_boot PRIVATE
+            COOKIE_FIRST_PROGRAM_IMAGE="$<TARGET_FILE:cookie_first_program>.bin"
+            COOKIE_FIRST_PROGRAM_BASE=${COOKIE_FIRST_PROGRAM_BASE}
+            COOKIE_FIRST_ENTRY_OFFSET=${COOKIE_FIRST_ENTRY_OFFSET})
         target_compile_features(cookie_kernel_aarch64_boot PRIVATE cxx_std_20)
         # -mstrict-align is required, not a hardening preference.
         #

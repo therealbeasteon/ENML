@@ -4,19 +4,35 @@
 # that machine and nothing else can run it. Guarded the same way
 # cookie_kernel_aarch64_boot is, and for the same reason: a target that cannot
 # link on a host build must not be part of a host build.
+#
+# The two conditions are written to match core/oskernel/CMakeLists.txt's guard on
+# cookie_kernel_aarch64_boot exactly, including the anchoring, and that is a
+# requirement rather than tidiness: the boot image names
+# $<TARGET_FILE:cookie_first_program> in a compile definition, so a configuration
+# that builds the image without this target fails at generate time with "No
+# target". A looser pattern here happens to be safe today only because it is a
+# superset of the kernel's - which is a fact about two regular expressions, not
+# a property anyone should have to re-derive.
 if(NOT EMNL_BUILD_AARCH64_BOOT_IMAGE)
     return()
 endif()
-if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|arm64|AARCH64|ARM64")
+if(NOT CMAKE_SYSTEM_PROCESSOR MATCHES "^(aarch64|arm64)$")
     return()
 endif()
 
-# The base address is passed to the linker rather than written in the script, so
-# that the day the boot proof maps a process's code somewhere else there is one
-# place to change. docs/M7_16_FIRST_PROGRAM_CONTRACT.md: the link address and the
-# plan's region address come from one definition.
-set(COOKIE_FIRST_PROGRAM_BASE "0x10000000" CACHE STRING
-    "Virtual address the boot proof maps a process's code region at")
+# The two addresses this program is linked at come from the top-level
+# CMakeLists.txt, which declares them once for both consumers - this target and
+# the kernel boot image that maps the region and seals the entry. They are not
+# defaulted here, and the linker script no longer defaults them either: a build
+# that fails to supply one must fail, not link at a second opinion.
+if(NOT DEFINED COOKIE_FIRST_PROGRAM_BASE OR NOT DEFINED COOKIE_FIRST_ENTRY_OFFSET)
+    message(FATAL_ERROR
+        "COOKIE_FIRST_PROGRAM_BASE and COOKIE_FIRST_ENTRY_OFFSET are declared by "
+        "the top-level CMakeLists.txt and are what keep this program's link "
+        "address and the kernel's mapped region from being two statements of one "
+        "address. Building this directory without them would produce a program "
+        "linked somewhere the kernel does not map.")
+endif()
 
 # osabi's sources are compiled into this target rather than linked from the
 # `osabi` library, which is the pattern cookie_kernel_aarch64_boot already uses.
@@ -84,6 +100,7 @@ target_link_options(cookie_first_program PRIVATE
     -Wl,--build-id=none
     -Wl,--gc-sections
     -Wl,--defsym,COOKIE_FIRST_PROGRAM_BASE=${COOKIE_FIRST_PROGRAM_BASE}
+    -Wl,--defsym,COOKIE_FIRST_ENTRY_OFFSET=${COOKIE_FIRST_ENTRY_OFFSET}
     -Wl,-T,${CMAKE_CURRENT_SOURCE_DIR}/first_program.ld)
 set_target_properties(cookie_first_program PROPERTIES
     LINK_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/first_program.ld)
@@ -106,3 +123,36 @@ add_custom_command(TARGET cookie_first_program POST_BUILD
         $<TARGET_FILE:cookie_first_program>
         $<TARGET_FILE:cookie_first_program>.bin
     COMMENT "Flattening the first program to the bytes a loader would place")
+
+# The boot image carries those bytes: core/oskernel/boot/first_program_image.S
+# `.incbin`s the .bin above, so the program travels inside the one artefact boot
+# places and is covered by whatever measures it - docs/M7_12_FIRST_PROGRAM.md,
+# "boot places exactly one image".
+#
+# Declared here rather than in core/oskernel/CMakeLists.txt because this is the
+# first point at which both targets exist: the kernel's directory is added
+# first, so `add_dependencies` there would name a target CMake has not seen. The
+# compile definition that carries the *path* does live over there, because a
+# generator expression is resolved after every directory has been read, and
+# because the file list that gate .github/scripts/kernel-line-count.sh reads must
+# stay in one place.
+if(NOT TARGET cookie_kernel_aarch64_boot)
+    # Not reachable through the guards at the top of this file, which are the
+    # kernel image's own. Checked anyway rather than assumed, because the failure
+    # it would otherwise produce is a generate-time "No target
+    # cookie_first_program" from a compile definition three directories away,
+    # which says nothing about the guard that drifted.
+    message(FATAL_ERROR
+        "cookie_kernel_aarch64_boot does not exist, so nothing would carry this "
+        "program into an image. The guards at the top of this file and the ones "
+        "on that target have diverged.")
+endif()
+add_dependencies(cookie_kernel_aarch64_boot cookie_first_program)
+# Ordering alone is not enough: without this the assembler's output is not
+# rebuilt when the program changes, and the boot image would keep embedding
+# whichever version of the program it first saw - an incremental build would then
+# boot yesterday's program and report today's as having run.
+set_property(
+    SOURCE ${PROJECT_SOURCE_DIR}/core/oskernel/boot/first_program_image.S
+    DIRECTORY ${PROJECT_SOURCE_DIR}/core/oskernel
+    APPEND PROPERTY OBJECT_DEPENDS $<TARGET_FILE:cookie_first_program>.bin)

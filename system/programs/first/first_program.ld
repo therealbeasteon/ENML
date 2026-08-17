@@ -17,18 +17,21 @@
 
 ENTRY(cookie_first_entry)
 
-/* Where the boot proof maps a process's code region. One definition: the build
- * passes it in, so this file and the kernel cannot disagree about it.
+/* Where the boot proof maps this program's code region, and how far into it the
+ * real entry sits. Both are supplied by the build with --defsym, from the two
+ * variables the top-level CMakeLists.txt declares, and the kernel's boot image
+ * is compiled against the same two.
+ *
+ * Deliberately no `DEFINED(X) ? X : <default>` fallback, which is what this file
+ * used to carry. A fallback is a second definition: it makes a build that failed
+ * to pass the address link successfully at the wrong one, and the disagreement
+ * would then be discovered by a machine that entered a page containing nothing.
+ * Without it, the same mistake is an undefined-symbol error at link time.
  */
-COOKIE_FIRST_PROGRAM_BASE = DEFINED(COOKIE_FIRST_PROGRAM_BASE)
-    ? COOKIE_FIRST_PROGRAM_BASE : 0x10000000;
-
-/* The decoy sits at the base; the real entry is a fixed distance above it, far
- * enough that the decoy's own code cannot reach it by falling through. 0x200 is
- * not tuned - it is simply larger than either function compiles to, and the
- * ASSERT below is what enforces that rather than the number being trusted.
- */
-COOKIE_FIRST_ENTRY_OFFSET = 0x200;
+ASSERT(DEFINED(COOKIE_FIRST_PROGRAM_BASE),
+       "COOKIE_FIRST_PROGRAM_BASE was not passed; the build must supply the one address the kernel also maps")
+ASSERT(DEFINED(COOKIE_FIRST_ENTRY_OFFSET),
+       "COOKIE_FIRST_ENTRY_OFFSET was not passed; the build must supply the one offset the kernel also seals")
 
 SECTIONS
 {

@@ -182,3 +182,69 @@ criterion is for.
 - Proven under `kernel-arm64-native`. The M7.10 count moves only by what the
   kernel needs to check the above — the program itself is not kernel code and
   must not appear in that count.
+
+## Where the milestone landed
+
+Two increments, and the split is worth recording because the first one looked
+finished and was not.
+
+**M7.16a — a program a compiler produced (PRs #161, #163).**
+`system/programs/first/` is a C++ translation unit built by this repository's
+toolchain, reaching the kernel through `core/osabi`, gated on five properties a
+program that merely linked would not have: an `svc` is present, the decoy is at
+the region base and the entry at the declared offset, the entry is
+instruction-aligned, the flat image fits one page, and there are zero
+relocations. **Nothing ran it.** The gap is easy to understate and was stated
+plainly at the time: a program that exists in the build tree and a program that
+executes are separated by everything below.
+
+**M7.16b — it runs.** The boot proof's third process no longer has eight
+hand-assembled words installed into its code page; it has this program's flat
+image, embedded in the boot artefact by
+`core/oskernel/boot/first_program_image.S` and copied into the page its address
+space maps. `COOKIE:M7.16:PROGRAM_RAN` is gated by `kernel-arm64-native`.
+
+Against the criteria above, measured rather than claimed: all five are met.
+The one worth expanding is the fourth, because it is the one the original plan
+failed. The program folds a seed through eight multiply-xor rounds, reading it
+through a `volatile` lvalue so the compiler must emit the arithmetic instead of
+one `movz`, and carries the result in the single argument register of a call the
+kernel already decodes. The kernel folds the same seed from the same header —
+`cookie/first_witness.hpp`, included by both sides so there is one definition of
+the algorithm and no second opinion to drift from — and compares. A
+hand-assembled program could have produced the value only by containing it, and
+the fold is chosen so that no single-instruction materialisation of the result
+exists.
+
+**What replacing the third process cost, stated because it is a real loss.**
+That process used to carry a universe marker in `x19`, checked on every timer
+interrupt alongside process A's and B's. A compiled program cannot promise a
+value in a callee-saved register at the instant of an `svc` it reached through a
+function call, which is the blocker recorded above, so the marker half of that
+check is now excused for this thread. The thread half is not: "the scheduler
+resumed something this proof never admitted" stays fatal, because it stays
+exactly as serious. And what the marker stood for — that the thread entered
+where its space's sealed root declared, and not at the base of its mapping — is
+now established by the witness instead, which is a stronger statement made at a
+better place: the decoy at the region base folds a *different* seed, so entering
+at the wrong address is reported as its own failure rather than as a wrong
+value.
+
+**The address is one definition, and it is now genuinely one.** The top-level
+`CMakeLists.txt` declares the base and the entry offset; the linker script is
+handed both and carries no fallback of its own, the kernel image is compiled
+against the same two, and the CI check reads them back out of that same file
+rather than restating them. That last part was a defect this milestone
+introduced and removed in the same breath: the check shipped in M7.16a with the
+address written as a literal, which made it a fourth statement of a number the
+whole design says must have one — and it would have kept passing against its own
+copy on the day the build moved the program, which is the one day it exists for.
+
+## What is still open after this
+
+The list from "What is deliberately still open" above is unchanged except that
+the loader is now the whole of the remaining milestone. The initial endpoint is
+minted and handed over in `x0` as the contract requires, and **nothing is
+listening on the other end** — where that end lives is a question about what
+boot constructs, and it is the loader's to answer. Program exit is still
+undecided, still for the same reason: the first program does not exit.

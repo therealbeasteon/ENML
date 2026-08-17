@@ -28,6 +28,7 @@ and is worth reading before the table:
 | Verified boot evidence (M5) | Designed and tested; nothing produces the evidence |
 | Device access, time protection (M6) | Policy complete; **no platform enforces it** |
 | Cookie Kernel (M7) | Through M7.13 partially merged; **boots on QEMU virt (at EL1 or EL2, position-independently), schedules isolated EL0 processes across native IPC and timer preemption, creates and destroys address spaces after boot, resolves faults through a userland pager, and runs a thread in a space created after boot** |
+| First compiled program (M7.16a/b) | Written, built, embedded in the boot artefact, and **running at EL0**, proven by a witness it folds at run time |
 | Program image format (M7.12) | `.ckx` specified, parsed, written and fuzzed — **and nothing loads one** |
 | Syscall ABI (M7.14, M7.15a–c) | Complete on both sides: `core/osabi` encodes 8 of 16 calls, the kernel answers every call it serves, and a malformed call is refused rather than halting the machine — **and the dispatcher still admits authority by class rather than by capability** |
 
@@ -37,18 +38,30 @@ on `main` (30/30 checks). The discipline is real and the roadmap should not
 spend it.
 
 **The one sentence that describes the position better than the table does:
-Cookie can now build an address space for a program, and cannot yet run one.**
-Every mechanism a process needs exists and is CI-proven — spaces, epochs,
-capabilities, IPC, interrupts, faults, entry binding. As of M7.14 compiled code
-can also *express* a kernel call and the kernel can answer one: `core/osabi`
-encodes eight of the sixteen, and as of M7.15b every call the kernel serves
-writes a typed outcome the caller can tell apart from silence. What is still
-missing is the two ends — the dispatcher admits three named threads rather than
-any caller holding the right capability (M7.15c), and nothing places a program
-into a space to make the calls in the first place (M7.16).
-Everything that has ever executed at EL0 on Cookie is still `uint32_t`
-instruction words written into a page by `aarch64_boot.cpp`. That gap is the
-critical path for the entire product, and Phase 2c below exists to name it.
+Cookie runs a program a compiler produced, and cannot yet load a second one.**
+It replaced "Cookie can now build an address space for a program, and cannot yet
+run one" when M7.16b landed, and the sentence being replaceable in one increment
+is the measure of how narrow the remaining gap had become. Every mechanism a
+process needs already existed and was CI-proven — spaces, epochs, capabilities,
+IPC, interrupts, faults, entry binding — and as of M7.14/M7.15 compiled code
+could express a kernel call and the kernel could answer one. What was missing
+was that nothing placed a program into a space to make the calls.
+
+Now something does. The boot proof's third process runs a C++ translation unit
+this repository compiles, embedded in the boot artefact and copied into the page
+its address space maps, and it proves it executed by folding a seed at run time
+and carrying the result in a call's own argument register — something a
+hand-assembled program could produce only by containing the answer. See
+`docs/M7_16_FIRST_PROGRAM_CONTRACT.md` for why the `x19` marker every earlier
+EL0 program used could not serve.
+
+**What that does not mean.** Boot still places exactly one image, so the second
+program needs a loader and nothing loads a `.ckx` yet — the remaining half of
+M7.16 and the thing this program grows into. Two hand-assembled EL0 programs
+also remain, processes A and B, and they are the M7.5f–M7.11 proof harness
+rather than programs: the boot routine drives them by rewriting `elr_el1` in
+their saved frames, which is a way of proving kernel paths and not a thing a
+real program does. They go when the paths they prove have real callers.
 
 A second finding from the same review, recorded because it is easy to mistake
 for progress: **`cookie_kernel_syscall_entry` is a proof scaffold, not a
@@ -424,7 +437,7 @@ change:
 - **M7.10 — the line count gate.** Done: `.github/scripts/kernel-line-count.sh`
   counts what runs with kernel privilege in the shipped image and fails the
   build when it grows. `docs/M7_10_LINE_COUNT.md` records the boundary. The
-  ceiling is the measured 8,463 lines, a ratchet rather than the 605-line
+  ceiling is the measured line count, a ratchet rather than the 605-line
   aspiration, and the script prints the gap to 605 on every run so it stays
   visible.
 
@@ -451,13 +464,21 @@ measurement is drawn by the build rather than by judgement, and cannot drift
 from what is actually trusted. Four categories are capped separately so lines
 cannot be laundered between them:
 
-| Category | Lines |
+The figures below are the ceilings as they stand, re-measured against
+`.github/scripts/kernel-line-count.sh` when M7.16b landed. They had drifted —
+this table and `docs/M7_10_LINE_COUNT.md` both restate numbers the script owns,
+and both were describing a kernel several milestones smaller than the one in the
+tree. That is the hazard of restating a measured value in prose, and the rule it
+produces is the one already written down: the script, this table and the
+milestone document move in the same diff, or two of the three are wrong.
+
+| Category | Ceiling |
 | --- | --- |
-| core — privileged portable runtime | 3,535 |
-| machine — the AArch64 port, including the physical ledger's reservation table | 3,191 |
+| core — privileged portable runtime | 4,528 |
+| machine — the AArch64 port, including the physical ledger's reservation table | 3,374 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
-| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter | 1,133 |
-| **total** | **9,131** |
+| entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter, the first compiled program's placement and witness check | 1,889 |
+| **total** | **11,060** |
 
 `core` is the figure comparable to QNX's 605 — but only measured QNX's own way, by semicolons, and only for a kernel of the same scope. Both corrections landed 2026-08-14 (`docs/REFERENCE_NOTES_2026_08_14_QNX.md`): `core` is 1,607 semicolons, **2.7×** the 605, and QNX's microkernel excludes memory management entirely — it lives in `Proc`, a user-space resource manager of 3,924 semicolons. Neither correction moved a ceiling. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -901,13 +922,41 @@ for a proof and wrong for a system that runs programs it did not write. The M7.1
 moves lines from `entry` into `core`, and the categories are separately capped
 precisely so that cannot happen silently.
 
-**M7.16 — the first compiled program, then the loader.** Boot places exactly
-one image, identity-bound per `docs/M7_12_FIRST_PROGRAM.md`, so the first
-program is not loaded by a loader — it *is* the loader, or the thing that
-starts one. That splits the milestone cleanly, and the first half is the one
-that ends "everything at EL0 is hand-assembled words".
+**M7.16a/b — the first compiled program *(complete, PRs #161, #163 and the
+M7.16b diff)*.** Boot places exactly one image, identity-bound per
+`docs/M7_12_FIRST_PROGRAM.md`, so the first program is not loaded by a loader —
+it *is* the loader, or the thing that starts one. That splits the milestone
+cleanly, and the first half is the one that ends "everything at EL0 is
+hand-assembled words".
 
-The startup contract is decided ahead of the code in
+It ended it in two steps, and the boundary between them is worth keeping.
+M7.16a produced a program: a C++ translation unit built by this repository's
+toolchain, reaching the kernel through `core/osabi`, gated on five properties a
+program that merely linked would not have. **Nothing ran it**, and that was
+stated rather than rounded away. M7.16b runs it — the boot proof's third
+process, whose code page held eight hand-assembled words, now holds this
+program's flat image, and `COOKIE:M7.16:PROGRAM_RAN` is gated by
+`kernel-arm64-native`.
+
+The proof is the part that had to be redesigned rather than written. Every
+earlier EL0 program proved it ran by setting `x19` to a constant in the
+instruction before its `svc`; a compiled program cannot, because `x19` is
+callee-saved and its value at the trap belongs to whichever function the
+compiler last spilled it in. So the witness rides in the call's own argument
+register, which the stub writes and the ABI defines, and it is a fold the
+program executes rather than a value it carries — eight multiply-xor rounds over
+a seed read through a `volatile` lvalue, with the kernel folding the same seed
+from the same header. A constant could not have produced it, which is what this
+milestone's own exit criteria demanded and what `x19` never satisfied.
+
+**M7.16c — the loader.** Executing a `.ckx` plan against the syscall surface,
+which is what closes M7.12's remaining exit criteria and what makes a *second*
+program possible. Two things the contract leaves open belong to it and not to
+what landed: where the initial endpoint's other end lives — the capability is
+minted and handed over in `x0`, and nothing is listening — and what a program's
+exit code means, which stays undecided because the first program does not exit.
+
+The startup contract was decided ahead of the code in
 `docs/M7_16_FIRST_PROGRAM_CONTRACT.md`, the same order M7.11 used for the
 allocator and M7.12 for entry binding: **a program is handed one capability in
 x0 and nothing else.** No argument vector (a string parser at the least-tested
@@ -923,14 +972,23 @@ it ran cannot be a print. It has to be a syscall effect the kernel observes —
 which is the stronger proof anyway, provided the arguments are something a
 constant could not have produced.
 
-The loader — executing a `.ckx` plan against the syscall surface — is the
-second half, and closes M7.12’s remaining exit criteria.
-
 **Exit criteria:** a C++ program compiled by this repository, packaged as a
 `.ckx`, placed by boot, loaded into an address space created after boot, makes a
 system call and gets a typed answer back — proven under `kernel-arm64-native`,
 with the M7.10 count reported and every raise justified in the diff that caused
 it. No hand-assembled instruction words anywhere in the path.
+
+**Against those criteria, measured: three of five met, and the two that are not
+are the loader.** A compiled program is placed by boot, runs in an address space
+created after boot, makes a system call and gets a typed answer — a refusal,
+which is an answer and is the one the call deserves. What it is *not* is
+packaged as a `.ckx` and *loaded*: boot copies a flat image into a page, which
+is the placement the one-image decision allows and is deliberately not a loader.
+The last criterion is also not met and should not be quietly dropped — processes
+A and B are still hand-assembled words. They are the proof harness for the
+kernel paths M7.5f–M7.11 established, driven by the boot routine rewriting
+`elr_el1` in their frames rather than by anything a program does, and they are
+retired by having real callers rather than by being rewritten in C++.
 
 **Also open in this phase, from `docs/M7_13_HARDWARE_NEUTRALITY.md`,** and
 sequenced after the above rather than before it because none of it blocks a

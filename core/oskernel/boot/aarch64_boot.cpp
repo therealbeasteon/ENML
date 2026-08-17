@@ -4,6 +4,12 @@
 #include <span>
 #include <string_view>
 
+// The one definition of the fold the first compiled program carries and this
+// image checks. Shared rather than restated: two implementations of one
+// algorithm are two things that can drift, and the drift would look exactly like
+// the program having failed to run.
+#include <cookie/first_witness.hpp>
+
 #include <os/core/span.hpp>
 #include <os/kernel/abi.hpp>
 #include <os/kernel/aarch64_entry.hpp>
@@ -19,6 +25,7 @@
 #include <os/kernel/aarch64_translation_root_sealer.hpp>
 #include <os/kernel/aarch64_user_access.hpp>
 #include <os/kernel/address_space_epoch.hpp>
+#include <os/kernel/address_space_syscall.hpp>
 #include <os/kernel/arch_timer_discovery.hpp>
 #include <os/kernel/boot_memory.hpp>
 #include <os/kernel/boot_memory_plan.hpp>
@@ -108,15 +115,36 @@ constexpr std::uint64_t dynamic_proof_virtual = 0x0000'0000'2000'0000ULL;
 // generous allowance; it is the cost of the TTBR1 split not having landed.
 constexpr std::size_t c_donated_pages = 48U;
 constexpr std::size_t c_proof_pages = c_donated_pages + 2U;
-constexpr std::uint64_t c_code_virtual = 0x0000'0000'2100'0000ULL;
-constexpr std::uint64_t c_stack_virtual = 0x0000'0000'2101'0000ULL;
-// Where the space says execution begins - four words in, not at the page
-// base. The first four words are a decoy that sets the wrong marker and
-// yields, so a kernel that entered at the start of the mapping rather than at
-// the sealed entry is caught by the check rather than passing silently.
-constexpr std::uint64_t c_entry_virtual = c_code_virtual + 4U * sizeof(std::uint32_t);
-constexpr std::uint64_t c_marker = 0xC33CULL;
-constexpr std::uint64_t c_decoy_marker = 0xDEADULL;
+// The address the program was linked at, and the offset its real entry sits
+// at. Both arrive from the build - one definition, shared with the linker
+// script that placed them (docs/M7_16_FIRST_PROGRAM_CONTRACT.md). Written as
+// macros deliberately rather than copied here as literals: a literal would be a
+// second statement of an address only one side reads, which is the defect PR
+// #145 found in the ARM64 Image header.
+// Cast explicitly: a macro carrying a hexadecimal literal arrives with whatever
+// type the literal takes, which is `int` for anything this side of 2^31 and
+// silently something else past it. This image is built -Wconversion
+// -Wsign-conversion -Werror, so the day the base moves above 2^31 - which is
+// where a phone's RAM often is - an implicit conversion would turn a routine
+// address change into a build failure with nothing to do with addresses.
+constexpr std::uint64_t c_code_virtual =
+    static_cast<std::uint64_t>(COOKIE_FIRST_PROGRAM_BASE);
+constexpr std::uint64_t c_stack_virtual = c_code_virtual + 0x1'0000ULL;
+static_assert(c_code_virtual % page_size == 0ULL,
+              "the code region is mapped a page at a time, so its base is a page base");
+// Where the space says execution begins - a fixed distance into the region,
+// not at its base. The bytes at the base are a decoy that carries a different
+// witness, so a kernel that entered at the start of the mapping rather than at
+// the sealed entry is caught by the check rather than passing silently. The
+// construction is M7.12's; what changed in M7.16 is that both halves are now
+// compiled functions rather than hand-assembled words, and they are told apart
+// by arithmetic instead of by a constant.
+constexpr std::uint64_t c_entry_virtual =
+    c_code_virtual + static_cast<std::uint64_t>(COOKIE_FIRST_ENTRY_OFFSET);
+static_assert(c_entry_virtual % 4ULL == 0ULL,
+              "an A64 instruction is four bytes, so an unaligned entry names a point inside one");
+static_assert(c_entry_virtual - c_code_virtual < page_size,
+              "the entry must be inside the one page the code region is");
 constexpr std::uint64_t runtime_stack_virtual = 0x0000'007F'FEF0'0000ULL;
 constexpr std::uint64_t user_code_virtual = 0x0000'0000'1000'0000ULL;
 constexpr std::uint64_t user_stack_virtual = 0x0000'0000'1001'0000ULL;
@@ -681,38 +709,53 @@ void install_process_b_program(std::uint64_t physical_page) noexcept {
     words[17] = branch_self;
 }
 
-// M7.12's program. Deliberately in two halves, and the first half is a trap.
+// The bytes of the first compiled program, embedded by
+// core/oskernel/boot/first_program_image.S. Declared here as arrays of unknown
+// bound so that `&end - &start` is the linker's own answer for the length -
+// nothing states the size, so nothing can state it wrongly.
+extern "C" const std::byte cookie_first_program_image_start[];
+extern "C" const std::byte cookie_first_program_image_end[];
+
+// Places the first compiled program into the page its address space maps as a
+// code region.
 //
-// Words 0-3 set the *wrong* marker and yield. Nothing ever branches there;
-// they exist so that a kernel which entered this mapping at its base rather
-// than at the entry its address space declared arrives at the yield handler
-// carrying c_decoy_marker, and is caught. Without them, entering anywhere in
-// the page that happened to reach word 4 would look identical to entering
-// where the seal said, and the property being proved would not be tested.
+// This is what M7.16 replaced, and the replacement is the milestone. Until now
+// this function wrote eight `uint32_t` instruction words - a decoy that set the
+// wrong marker and yielded, then a real entry that set the right one and
+// yielded - and those words were the entirety of what had ever executed at EL0
+// on Cookie. What it copies now is a C++ translation unit compiled by this
+// repository's toolchain, reaching the kernel through core/osabi.
 //
-// Words 4-7 are the real entry: set the marker, yield, and stop. The yield is
-// what makes "it ran" observable - a thread spinning silently is
-// indistinguishable from one that never started.
-void install_process_c_program(std::uint64_t physical_page) noexcept {
+// The two halves survive the change and so does the reason for them: the decoy
+// still sits at the base of the region so that a kernel entering the mapping
+// there rather than at the entry the sealed root declares is caught rather than
+// passing silently (docs/M7_12_ENTRY_BINDING.md). What changed is how the two
+// are told apart. A marker in x19 cannot serve a compiled program - x19 is
+// callee-saved, so its value at the instant of the `svc` belongs to whichever
+// function the compiler last spilled it in, not to the program - so each half
+// now folds a different seed and carries the result in the call's own argument
+// register, which the stub writes and the ABI defines. See
+// docs/M7_16_FIRST_PROGRAM_CONTRACT.md and cookie/first_witness.hpp.
+//
+// A flat copy, and that is the whole placement mechanism. The kernel does not
+// parse this image: docs/M7_12_FIRST_PROGRAM.md refuses a parser at EL1 over
+// structured input, and the no-kernel-heap decision forbids the per-segment
+// allocation one would need anyway. Executing a .ckx plan is the loader's job,
+// and the loader is what this program grows into.
+void install_first_program(std::uint64_t physical_page) noexcept {
     zero_page(physical_page);
-    auto* words = reinterpret_cast<volatile std::uint32_t*>(
-        static_cast<std::uintptr_t>(physical_page));
-    constexpr std::uint32_t movz_x8_base = 0xD2800008U;
-    constexpr std::uint32_t movz_x19_base = 0xD2800013U;
-    constexpr std::uint32_t svc_zero = 0xD4000001U;
-    constexpr std::uint32_t branch_self = 0x14000000U;
-    constexpr std::uint32_t yield_number =
-        static_cast<std::uint32_t>(os::kernel::KernelCall::yield);
-
-    words[0] = movz_x19_base | (static_cast<std::uint32_t>(c_decoy_marker) << 5U);
-    words[1] = movz_x8_base | (yield_number << 5U);
-    words[2] = svc_zero;
-    words[3] = branch_self;
-
-    words[4] = movz_x19_base | (static_cast<std::uint32_t>(c_marker) << 5U);
-    words[5] = movz_x8_base | (yield_number << 5U);
-    words[6] = svc_zero;
-    words[7] = branch_self;
+    const auto size = static_cast<std::size_t>(
+        cookie_first_program_image_end - cookie_first_program_image_start);
+    // Both are refusals to run rather than truncations. An image that does not
+    // fit the region would be copied in part and executed from the part that
+    // arrived; an empty one means the build embedded nothing, which would
+    // otherwise present as a program that ran into a page of zeroes and took an
+    // undefined-instruction trap far from the cause.
+    if (size == 0U) fail("M7_16_IMAGE_EMPTY");
+    if (size > static_cast<std::size_t>(page_size)) fail("M7_16_IMAGE_TOO_LARGE");
+    write_physical_bytes(
+        physical_page, 0U,
+        std::span<const std::byte>{cookie_first_program_image_start, size});
 }
 
 // Arms the reused virtual-timer PPI (boot_gic.device_intid) as M7.9's
@@ -1346,6 +1389,102 @@ extern "C" void cookie_kernel_syscall_entry(
         return;
     }
 
+    // M7.16: the first compiled program reached the kernel.
+    //
+    // Placed here rather than beside the other proof checks further down, and
+    // the position is load-bearing: address_space_destroy has a real dispatch
+    // below, which would refuse this call for naming no capability - correctly,
+    // and before anything had looked at what the call carried. The observation
+    // has to happen before the dispatch that would consume it. The authority
+    // checks above still run, so this program's call is admitted by the same
+    // rules every other caller's is; what is skipped is only the dispatch.
+    //
+    // What is being proved, and why each half of it is necessary:
+    //
+    // The *call* is address_space_destroy because the witness has to ride in a
+    // register the stub writes. yield declares no arguments and the encoder
+    // zeroes every register past a call's declared count, precisely so nothing
+    // can smuggle a value through one - so the proof call had to be one the ABI
+    // gives at least one argument, and this is the one whose single argument is
+    // decoded before any capability is resolved.
+    //
+    // The *value* is a fold the program ran, not a constant it carried. That is
+    // the difference between this and every EL0 program before it: a
+    // hand-assembled program can put any literal in a register with one `movz`,
+    // so a literal proves only that something reached the trap. Eight
+    // multiply-xor rounds over a seed read through a volatile lvalue is
+    // arithmetic the compiler had to emit and the machine had to execute.
+    //
+    // And the decoy is what makes the entry binding testable rather than
+    // assumed. It sits at the base of the region, folds a different seed, and is
+    // reachable only by a kernel that entered the mapping at its base instead of
+    // at the address the sealed root declared - so it is reported as its own
+    // failure rather than as a wrong witness.
+    if (c_thread != os::kernel::invalid_thread && current == c_thread) {
+        if (call.value().call != os::kernel::KernelCall::address_space_destroy) {
+            uart_write("COOKIE:PANIC:M7_16_CALL x8=");
+            uart_write_hex(frame->x[8]);
+            uart_write("\n");
+            halt();
+        }
+        // Through the kernel's own decoder rather than by reading x0 directly.
+        // The claim is that a compiled program encoded a call this kernel can
+        // decode, so decoding it is part of the proof rather than a formality -
+        // and it is what makes the encoder, the ABI table and the decoder agree
+        // on the wire instead of only in a host test.
+        auto destroy = os::kernel::decode_address_space_destroy_syscall(frame->x[0]);
+        if (!destroy) {
+            uart_write("COOKIE:PANIC:M7_16_DECODE code=");
+            uart_write_hex(static_cast<std::uint64_t>(destroy.error().code));
+            uart_write("\n");
+            halt();
+        }
+        const auto witness = static_cast<std::uint64_t>(destroy.value().space);
+        if (witness == cookie::first::expected_decoy_witness) {
+            uart_write("COOKIE:PANIC:M7_16_ENTRY decoy ran; the kernel entered the region at its base\n");
+            halt();
+        }
+        if (witness != cookie::first::expected_witness) {
+            uart_write("COOKIE:PANIC:M7_16_WITNESS want=");
+            uart_write_hex(cookie::first::expected_witness);
+            uart_write(" got=");
+            uart_write_hex(witness);
+            uart_write("\n");
+            halt();
+        }
+        c_ran = true;
+        // Both markers, because both milestones are proven by this one call and
+        // neither would be honest to drop. M7.12's claim is that a thread runs
+        // in a space created after boot, entering where that space's sealed root
+        // said - the code executed is mapped only in that space, at an address
+        // no other space in this image maps, so arriving here at all is that
+        // space's translation root having been installed and executed under.
+        // M7.16's claim is that the thing which ran was compiled.
+        uart_write("COOKIE:M7.12:PROCESS_RAN\n");
+        uart_write("COOKIE:M7.16:PROGRAM_RAN\n");
+
+        // Refused, and the refusal is the correct answer rather than a
+        // concession: the witness is a folded number, it names no address space,
+        // and a kernel that destroyed something because an unprivileged caller
+        // passed an arbitrary value would be the defect this call's capability
+        // check exists to prevent.
+        //
+        // That the program survives being refused is M7.15c's whole content.
+        // Before it, this call would have halted the machine, and the first
+        // program a compiler produced would have stopped Cookie on its first
+        // instruction that reached the kernel.
+        //
+        // destroy_refused rather than call_not_dispatched, and the distinction
+        // is not pedantry: this image *does* dispatch address_space_destroy, a
+        // few branches below. Answering "not dispatched here" would be a false
+        // statement about the surface, told to the one caller in the system with
+        // no way to check it. What actually happened is a destroy that named
+        // nothing, which is what 901 means everywhere else in this file.
+        refuse_call(
+            *frame, boot_syscall_errors::destroy_refused, "M7_16_WITNESS_CALL");
+        return;
+    }
+
     if (call.value().call == os::kernel::KernelCall::fault_supply) {
         auto decoded = os::kernel::decode_fault_supply_syscall(frame->x[0]);
         if (!decoded) {
@@ -1629,31 +1768,11 @@ extern "C" void cookie_kernel_syscall_entry(
         return;
     }
 
-    // M7.12: the thread admitted into a space created after boot reached its
-    // first system call. Everything this proves is in the two checks.
-    //
-    // x19 carries the marker set by the instruction at the entry the *space*
-    // declared. The four words before it set a different one and yield the
-    // same way, so a kernel that entered the mapping at its base instead of at
-    // the sealed entry arrives here and is refused rather than passing.
-    //
-    // And the code it executed is mapped only in the space created after boot,
-    // at a virtual address neither A's nor B's space maps at all. So reaching
-    // this line at all is the created space's translation root having been
-    // installed and executed under - which is what "a thread runs in a space
-    // created after boot" means.
-    if (c_thread != os::kernel::invalid_thread && current == c_thread) {
-        if (call.value().call != os::kernel::KernelCall::yield ||
-            frame->x[19] != c_marker) {
-            uart_write("COOKIE:PANIC:M7_12_ENTRY x19=");
-            uart_write_hex(frame->x[19]);
-            uart_write("\n");
-            halt();
-        }
-        c_ran = true;
-        uart_write("COOKIE:M7.12:PROCESS_RAN\n");
-        return;
-    }
+    // The thread admitted into a space created after boot is handled far above,
+    // where the M7.16 witness is checked - it has to be, because the call it
+    // makes has a real dispatch between here and there. Nothing reaches this
+    // point on its behalf, and the check above returns on every path including
+    // its failures.
 
     if (call.value().call != os::kernel::KernelCall::yield || current != process_a_thread) {
         uart_write("COOKIE:PANIC:EL0_SYSCALL\n");
@@ -1832,15 +1951,28 @@ extern "C" void cookie_aarch64_irq_dispatch(
     }
 
     const auto running = boot_preemption.running();
-    // C joins the two hand-made threads here rather than being excused from
-    // the check. Its universe marker is as load-bearing as theirs - more so,
-    // because it is the value that says C entered where its space's sealed
-    // root declared - and "the scheduler resumed something this proof never
-    // admitted" would be a false statement about a thread that was admitted.
+    // C is still named here, and is deliberately *excused from the marker half*
+    // of the check rather than dropped from the check entirely.
+    //
+    // It used to carry a universe marker in x19 like A and B, because it was
+    // hand-assembled words and `movz x19, #marker` was guaranteed to be the
+    // instruction it began with. It is a compiled program now, and x19 is
+    // callee-saved: between the entry and any observation the compiler is free
+    // to spill and restore it around its own use, so demanding a value there
+    // would fail on a program behaving exactly as its language says it may.
+    // docs/M7_16_FIRST_PROGRAM_CONTRACT.md records this as the blocker that
+    // decided how M7.16 is proven at all.
+    //
+    // What is *not* excused is the thread half. "The scheduler resumed something
+    // this proof never admitted" stays a fatal statement about C, because it
+    // remains exactly as true and exactly as serious. And nothing is lost by
+    // dropping the marker: the property it stood for - that C entered where its
+    // space's sealed root declared and not at the base of its mapping - is now
+    // established by the witness at the syscall boundary, which a program that
+    // entered at the wrong address cannot produce.
     const bool admitted_c = c_thread != os::kernel::invalid_thread && running == c_thread;
     if ((running == process_a_thread && frame->x[19] != process_a_marker) ||
         (running == process_b_thread && frame->x[19] != process_b_marker) ||
-        (admitted_c && frame->x[19] != c_marker) ||
         (running != process_a_thread && running != process_b_thread && !admitted_c)) {
         // Say which of the three ways this failed, and with what values. The
         // first occurrence of this panic reported the name and nothing else,
@@ -1852,9 +1984,6 @@ extern "C" void cookie_aarch64_irq_dispatch(
         uart_write("COOKIE:PANIC:UNIVERSE_MARKER");
         if (running != process_a_thread && running != process_b_thread && !admitted_c) {
             uart_write(":UNEXPECTED_THREAD");
-        } else if (admitted_c) {
-            uart_write(":C want=");
-            uart_write_hex(c_marker);
         } else {
             uart_write(running == process_a_thread ? ":A" : ":B");
             uart_write(" want=");
@@ -2724,7 +2853,7 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
         halt();
     }
 
-    install_process_c_program(c_pages.value().base + c_donated_pages * page_size);
+    install_first_program(c_pages.value().base + c_donated_pages * page_size);
     if (!os::kernel::aarch64_publish_instructions(
             static_cast<std::uintptr_t>(
                 c_pages.value().base + c_donated_pages * page_size),
@@ -2766,13 +2895,47 @@ extern "C" [[noreturn]] void cookie_aarch64_boot_main(std::uintptr_t dtb_physica
     if (c_admitted.value().entry != c_entry_virtual) fail("M7_12_ENTRY");
     c_thread = c_admitted.value().thread;
 
+    // The one thing the first program is handed: its initial endpoint, in x0.
+    //
+    // docs/M7_16_FIRST_PROGRAM_CONTRACT.md fixes the startup contract at exactly
+    // this - no argument vector (a string parser at the least-tested moment of a
+    // program's life), no environment (ambient authority made of strings,
+    // invisible in the plan), no auxiliary vector (a second description of an
+    // address space the plan already declares). Nothing is listening on the
+    // other end yet; where that end lives is a question about what boot
+    // constructs and belongs with the loader, which the contract leaves open on
+    // purpose. What matters here is that the program is handed *one* thing and
+    // that the register it arrives in is the one the ABI names.
+    auto c_endpoint = boot_kernel.create_ipc_endpoint(c_thread);
+    if (!c_endpoint) fail("M7_16_ENDPOINT");
+    auto c_initial_capability = boot_kernel.capabilities().mint(
+        c_thread,
+        os::kernel::ipc_object_id(c_endpoint.value()),
+        os::kernel::ipc_right_all,
+        true);
+    if (!c_initial_capability) fail("M7_16_INITIAL_CAP");
+
     // The frame is built from what admission returned rather than from the
     // constants above. If the kernel had handed back a different entry this
-    // would start C somewhere else and the decoy at word 0 would catch it.
+    // would start the program somewhere else, and the decoy at the base of the
+    // region would catch it.
     os::kernel::aarch64::ExceptionFrame initial_c{};
     initial_c.elr_el1 = c_admitted.value().entry;
     initial_c.sp_el0 = c_admitted.value().stack;
     initial_c.spsr_el1 = 0x340ULL;
+    initial_c.x[0] = c_initial_capability.value();
+
+    // Checked, not assumed, which is what the contract asks for. "x1-x7 are zero
+    // and stated" is a property of the frame this routine builds, so this image
+    // is the only thing that can establish it and the only thing that can get it
+    // wrong - a value-initialised frame makes it true today, and a field added
+    // to ExceptionFrame's initialisation later could make it false without
+    // anything noticing. The whole register file is checked rather than x1-x7,
+    // because "undefined" means whatever the last writer left there for every
+    // register a program can read, not only for the ones the ABI names.
+    for (std::size_t reg = 1U; reg < initial_c.x.size(); ++reg) {
+        if (initial_c.x[reg] != 0ULL) fail("M7_16_STARTUP_REGISTERS");
+    }
     if (!boot_preemption.admit_frame(c_thread, initial_c)) fail("M7_12_ADMIT_FRAME");
 
     // Left in ThreadState::admitted, which thread_admit already made it, and
