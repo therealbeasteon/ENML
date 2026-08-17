@@ -1,5 +1,6 @@
 add_library(oskernel STATIC
     src/abi.cpp
+    src/syscall_outcome.cpp
     src/rendezvous.cpp
     src/capability.cpp
     src/ipc_endpoint.cpp

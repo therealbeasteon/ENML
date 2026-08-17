@@ -134,6 +134,7 @@ END { print count + 0, semis + 0 }
 
 core_files=(
     "core/oskernel/include/os/kernel/abi.hpp"
+    "core/oskernel/include/os/kernel/syscall_outcome.hpp"
     "core/oskernel/include/os/kernel/address_space_epoch.hpp"
     "core/oskernel/include/os/kernel/capability.hpp"
     "core/oskernel/include/os/kernel/execution_authority.hpp"
@@ -155,6 +156,7 @@ core_files=(
     "core/oskernel/include/os/kernel/translation_root.hpp"
     "core/oskernel/include/os/kernel/user_access.hpp"
     "core/oskernel/src/abi.cpp"
+    "core/oskernel/src/syscall_outcome.cpp"
     "core/oskernel/src/address_space_epoch.cpp"
     "core/oskernel/src/capability.cpp"
     "core/oskernel/src/interrupt.cpp"
@@ -927,7 +929,29 @@ not_kernel=(
 # runnability, with Kernel::thread_start the one transition out, called by the
 # machine layer once a frame exists. Saying "not runnable" to one of the two
 # structures that decide it was not saying it at all.
-core_ceiling=4461
+#
+# Raised by M7.15a, and this one is a *return* convention rather than a feature:
+# core 4,461 -> 4,526, total 10,909 -> 10,974. M7.14 built the user half of the
+# syscall answer and nothing in the kernel produced what it reads - the dispatch
+# paths wrote `frame->x[0] = 1` on one branch and `0` on another and never
+# touched the outcome register, so `os::abi::decode_outcome` would have reported
+# "no answer" for every call Cookie has ever served. A decoder with no encoder is
+# the same defect this tree found twice under another name: a mechanism that is
+# present is not a mechanism that is engaged.
+#
+# The 65 lines are `syscall_outcome.{hpp,cpp}` plus the tags and the Error
+# encoding moved into `abi.hpp`, where both sides include them. The constants
+# were briefly defined in `core/osabi` as well; one definition of a wire constant
+# is the whole point, so the user half now aliases the kernel's rather than
+# restating it.
+#
+# Worth being explicit about what these lines buy, because it is a contract
+# rather than a capability: they make it possible for a served call to answer,
+# and they are the only place the outcome register is written, so "did this path
+# answer?" is checkable by reading one file instead of twenty call sites. The
+# call sites themselves are M7.15b and until they land the kernel still answers
+# nothing.
+core_ceiling=4526
 #
 # Raised again, by M7.11's reclamation: machine 3,191 -> 3,229, entry 1,363 ->
 # 1,380, total 9,585 -> 9,640. This makes the milestone's own threat model true
@@ -1229,7 +1253,7 @@ discovery_ceiling=1272
 # code, enforced by a link failure far from whatever introduced it. Twenty
 # instructions cost once and constrain nothing.
 entry_ceiling=1802
-total_ceiling=10909
+total_ceiling=10974
 
 # The aspiration from docs/M7_0_KERNEL.md, for the gap report. This is not a
 # ceiling and is not enforced. It is printed on every run so that the distance

@@ -142,6 +142,46 @@ enum class CallAuthority : std::uint8_t {
     capability_control = 5U,
 };
 
+// --- How a call answers. docs/M7_14_SYSCALL_ABI.md.
+//
+// These live here, in the header both sides include, because they are the
+// contract rather than either party's opinion of it. The user half
+// (`core/osabi`) aliases them; nothing restates them. Two definitions of a wire
+// constant are two things that can drift, and this project has now spent two
+// separate diffs on exactly that shape.
+//
+// The outcome rides in x7 and nothing else does. Argument and result registers
+// are x0-x3 (max_call_arguments is 4 and is a design constraint), x8 carries the
+// call number, and x4-x6 are unused. Putting the outcome in a register of its
+// own is the decision: POSIX's -1 and Linux's reserved negative range both
+// reinterpret part of the result space, and both fail silently the day a
+// legitimate result lands in the reserved range.
+inline constexpr std::size_t outcome_register = 7U;
+
+// Bitwise complements, so their Hamming distance is 64 - no partial corruption
+// turns a refusal into an answer. Neither is zero and neither is all-ones, the
+// two values a register most plausibly holds by accident.
+inline constexpr std::uint64_t outcome_answered = 0xC00C'1EA5'11ED'0001ULL;
+inline constexpr std::uint64_t outcome_refused = ~outcome_answered;
+
+static_assert(outcome_answered != 0ULL);
+static_assert(outcome_refused != 0ULL);
+static_assert(outcome_answered != outcome_refused);
+static_assert(outcome_register >= max_call_arguments,
+              "the outcome must not land in a register a call uses for "
+              "arguments or results");
+
+// An os::core::Error is {domain: u16, reserved: u16, code: u32} - exactly 64
+// bits - so a refusal crosses the boundary whole instead of being narrowed to a
+// number and widened back into a guess, which is the step where POSIX loses the
+// domain and keeps only a code.
+[[nodiscard]] constexpr std::uint64_t encode_call_error(
+    os::core::Error error) noexcept {
+    return (static_cast<std::uint64_t>(error.domain) << 48U) |
+           (static_cast<std::uint64_t>(error.reserved) << 32U) |
+           static_cast<std::uint64_t>(error.code);
+}
+
 struct CallDescriptor final {
     KernelCall call {};
     CallAuthority authority {};
