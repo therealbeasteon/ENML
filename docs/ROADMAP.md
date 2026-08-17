@@ -474,11 +474,11 @@ milestone document move in the same diff, or two of the three are wrong.
 
 | Category | Ceiling |
 | --- | --- |
-| core — privileged portable runtime | 4,528 |
+| core — privileged portable runtime | 4,651 |
 | machine — the AArch64 port, including the physical ledger's reservation table | 3,374 |
 | discovery — FDT, inventory, GICv3 topology, timer discovery, boot memory | 1,272 |
 | entry — reset vector, freestanding memory, interrupt syscall decode, device IRQ routing, the M7.9 end-to-end proof, the decoded fault reporter, the first compiled program's placement and witness check | 1,889 |
-| **total** | **11,060** |
+| **total** | **11,183** |
 
 `core` is the figure comparable to QNX's 605 — but only measured QNX's own way, by semicolons, and only for a kernel of the same scope. Both corrections landed 2026-08-14 (`docs/REFERENCE_NOTES_2026_08_14_QNX.md`): `core` is 1,607 semicolons, **2.7×** the 605, and QNX's microkernel excludes memory management entirely — it lives in `Proc`, a user-space resource manager of 3,924 semicolons. Neither correction moved a ceiling. Boot-time
 discovery is counted rather than excused: it runs at EL1 with translation off
@@ -955,6 +955,40 @@ program possible. Two things the contract leaves open belong to it and not to
 what landed: where the initial endpoint's other end lives — the capability is
 minted and handed over in `x0`, and nothing is listening — and what a program's
 exit code means, which stays undecided because the first program does not exit.
+
+Starting it found the prerequisite immediately, and it is worth recording as a
+finding rather than as a step: **`map` and `unmap` have been in the published
+sixteen-entry ABI table since before the kernel existed — each with an authority
+class, an argument count, and a comment explaining why establishing a mapping is
+authority rather than convenience — and neither had a decoder, a kernel
+operation, an EL0 dispatch or a stub.** A `.ckx` is a plan for an address space
+to be constructed, and the operation that constructs one did not exist.
+
+That is the fourth occurrence of this document's most-repeated defect class and
+the first where the thing declared-and-unengaged is a whole kernel call rather
+than a test label or a struct field. Each earlier one was invisible because
+nothing consumed the declaration. **An ABI table is consumed by whoever writes a
+program against it, which is a consumer this project did not have until
+M7.16a** — so the surface's unimplemented half became visible exactly one
+milestone after the surface acquired its first user, which is the earliest it
+could have.
+
+*Increment one, `map`'s portable half (`docs/M7_16_MAP.md`):* the decoder, the
+authority half at the `Kernel` composition layer, and the `core/osabi` encoder
+that moves `map` out of `calls_without_stubs`. Two decisions are made there and
+are the milestone's content — the required right on the space is
+`address_space_right_hold` rather than a new one, because the split M7.12 drew
+was between furnishing memory and running code and not within the first; and
+**the length comes from the grant rather than from the caller**, so there is no
+second statement of an extent for the authority to disagree with, and no
+reconciling check to get wrong at the overflowing end. The encoder has nowhere
+to put a length, which is the stronger form of that rule and the same shape as
+`fault_supply` having nowhere to put a region.
+
+*Still to come in this milestone:* `unmap`, which is deliberately not symmetric
+with `map` and needs its own decision about whether a caller may unmap a mapping
+it did not establish; EL0 dispatch for both, in the diff that also carries a
+boot proof; and the loader itself.
 
 The startup contract was decided ahead of the code in
 `docs/M7_16_FIRST_PROGRAM_CONTRACT.md`, the same order M7.11 used for the

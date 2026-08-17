@@ -1,4 +1,4 @@
-#include <os/kernel/kernel.hpp>
+﻿#include <os/kernel/kernel.hpp>
 
 #include <os/core/error.hpp>
 
@@ -494,6 +494,59 @@ os::core::Result<MemoryGrant> Kernel::memory_for_capability(
     // revoked. It cannot be skipped by holding an old capability, because the
     // generation is part of what was resolved.
     return grants.resolve(identity);
+}
+
+os::core::Result<MapAuthorization> Kernel::map_authorize(
+    ThreadId caller,
+    const MapSyscall& request,
+    const AddressSpaceEpochAuthority& epochs,
+    const MemoryGrantAuthority& grants) const noexcept {
+    // The space first, and with address_space_right_hold. Not a right of its
+    // own: holding a space is what furnishing it is, and the split M7.12 drew
+    // was between furnishing memory and running code - which is what
+    // address_space_right_admit already separates. See docs/M7_16_MAP.md.
+    auto identity = address_space_identity_for_capability(
+        caller, request.space, capabilities_, address_space_right_hold);
+    if (!identity) return identity.error();
+
+    // resolve() is what refuses a capability over a space that has already been
+    // destroyed, and it cannot be skipped by holding an old capability because
+    // the generation is part of what was resolved. Mapping into a retired space
+    // would write translations nothing will ever tear down.
+    auto epoch = epochs.resolve(identity.value());
+    if (!epoch) return epoch.error();
+
+    // memory_right_map, which is the right fault_supply already requires of the
+    // backing it is handed. The same operation is being authorised, so it is
+    // the same right rather than a second one meaning the same thing.
+    auto backing = memory_for_capability(
+        caller, request.backing, memory_right_map, grants);
+    if (!backing) return backing.error();
+
+    // The length is the grant's whole extent. Not an argument, so there is no
+    // second statement of it to disagree with the authority, and no reconciling
+    // check to get wrong at the overflowing end - which MemoryGrant::contains
+    // exists to be careful about and which this call now never has to ask.
+    const auto length = backing.value().length;
+
+    // What the caller *can* still get wrong is where it asked for the mapping
+    // to go: a grant of any size placed near the top of the address space runs
+    // off the end. Refused here rather than left to wrap into a low address
+    // that is mappable and is not what anyone asked for.
+    if (length > UINT64_MAX - request.virtual_address) {
+        return os::core::Result<MapAuthorization>{
+            os::core::make_error(
+                os::core::ErrorDomain::kernel,
+                map_syscall_errors::range_overflows)};
+    }
+
+    return MapAuthorization{
+        .space = identity.value(),
+        .virtual_base = request.virtual_address,
+        .physical_base = backing.value().physical_base,
+        .length = length,
+        .permissions = request.permissions,
+    };
 }
 
 os::core::Result<AddressSpaceCreation> Kernel::address_space_create(

@@ -94,6 +94,14 @@ target_compile_options(kernel_address_space_syscall_test PRIVATE
 add_test(NAME kernel_address_space_syscall_test COMMAND kernel_address_space_syscall_test)
 set_tests_properties(kernel_address_space_syscall_test PROPERTIES LABELS "m7-kernel")
 
+add_executable(kernel_map_syscall_test map_syscall_test.cpp)
+target_link_libraries(kernel_map_syscall_test PRIVATE emnl::oskernel emnl_warnings)
+target_compile_options(kernel_map_syscall_test PRIVATE
+    $<$<CXX_COMPILER_ID:GNU,Clang>:-fno-exceptions -fno-rtti>
+)
+add_test(NAME kernel_map_syscall_test COMMAND kernel_map_syscall_test)
+set_tests_properties(kernel_map_syscall_test PROPERTIES LABELS "m7-kernel")
+
 add_executable(kernel_ipc_continuation_test ipc_continuation_test.cpp)
 target_link_libraries(kernel_ipc_continuation_test PRIVATE emnl::oskernel emnl_warnings)
 target_compile_options(kernel_ipc_continuation_test PRIVATE

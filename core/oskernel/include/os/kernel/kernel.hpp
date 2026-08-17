@@ -12,6 +12,7 @@
 #include <os/kernel/interrupt_delivery.hpp>
 #include <os/kernel/ipc_continuation.hpp>
 #include <os/kernel/ipc_endpoint.hpp>
+#include <os/kernel/map_syscall.hpp>
 #include <os/kernel/memory_grant.hpp>
 #include <os/kernel/process_translation.hpp>
 #include <os/kernel/rendezvous.hpp>
@@ -198,6 +199,28 @@ public:
         ThreadId creator,
         CapabilityId authority,
         AddressSpaceEpochAuthority& epochs) noexcept;
+
+    // The `map` call's authority half. Resolves the caller's two capabilities,
+    // checks the rights this call needs on each, and returns what the machine
+    // layer is to perform - which it performs without re-resolving anything,
+    // because a second resolution is a second answer and the window between
+    // them is where a capability could have been revoked.
+    //
+    // The required right on the space is address_space_right_hold and not a
+    // new one. Holding a space is what furnishing it *is*; the split M7.12 drew
+    // was between furnishing memory and running code, which is why
+    // address_space_right_admit is separate and why nothing else needs to be.
+    // See docs/M7_16_MAP.md.
+    //
+    // The length is the grant's, never the caller's. A caller-supplied length
+    // is a second statement of something the authority already says, and the
+    // check that would have to reconcile them is exactly the kind that is
+    // written once and quietly wrong for the overflowing case.
+    [[nodiscard]] os::core::Result<MapAuthorization> map_authorize(
+        ThreadId caller,
+        const MapSyscall& request,
+        const AddressSpaceEpochAuthority& epochs,
+        const MemoryGrantAuthority& grants) const noexcept;
 
     // Two phases, because retirement genuinely has two. begin invalidates the
     // software epoch so nothing new can bind to the space, and only then may
