@@ -85,7 +85,27 @@ physical ledger exists to check. `memory_right_map` is the required right, which
 is the same right `fault_supply` requires of the backing it is handed — the same
 operation being authorised, so the same right.
 
-**x3 is the permission, and it is one of three.** The machine layer has
+**x3 is the permission, and it is one of three — and what stops a caller asking
+for `read_execute` is not this call.** Worth writing down, because the omission
+was found by auditing this document rather than the code: a holder of another
+process's space may pass `read_execute`, and nothing in `map` refuses it.
+
+Two things bound it, and neither is a check in this call. The first is the
+physical ledger, which refuses a `writable_executable_alias` — so memory the
+caller can write somewhere cannot also be executable somewhere else, and a
+caller cannot author code and then make it executable in a space it does not
+own. The second is that mapping executable memory into a space is not the same
+as causing it to be executed: entry is bound at seal time and `thread_create`
+takes no entry, so nothing branches to a page merely because it exists.
+
+That is a real answer rather than a comfortable one, and it has a boundary worth
+naming: it holds because the ledger sees every mapping of a physical range
+across every space. It would stop holding the moment a caller could obtain
+backing it had already written through some path the ledger does not observe.
+`map` is therefore only as strong as the ledger's completeness, which is the
+right place for the strength to live and the wrong thing to leave unstated.
+
+As to which three they are: the machine layer has
 `read`/`read_write`/`read_execute` and nothing else, `.ckx` mirrors those three
 for the same reason, and this makes a third statement of them. The three
 statements are held together by `static_assert` rather than by intent, so
