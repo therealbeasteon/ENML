@@ -453,6 +453,27 @@ os::core::Result<void> machine_unmap(
         static_cast<std::uint64_t>(length));
     if (!exact) return exact.error();
 
+    // A sealed root refuses unmap_page, and that refusal has to be discovered
+    // *here* rather than past the boundary below.
+    //
+    // Without this check the refusal arrived after "no recoverable failures
+    // remain" and became os::core::invariant_violated() - a kernel trap that
+    // any EL0 caller could reach by asking to unmap from a running address
+    // space, which is every address space a process can name, since sealing is
+    // what makes a space runnable. Two instructions and the machine stops. It
+    // is the same defect class M7.15c fixed at the syscall boundary: a
+    // condition an unprivileged caller can provoke must be an answer it gets,
+    // never a machine that halts.
+    //
+    // Refused rather than supported. Sealing exists to make a translation root
+    // immutable, and back_absent_user_page is deliberately the one exception -
+    // it can only fill a translation that is absent, never change one that
+    // exists. Removing a live translation is precisely the mutation the seal
+    // forbids, so this is the seal working rather than a gap in it.
+    if (space.early_builder->lifecycle() == aarch64::EarlyStage1Builder::Lifecycle::sealed) {
+        return machine_error(machine_errors::sealed_root);
+    }
+
     const std::uint64_t page_count =
         static_cast<std::uint64_t>(length) / aarch64::architectural_page_size;
     for (std::uint64_t page = 0ULL; page < page_count; ++page) {

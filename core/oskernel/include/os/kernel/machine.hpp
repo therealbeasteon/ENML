@@ -29,6 +29,11 @@ inline constexpr std::uint32_t mapping_ledger_inconsistent = 12U;
 // whether two mappings disagree about W^X, this one asks whether the range is
 // the kernel's to begin with.
 inline constexpr std::uint32_t kernel_object_alias = 13U;
+// The translation root is sealed, so a live translation cannot be removed from
+// it. Not a malformed request and not a missing authority - the seal is the
+// answer, and a caller learns that this space's layout is fixed rather than
+// that it asked wrongly.
+inline constexpr std::uint32_t sealed_root = 14U;
 } // namespace machine_errors
 
 enum class MachinePermissions : std::uint8_t {
