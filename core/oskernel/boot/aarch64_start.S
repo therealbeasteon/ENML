@@ -123,12 +123,30 @@ _start:
     // fails closed rather than assuming the write took - and the machine has no
     // interrupt controller.
     //
-    // This instruction only exists on a machine that implements the GICv3
-    // system registers, which Cookie already requires; see
-    // docs/M7_13_HARDWARE_NEUTRALITY.md for what that excludes.
+    // Guarded, because that instruction does not exist everywhere.
+    //
+    // It used to be unconditional, on the stated premise that Cookie "already
+    // requires" the GICv3 system registers. docs/M7_18_GIC_V2.md removes that
+    // premise: a phone-class SoC with a GICv2 reports ID_AA64PFR0_EL1.GIC == 0
+    // and has no system-register interface, so the msr is UNDEFINED. It runs at
+    // EL2, before VBAR_EL2 has been given a handler, so the machine takes an
+    // exception to a vector that does not exist and dies before the first
+    // instruction that could say why.
+    //
+    // No gate would have caught it, and no gate will catch it soon. Nothing in
+    // CI boots a GICv2 at all today, and the GICv2 runs M7.18 proposes enter at
+    // EL1, so they would not execute this path either; every run that does
+    // execute it uses a GICv3. GICv2 *and* an EL2 handoff is exactly the phone
+    // case and the one combination no configuration produces - the
+    // emulator-leniency class docs/SECURITY_AUDIT_2026_08_16.md names, arriving
+    // in the one place where the failure has no way to report itself.
+    mrs x1, id_aa64pfr0_el1
+    ubfx x1, x1, #24, #4                       // ID_AA64PFR0_EL1.GIC
+    cbz x1, .Lcookie_no_gic_sysreg
     mov x1, #0x9
     msr S3_4_C12_C9_5, x1                      // ICC_SRE_EL2
     isb
+.Lcookie_no_gic_sysreg:
 
     // EL1h with all four DAIF bits masked, so the state Cookie arrives in is
     // the state it would have set for itself.
